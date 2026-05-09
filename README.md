@@ -1,112 +1,125 @@
-# Discord
+# multi-channel-discord
 
-Connect a Discord bot to your Claude Code with an MCP server.
+Project-aware Discord bot for Claude Code. One Discord bot, **many isolated channels**, each with its own system prompt, conversation history, and (eventually) git working tree + PR workflow.
 
-When the bot receives a message, the MCP server forwards it to Claude and provides tools to reply, react, and edit messages.
+> Status: **work in progress.** Phases 1–3c are merged on `main` and pass typecheck + all in-tree smoke tests. End-to-end with a live Claude subprocess has not been verified yet — see [Status](#status).
 
-## Prerequisites
+Forked from [`anthropics/claude-plugins-official/external_plugins/discord`](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/discord) (Apache-2.0). Backwards-compatible with the upstream behavior when no `channels.json` is present.
 
-- [Bun](https://bun.sh) — the MCP server runs on Bun. Install with `curl -fsSL https://bun.sh/install | bash`.
+## What it adds vs upstream
 
-## Quick Setup
-> Default pairing flow for a single-user DM bot. See [ACCESS.md](./ACCESS.md) for groups and multi-user setups.
+| | upstream | this fork |
+|---|---|---|
+| Message routing | one Claude session for all messages | per-channel Claude subprocess (lazy spawn, idle eviction, cap) |
+| System prompt | global (CLAUDE.md in cwd) | per channel (`projects/<slug>/CLAUDE.md`) |
+| History | global | per channel (Claude session resume per-project) |
+| Provisioning | manual config | `!project create/clone/...` from a master Discord channel + `/discord:project` skill |
+| Git/PR (planned) | — | clone existing repo, branch-and-PR commits via GitHub Octokit / Azure DevOps REST |
+| Auth model | uses Claude subscription via Claude Code CLI | same — subscription only, never API key |
 
-**1. Create a Discord application and bot.**
-
-Go to the [Discord Developer Portal](https://discord.com/developers/applications) and click **New Application**. Give it a name.
-
-Navigate to **Bot** in the sidebar. Give your bot a username.
-
-Scroll down to **Privileged Gateway Intents** and enable **Message Content Intent** — without this the bot receives messages with empty content.
-
-**2. Generate a bot token.**
-
-Still on the **Bot** page, scroll up to **Token** and press **Reset Token**. Copy the token — it's only shown once. Hold onto it for step 5.
-
-**3. Invite the bot to a server.**
-
-Discord won't let you DM a bot unless you share a server with it.
-
-Navigate to **OAuth2** → **URL Generator**. Select the `bot` scope. Under **Bot Permissions**, enable:
-
-- View Channels
-- Send Messages
-- Send Messages in Threads
-- Read Message History
-- Attach Files
-- Add Reactions
-
-Integration type: **Guild Install**. Copy the **Generated URL**, open it, and add the bot to any server you're in.
-
-> For DM-only use you technically need zero permissions — but enabling them now saves a trip back when you want guild channels later.
-
-**4. Install the plugin.**
-
-These are Claude Code commands — run `claude` to start a session first.
-
-Install the plugin:
-```
-/plugin install discord@claude-plugins-official
-/reload-plugins
-```
-
-**5. Give the server the token.**
+## How it works
 
 ```
-/discord:configure MTIz...
+Discord (one bot) ─→ server.ts ─→ ProjectPool ─→ N × claude subprocesses
+                          │              │              │
+                          │              │              └── HTTP MCP →─┐
+                          │              │                              │
+                          │              ├── Map<chat_id, process>      │
+                          │              └── lazy spawn / idle evict    │
+                          │                                              │
+                          └── MasterMcpServer ←─────────────────────────┘
+                                  └── one in-process http.Server, multiplexed by URL path
+                                      `/mcp/<chat_id>`
 ```
 
-Writes `DISCORD_BOT_TOKEN=...` to `~/.claude/channels/discord/.env`. You can also write that file by hand, or set the variable in your shell environment — shell takes precedence.
+- Each project channel ⇒ one `claude` subprocess running in `projects/<slug>/`.
+- The subprocess is given an `--mcp-config` pointing at `http://127.0.0.1:<port>/mcp/<chat_id>` so its tool calls (currently `reply`) are bound to the right Discord channel.
+- Inbound Discord messages reach Claude as `notifications/claude/channel` MCP notifications, scoped to the channel's MCP session.
+- Outbound replies stream from Claude → master MCP server → pool → Discord, chunked at the upstream 2000-char limit.
 
-> To run multiple bots on one machine (different tokens, separate allowlists), point `DISCORD_STATE_DIR` at a different directory per instance.
+Cross-platform: HTTP-on-localhost works identically on Linux, macOS, and Windows. No Unix sockets, no named pipes.
 
-**6. Relaunch with the channel flag.**
+## Status
 
-The server won't connect without this — exit your session and start a new one:
+Phases merged:
+
+| Phase | What | Tests |
+|---|---|---|
+| 1 | `channels.json` registry, `/discord:project init` skill, file layout | smoke ✓ |
+| 2 | Master-channel command parser (`!project list/show/help`) | 20/20 ✓ |
+| 3a | ProjectPool lifecycle on a Mock backend | 18/18 ✓ |
+| 3b | HTTP MCP server (just `reply` tool) + ClaudeProjectProcess wrapper | 7/7 ✓ |
+| 3c | Pool wired into `server.ts`; chunked Discord reply dispatch; clean shutdown | typecheck ✓ |
+
+Not yet:
+- Phase 4: mutation verbs (`!project create`, `clone`, `set`, `rm`) — still stubbed
+- Phase 5: git layer (clone/init), credential helper, branch/PR workflow
+- Phase 6: cross-platform deploy (macOS launchd, Windows service)
+- Tools other than `reply` on the master MCP server (`react`, `edit_message`, `download_attachment`, `fetch_messages`)
+
+Live smoke against a real `claude` CLI: not yet performed. The single-session passthrough is **identical to upstream** when `channels.json` doesn't exist, so the fork is safe to run in single-session mode while phase 3c stabilizes.
+
+## Quick install (Linux dev box)
 
 ```sh
-claude --channels plugin:discord@claude-plugins-official
+git clone https://github.com/chan4lk/claude-multi-channel-discord ~/dev/multi-channel-discord
+cd ~/dev/multi-channel-discord
+bun install
+
+# Discord bot setup — see https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/discord
+echo "DISCORD_BOT_TOKEN=..." > ~/.claude/channels/discord/.env
+chmod 0600 ~/.claude/channels/discord/.env
+
+# Bootstrap the master channel (writes channels.json + projects/<slug>/CLAUDE.md)
+bun src/init.ts \
+  --master <your-master-channel-id> \
+  --slug   master \
+  --prompt "You are the master controller for the multi-channel bot. Be terse."
+
+# Run
+bun server.ts
+# or via systemd: cp systemd/multi-channel-discord.service ~/.config/systemd/user/
+#                 systemctl --user enable --now multi-channel-discord
 ```
 
-**7. Pair.**
-
-With Claude Code running from the previous step, DM your bot on Discord — it replies with a pairing code. If the bot doesn't respond, make sure your session is running with `--channels`. In your Claude Code session:
+Once running, in the master Discord channel:
 
 ```
-/discord:access pair <code>
+!project help
+!project list
+!project show <slug>
 ```
 
-Your next DM reaches the assistant.
+Mutation verbs (`create`, `clone`, …) are stubbed — say "phase 4" until those land.
 
-**8. Lock it down.**
+## Repository layout
 
-Pairing is for capturing IDs. Once you're in, switch to `allowlist` so strangers don't get pairing-code replies. Ask Claude to do it, or `/discord:access policy allowlist` directly.
+```
+server.ts               main entry point — Discord client + glue
+src/
+  channels-config.ts    channels.json schema + IO
+  git-credentials.ts    git-credentials.json schema + IO
+  paths.ts              filesystem layout (lazy getters, MCD_CHANNELS_DIR override)
+  init.ts               bootstrap CLI (also called by the skill)
+  argv.ts               argv splitter + flag parser
+  master-commands.ts    `!project ...` parser + handlers
+  master-mcp-server.ts  HTTP MCP server, multiplexed by chat_id URL
+  claude-process.ts     ClaudeProjectProcess (real subprocess wrapper)
+  project-process.ts    ProjectProcess interface + MockProjectProcess
+  project-pool.ts       lazy spawn, LRU eviction, idle eviction, event stream
+  discord-chunk.ts      reply chunking at Discord's 2000-char limit
+  *.test.ts             in-process smoke tests (`bun src/<name>.test.ts`)
+skills/
+  access/               upstream — kept
+  configure/            upstream — kept
+  project/              this fork — terminal-side project management
+systemd/                example user-systemd unit (Linux deploy)
+bin/
+  tmux-runner.sh        optional supervisor for live-attach debugging
+DESIGN.md               full design doc
+ACCESS.md               upstream — Discord access model
+```
 
-## Access control
+## License
 
-See **[ACCESS.md](./ACCESS.md)** for DM policies, guild channels, mention detection, delivery config, skill commands, and the `access.json` schema.
-
-Quick reference: IDs are Discord **snowflakes** (numeric — enable Developer Mode, right-click → Copy ID). Default policy is `pairing`. Guild channels are opt-in per channel ID.
-
-## Tools exposed to the assistant
-
-| Tool | Purpose |
-| --- | --- |
-| `reply` | Send to a channel. Takes `chat_id` + `text`, optionally `reply_to` (message ID) for native threading and `files` (absolute paths) for attachments — max 10 files, 25MB each. Auto-chunks; files attach to the first chunk. Returns the sent message ID(s). |
-| `react` | Add an emoji reaction to any message by ID. Unicode emoji work directly; custom emoji need `<:name:id>` form. |
-| `edit_message` | Edit a message the bot previously sent. Useful for "working…" → result progress updates. Only works on the bot's own messages. |
-| `fetch_messages` | Pull recent history from a channel (oldest-first). Capped at 100 per call. Each line includes the message ID so the model can `reply_to` it; messages with attachments are marked `+Natt`. Discord's search API isn't exposed to bots, so this is the only lookback. |
-| `download_attachment` | Download all attachments from a specific message by ID to `~/.claude/channels/discord/inbox/`. Returns file paths + metadata. Use when `fetch_messages` shows a message has attachments. |
-
-Inbound messages trigger a typing indicator automatically — Discord shows
-"botname is typing…" while the assistant works on a response.
-
-## Attachments
-
-Attachments are **not** auto-downloaded. The `<channel>` notification lists
-each attachment's name, type, and size — the assistant calls
-`download_attachment(chat_id, message_id)` when it actually wants the file.
-Downloads land in `~/.claude/channels/discord/inbox/`.
-
-Same path for attachments on historical messages found via `fetch_messages`
-(messages with attachments are marked `+Natt`).
+Apache-2.0, inherited from upstream. See [LICENSE](./LICENSE).

@@ -35,7 +35,12 @@ import { homedir } from 'os'
 import { join, sep } from 'path'
 
 import { loadConfig as loadChannelsConfig } from './src/channels-config.ts'
+import { ClaudeProjectProcess } from './src/claude-process.ts'
+import { chunk as chunkText, DISCORD_HARD_CHUNK_LIMIT } from './src/discord-chunk.ts'
 import { handleMasterCommand } from './src/master-commands.ts'
+import { MasterMcpServer } from './src/master-mcp-server.ts'
+import { ProjectPool } from './src/project-pool.ts'
+import type { OutboundReply } from './src/project-process.ts'
 
 const STATE_DIR = process.env.DISCORD_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'discord')
 const ACCESS_FILE = join(STATE_DIR, 'access.json')
@@ -733,7 +738,25 @@ function shutdown(): void {
   shuttingDown = true
   process.stderr.write('discord channel: shutting down\n')
   setTimeout(() => process.exit(0), 2000)
-  void Promise.resolve(client.destroy()).finally(() => process.exit(0))
+  // Tear down the project backend (pool + master MCP server) before the
+  // Discord client. Pool.shutdown() kills child Claude subprocesses; master
+  // MCP stop() closes per-chat sessions.
+  void (async () => {
+    try {
+      if (projectPool) await projectPool.shutdown()
+    } catch (err) {
+      process.stderr.write(`discord: pool shutdown error: ${err}\n`)
+    }
+    try {
+      if (masterMcp) await masterMcp.stop()
+    } catch (err) {
+      process.stderr.write(`discord: master MCP stop error: ${err}\n`)
+    }
+    try {
+      await Promise.resolve(client.destroy())
+    } catch {}
+    process.exit(0)
+  })()
 }
 process.stdin.on('end', shutdown)
 process.stdin.on('close', shutdown)
@@ -804,6 +827,97 @@ client.on('interactionCreate', async (interaction: Interaction) => {
     .update({ content: `${interaction.message.content}\n\n${label}`, components: [] })
     .catch(() => {})
 })
+
+// ─── multi-channel-discord additions ──────────────────────────────────────
+// Optional per-project subprocess backend. Initialized at boot ONLY if
+// channels.json has a master configured. Without it, the bot falls back to
+// the upstream single-session behavior unchanged.
+let projectPool: ProjectPool | null = null
+let masterMcp: MasterMcpServer | null = null
+
+async function maybeInitProjectsBackend(): Promise<void> {
+  let config
+  try {
+    config = loadChannelsConfig()
+  } catch (err) {
+    process.stderr.write(`discord: channels.json load failed at boot: ${err}\n`)
+    return
+  }
+  if (!config.master) {
+    process.stderr.write('discord: no master configured — running in single-session mode\n')
+    return
+  }
+
+  const master = new MasterMcpServer({
+    onReply: (reply) => {
+      // Route through the pool so the matching process bumps activity and
+      // any pool-side observers fire before we hit Discord.
+      projectPool?.acceptReply(reply)
+    },
+  })
+  await master.start()
+  masterMcp = master
+
+  projectPool = new ProjectPool({
+    factory: ({ chatId, project, config }) => {
+      const proc = new ClaudeProjectProcess({
+        chatId,
+        slug: project.slug,
+        master,
+        model: project.model ?? config.defaults.model,
+      })
+      // Fire-and-forget; the pool may call deliver() before start() resolves
+      // for the very first message — ClaudeProjectProcess deliver() awaits
+      // notifyChat which queues until the MCP transport is up, so the
+      // ordering is safe.
+      void proc.start().catch((err) => {
+        process.stderr.write(`discord: claude spawn failed for ${project.slug}: ${err}\n`)
+      })
+      return proc
+    },
+    getConfig: loadChannelsConfig,
+    onReply: (reply) => {
+      void dispatchProjectReply(reply).catch((err) => {
+        process.stderr.write(`discord: project reply dispatch failed: ${err}\n`)
+      })
+    },
+    onEvent: (evt) => process.stderr.write(`pool: ${JSON.stringify(evt)}\n`),
+  })
+  projectPool.start()
+
+  process.stderr.write(`discord: project pool active (${Object.keys(config.projects).length} configured)\n`)
+}
+
+async function dispatchProjectReply(reply: OutboundReply): Promise<void> {
+  if (reply.kind !== 'text') return // react / other reply kinds land in phase 3c+
+  const access = loadAccess()
+  const limit = Math.max(1, Math.min(access.textChunkLimit ?? DISCORD_HARD_CHUNK_LIMIT, DISCORD_HARD_CHUNK_LIMIT))
+  const mode = access.chunkMode === 'newline' ? 'newline' : 'length'
+  const replyToMode = access.replyToMode ?? 'first'
+
+  const channel = await fetchTextChannel(reply.chatId).catch((err) => {
+    process.stderr.write(`discord: fetchTextChannel(${reply.chatId}) failed: ${err}\n`)
+    return null
+  })
+  if (!channel) return
+
+  const chunks = chunkText(reply.text, limit, mode)
+  for (let i = 0; i < chunks.length; i++) {
+    const isFirst = i === 0
+    const threadThis =
+      reply.replyTo != null &&
+      (replyToMode === 'all' || (replyToMode === 'first' && isFirst))
+    const send: { content: string; reply?: { messageReference: string; failIfNotExists: boolean } } = {
+      content: chunks[i]!,
+    }
+    if (threadThis) {
+      send.reply = { messageReference: reply.replyTo!, failIfNotExists: false }
+    }
+    await (channel as { send: (opts: typeof send) => Promise<unknown> }).send(send).catch((err) => {
+      process.stderr.write(`discord: chunk send failed for ${reply.chatId}: ${err}\n`)
+    })
+  }
+}
 
 /**
  * Master-channel command handler. Returns true when the message was consumed
@@ -889,6 +1003,49 @@ async function handleInbound(msg: Message): Promise<void> {
   // the only one who can mutate state.
   if (await tryMasterCommand(msg, result.access)) return
 
+  // Project-pool intercept: if channels.json is configured AND this chat is
+  // a registered project, deliver the inbound to the chat's dedicated Claude
+  // subprocess and return. The single-session fallback (mcp.notification
+  // below) keeps running for unconfigured chats so an install without
+  // channels.json behaves exactly like the upstream plugin.
+  if (projectPool) {
+    let cfg
+    try {
+      cfg = loadChannelsConfig()
+    } catch {
+      cfg = null
+    }
+    if (cfg && cfg.projects[msg.channelId]) {
+      const atts: string[] = []
+      for (const att of msg.attachments.values()) {
+        const kb = (att.size / 1024).toFixed(0)
+        atts.push(`${safeAttName(att)} (${att.contentType ?? 'unknown'}, ${kb}KB)`)
+      }
+      const content = msg.content || (atts.length > 0 ? '(attachment)' : '')
+
+      if ('sendTyping' in msg.channel) {
+        void msg.channel.sendTyping().catch(() => {})
+      }
+      if (result.access.ackReaction) {
+        void msg.react(result.access.ackReaction).catch(() => {})
+      }
+
+      void projectPool
+        .deliver(msg.channelId, {
+          messageId: msg.id,
+          userId: msg.author.id,
+          username: msg.author.username,
+          content,
+          ts: msg.createdAt.toISOString(),
+          attachments: atts.length > 0 ? atts : undefined,
+        })
+        .catch((err) => {
+          process.stderr.write(`discord: pool deliver failed: ${err}\n`)
+        })
+      return
+    }
+  }
+
   // Permission-reply intercept: if this looks like "yes xxxxx" for a
   // pending permission request, emit the structured event instead of
   // relaying as chat. The sender is already gate()-approved at this point
@@ -951,6 +1108,10 @@ async function handleInbound(msg: Message): Promise<void> {
 
 client.once('ready', c => {
   process.stderr.write(`discord channel: gateway connected as ${c.user.tag}\n`)
+})
+
+void maybeInitProjectsBackend().catch(err => {
+  process.stderr.write(`discord: project backend init failed: ${err}\n`)
 })
 
 client.login(TOKEN).catch(err => {
