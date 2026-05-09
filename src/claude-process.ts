@@ -147,6 +147,13 @@ export interface ClaudeProjectProcessOptions {
    * `git push` and `gh pr create` work non-interactively.
    */
   gitCredential?: string
+  /**
+   * Optional Anthropic-compatible provider override. When set, the
+   * subprocess gets ANTHROPIC_BASE_URL + ANTHROPIC_API_KEY in its env,
+   * routing model calls to that provider instead of Anthropic. Unset =
+   * inherit the operator's Claude Code subscription auth.
+   */
+  provider?: { baseUrl: string; apiKey: string; name?: string }
   /** Override `claude` binary path. Falls back to PATH lookup. */
   claudeBin?: string
   /** Diagnostics. Defaults to stderr with a slug prefix. */
@@ -212,6 +219,16 @@ export class ClaudeProjectProcess implements ProjectProcess {
     // Build the env block tmux gives the new session — and through that,
     // the claude subprocess and any `git`/`gh` calls it makes via Bash.
     let spawnEnv: NodeJS.ProcessEnv = { ...process.env }
+
+    // Provider routing: when set, point claude's API client at a third
+    // party Anthropic-compatible endpoint (e.g. MiniMax). Without this,
+    // claude uses the operator's stored Claude Code OAuth.
+    if (this.opts.provider) {
+      spawnEnv.ANTHROPIC_BASE_URL = this.opts.provider.baseUrl
+      spawnEnv.ANTHROPIC_API_KEY = this.opts.provider.apiKey
+      this.log(`provider override: ${this.opts.provider.name ?? '(unnamed)'} → ${this.opts.provider.baseUrl}`)
+    }
+
     if (this.opts.gitCredential) {
       try {
         const creds = loadCredentials()

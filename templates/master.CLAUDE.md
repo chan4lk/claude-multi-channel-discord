@@ -31,6 +31,8 @@ The bot exposes `mcp__mcd__run_master_command` — **available only in this mast
 | "every day at 9am have <slug> work on the backlog" | `run_master_command({ command: 'schedule add <slug> --at 09:00 --prompt "Pick up the next 2 backlog items from BACKLOG.md and implement them. Push to a feature branch and open a PR. If BACKLOG.md is empty, reply \\"all done — pause schedule\\"."' })` |
 | "show my scheduled jobs" | `run_master_command({ command: "schedule list" })` |
 | "pause the keyflow daily job" | `run_master_command({ command: "schedule list keyflow" })` to find the id, then `run_master_command({ command: "schedule pause <id>" })` |
+| "use minimax for the keyflow project" | If `defaults.providers.minimax` exists in channels.json: `run_master_command({ command: "show keyflow" })` (verify state), then ask the operator to confirm before running `run_master_command({ command: "set keyflow ..." })` — actually `provider` is set at create/clone time. To switch an existing project, edit channels.json or recreate. |
+| "create a fresh project that uses minimax" | `run_master_command({ command: 'create --new-channel <slug> --slug <slug> --prompt "..." --provider minimax --model MiniMax-M2.7' })` |
 
 After calling the tool, take its returned text and emit it via `mcp__mcd__reply` (lightly cleaned up if it's verbose). Don't dump raw command output unless the operator explicitly asks for it — paraphrase the success and surface any errors clearly.
 
@@ -45,12 +47,16 @@ list                                    — list all projects
 show   <chat_id-or-slug>                — config + prompt preview + git status
 status <chat_id-or-slug>                — alias for show
 
-create <chat_id> --slug X --prompt "..." [--model sonnet|opus|haiku] [--repo-dir PATH]
-create --new-channel NAME --slug X --prompt "..." [--model M] [--parent CATEGORY_ID]
+create <chat_id> --slug X --prompt "..." [--model M] [--provider NAME] [--repo-dir PATH]
+create --new-channel NAME --slug X --prompt "..." [--model M] [--provider NAME] [--parent CATEGORY_ID]
    --new-channel auto-creates a Discord channel (needs Manage Channels perm)
    --repo-dir attaches to an existing local checkout via symlink
+   --provider NAME routes the project's agent to a non-default provider
+                   (e.g. `minimax`). Provider catalog lives at
+                   defaults.providers in channels.json. Unset = use the
+                   operator's Claude Code subscription.
 
-clone <chat_id-or--new-channel NAME> --slug X --repo URL [--branch BR] [--creds NAME] [--prompt "..."]
+clone <chat_id-or--new-channel NAME> --slug X --repo URL [--branch BR] [--creds NAME] [--provider NAME] [--prompt "..."]
    Defaults inherit from channels.json defaults.git.credentials. Aliases live in
    ~/.claude/channels/discord-multi/git-credentials.json. Common entries:
      ssh-default — typically ~/.ssh/id_ed25519 (GitHub)
@@ -84,6 +90,26 @@ URL rewriting cheatsheet:
 | `https://github.com/<owner>/<repo>` | `git@github.com:<owner>/<repo>.git` |
 | `https://github.com/<owner>/<repo>.git` | `git@github.com:<owner>/<repo>.git` |
 | `https://dev.azure.com/<org>/<proj>/_git/<repo>` | `git@ssh.dev.azure.com:v3/<org>/<proj>/<repo>` (also pass `--creds ssh-azure`) |
+
+# Provider routing
+
+Projects default to the operator's Claude Code subscription auth (no API key, no env override). To route specific projects to an Anthropic-compatible third party (e.g. MiniMax via `https://api.minimax.io/anthropic`), the operator adds entries to `defaults.providers` in channels.json:
+
+```jsonc
+"defaults": {
+  ...
+  "providers": {
+    "minimax": {
+      "baseUrl": "https://api.minimax.io/anthropic",
+      "apiKeyEnv": "MINIMAX_API_KEY"
+    }
+  }
+}
+```
+
+Then on `create` / `clone` add `--provider minimax`, optionally with `--model MiniMax-M2.7`. The bot reads `MINIMAX_API_KEY` from its process env and exposes it (along with `ANTHROPIC_BASE_URL`) to the per-project claude subprocess. The agent in that channel calls MiniMax instead of Anthropic — same `mcp__mcd__reply` tool, same git env, just a different model API on the back end.
+
+`!project show <slug>` displays the resolved provider so you can verify routing.
 
 # Design tips
 

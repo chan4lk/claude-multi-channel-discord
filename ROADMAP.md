@@ -118,6 +118,13 @@ Done:
 - ✅ Auto-loaded git/Discord workflow guidance baked into every project's CLAUDE.md (clone + create paths). Agents now know about `git push`, `gh pr create`, and how to use `mcp__mcd__reply` without being told.
 - ✅ Discord gateway-resume dedup: pool drops duplicate `messageCreate` events by `(chatId, messageId)` with a 60s TTL.
 - ✅ Stale `notifyChat` / `isChatReady` / `waitForChatReady` / `closeChat` stubs in MasterMcpServer collapsed to one-line no-ops.
+- ✅ `!project usage` (alias `ps` / `top`) — per-project resource snapshot (pid, mem, cpu time, uptime, last activity) sourced from `/proc`.
+- ✅ `!project stop <slug>` — kill the subprocess without removing the project; lazy-respawns on next message.
+- ✅ `!project schedule add/list/pause/resume/rm` — daily HH:MM scheduler. Synthetic envelopes go through the pool, agent-agnostic. Useful for "implement N backlog items every day" workflows. (Cron-syntax support reserved as a follow-up.)
+- ✅ `--new-channel` is now find-or-create (idempotent). `clone` / `create` rollback any auto-created channel on later failure. `bin/cleanup-orphan-channels.sh` exists for legacy duplicate cleanup.
+- ✅ `.mcp.json` discovery dialog + workspace-trust dialog auto-dismissed by `waitForTuiReady` so cloned repos with their own MCP configs don't block the TUI.
+- ✅ Per-project provider routing: `defaults.providers` catalog + per-project `provider` field. Set `ANTHROPIC_BASE_URL` + `ANTHROPIC_API_KEY` in spawn env to route specific projects to MiniMax / Bedrock / Vertex / etc. while others stay on the operator's Claude subscription.
+- ✅ `bin/setup-new-instance.sh` deploys `templates/master.CLAUDE.md` so fresh installs ship with the natural-language → command table baked in.
 
 Remaining:
 - Per-channel allowlists beyond what `access.json groups[].allowFrom` covers (e.g. role-based)

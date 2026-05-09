@@ -86,6 +86,35 @@ Tool surface (per chat session):
 - `mcp__mcd__react`, `mcp__mcd__edit_message`, `mcp__mcd__download_attachment`, `mcp__mcd__fetch_messages` — available when constructed with a `Client` (which `server.ts` always passes). Direct discord.js calls.
 - `mcp__mcd__run_master_command` — **only available in the master channel session** (gate: `chatId === getMasterChatId()`). Takes `{ command }` (everything after `!project`), routes through `handleMasterCommand`, returns the parser's reply text. This is what makes the master claude conversational — natural-language asks turn into real verbs without operator typing.
 
+### `Scheduler` (`src/scheduler.ts`)
+
+Persistent cron-lite. Reads/writes `~/.claude/channels/discord-multi/schedules.json`. Ticks every 60s, walks the schedules table, fires anything that's due via `pool.deliver(chatId, syntheticEnvelope)`. Synthetic envelopes have `messageId = "sched-<id>-<ts>"` (so the dedup TTL doesn't collide with real Discord inbounds) and `userId = "__mcd_scheduler__"` (so the log distinguishes operator-typed messages from machine-fired ones).
+
+`hasFiredToday()` keys off `lastRunAt` to dedup ticks within a minute and to avoid double-fires across bot restarts (a 09:00 schedule won't re-fire if the bot restarts at 09:30 on the same day). `maxRuns` auto-pauses runaway loops.
+
+v1 timing: daily HH:MM, host local zone. The schema reserves a `cron` field for full-cron support. Surface from master is `!project schedule add/list/pause/resume/rm`.
+
+Crucially, the scheduler doesn't know what kind of agent the project runs. It dispatches through `ProjectPool.deliver()` which dispatches to `ProjectProcess.deliver()`. Today the implementation is `ClaudeProjectProcess` spawning `claude`; nothing in the scheduler care if a future project runs MiniMax via the Anthropic-compatible API or some other CLI.
+
+### Provider routing
+
+Projects default to the operator's Claude Code subscription auth (no API key, no env override at spawn). To route specific projects to a different Anthropic-compatible API:
+
+```jsonc
+"defaults": {
+  "providers": {
+    "minimax": {
+      "baseUrl": "https://api.minimax.io/anthropic",
+      "apiKeyEnv": "MINIMAX_API_KEY"
+    }
+  }
+}
+```
+
+Then `!project create --provider minimax --model MiniMax-M2.7 ...` (or `clone --provider minimax ...`). At spawn time `resolveProvider()` looks up the alias, reads the API key from the bot's process env (`MINIMAX_API_KEY`), and `ClaudeProjectProcess` sets `ANTHROPIC_BASE_URL` + `ANTHROPIC_API_KEY` in the subprocess env. The per-channel claude is otherwise identical — same MCP config, same git env, same TUI dance — it just calls MiniMax instead of Anthropic when it generates.
+
+Mixing providers across channels is fine. Subscription-auth projects coexist with API-key-auth projects in the same bot process.
+
 ### `ClaudeProjectProcess` (`src/claude-process.ts`)
 
 One per project (`Map<chat_id, ClaudeProjectProcess>` lives in the pool). Wraps a single tmux session running `claude --mcp-config <tmpfile> --strict-mcp-config --permission-mode auto [--model M] [--allowed-tools ...] [--disallowed-tools ...] [--resume <session-id>] [<extraArgs>...]`.
@@ -94,7 +123,7 @@ Lifecycle:
 
 - `start()` — writes `--mcp-config` to a tmpfile (mode 0600), constructs the spawn env (project's git credential alias resolved into `GIT_ASKPASS` or `GIT_SSH_COMMAND` so `git push`/`gh pr create` work non-interactively), and runs `tmux new-session -d -s mcd-<slug>-<ts> -x 200 -y 50 -c <projectDir> '<cmd>'`. After the call returns the pane is alive but claude is still warming up.
 - `deliver(envelope)` — gates on `waitForTuiReady`, then `tmux send-keys -l <text>; sleep 120ms; tmux send-keys C-m`. The text body is wrapped in the upstream `<channel source="discord" chat_id="..." message_id="..." user="..." ts="...">BODY</channel>` envelope so the project's CLAUDE.md guidance applies.
-- `getStats()` — resolves the claude PID via `tmux list-panes -F '#{pane_pid}'` then walks `/proc/<pid>/task/<pid>/children` for the first `comm == claude/node`. Reads `/proc/<pid>/{stat,status,uptime}` for cpu time / VmRSS / start time. POSIX-only; returns null on non-Linux.
+- `getStats()` — resolves the claude PID via `tmux list-panes -F '#{pane_pid}'` then walks `/proc/<pid>/task/<pid>/children` for the first `comm == claude/node`. Reads `/proc/<pid>/{stat,status,uptime}` for cpu time / VmRSS / start time. POSIX-only; returns null on non-Linux. Surfaced via `!project usage`.
 - `kill(reason)` — `tmux kill-session -t <name>`. Marks dead, fires exit handlers, and tears down the master MCP session for this chat (the master MCP server's `closeChat` is now a no-op under stateless transport but the call is preserved for symmetry).
 - Alive-check timer polls `tmux has-session` every 5s; when the session disappears (claude exited on its own, or systemd / operator killed tmux), the process is marked dead and the next inbound to this chat lazy-respawns it.
 
@@ -131,6 +160,7 @@ Verbs and their handlers:
 | `pull` | working tree | `git pull --ff-only`; refuses on non-FF |
 | `usage` / `ps` / `top` | — | calls `pool.snapshot()` and renders a code-block table |
 | `stop` | running subprocess only | tells operator subprocess will respawn on next message |
+| `schedule add/list/pause/resume/rm` | `schedules.json` | daily HH:MM jobs; fires synthetic envelopes through `pool.deliver` |
 | `rm` | `channels.json`, `access.json`, archives `projects/<slug>` to `projects/.archive/<slug>-<ts>/` | requires `--yes`; refuses to remove the master project |
 | `help` | — | one-screen reference |
 
@@ -146,6 +176,7 @@ The `MasterMutator` interface is the dependency-injection seam — the parser do
 ├── access.json                allowFrom + groups, mode 0600
 ├── channels.json              project registry + master pointer + defaults
 ├── git-credentials.json       credential aliases (mode 0600)
+├── schedules.json             daily HH:MM cron-lite, mode 0600
 ├── inbox/                     downloaded attachments (one file per call)
 └── projects/
     ├── master/
@@ -162,8 +193,8 @@ The `MasterMutator` interface is the dependency-injection seam — the parser do
 `channels.json` schema highlights:
 
 - `master.chatId` + `master.commandPrefix` (default `!project`)
-- `defaults.{model, idleEvictMinutes, maxConcurrent, git.{userName,userEmail,credentials,branchPrefix}, claude.{permissionMode,allowedTools,disallowedTools,extraArgs}}`
-- `projects[<chat_id>].{slug, model?, git?, claude?}` — per-project overrides
+- `defaults.{model, idleEvictMinutes, maxConcurrent, git.{userName,userEmail,credentials,branchPrefix}, claude.{permissionMode,allowedTools,disallowedTools,extraArgs}, providers.<alias>.{baseUrl,apiKeyEnv}, provider?}`
+- `projects[<chat_id>].{slug, model?, git?, claude?, provider?}` — per-project overrides
 
 `git-credentials.json` aliases (mode 0600 enforced by the loader):
 

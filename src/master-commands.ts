@@ -150,8 +150,8 @@ function helpText(prefix: string): string {
     `${prefix} list                          — list all projects`,
     `${prefix} show   <chat_id-or-slug>      — show config + prompt preview + git status`,
     `${prefix} status <chat_id-or-slug>      — alias for show`,
-    `${prefix} create <chat_id-or--new-channel NAME> --slug X --prompt "..." [--model M] [--repo-dir PATH]`,
-    `${prefix} clone  <chat_id-or--new-channel NAME> --slug X --repo URL [--branch BR] [--creds NAME]`,
+    `${prefix} create <chat_id-or--new-channel NAME> --slug X --prompt "..." [--model M] [--provider NAME] [--repo-dir PATH]`,
+    `${prefix} clone  <chat_id-or--new-channel NAME> --slug X --repo URL [--branch BR] [--creds NAME] [--provider NAME]`,
     `${prefix} set    <chat_id-or-slug> --prompt "..."                — rewrite CLAUDE.md`,
     `${prefix} rename <chat_id-or-slug> --slug NEW                    — rename slug + dir`,
     `${prefix} remote <chat_id-or-slug> [--set URL] [--creds NAME]    — show/set git remote`,
@@ -203,6 +203,14 @@ function handleShow(config: ChannelsConfig, rest: string[]): string {
     `chat_id: \`${chatId}\``,
     `model: ${model}`,
   ]
+  const providerName = project.provider ?? config.defaults.provider
+  if (providerName) {
+    const def = config.defaults.providers[providerName]
+    if (def) lines.push(`provider: ${providerName} → ${def.baseUrl} (key from \$${def.apiKeyEnv})`)
+    else lines.push(`provider: ${providerName} (⚠ not in defaults.providers)`)
+  } else {
+    lines.push(`provider: (Claude subscription)`)
+  }
   if (project.git) {
     lines.push(`remote: ${project.git.remote}`)
     lines.push(`branch: ${project.git.branch}`)
@@ -340,11 +348,20 @@ async function handleCreate(rest: string[], ctx: MasterContext): Promise<string>
     writeFileSync(projectClaudeMd(slug), `${enriched}\n`, { mode: 0o600 })
   }
 
+  const provider = typeof flags.provider === 'string' ? flags.provider : undefined
+  if (provider !== undefined && !config.defaults.providers[provider]) {
+    return await rollback(`provider "${provider}" is not in defaults.providers — add it to channels.json first`)
+  }
+
   const updated: ChannelsConfig = {
     ...config,
     projects: {
       ...config.projects,
-      [chatId]: { slug, ...(model ? { model } : {}) },
+      [chatId]: {
+        slug,
+        ...(model ? { model } : {}),
+        ...(provider ? { provider } : {}),
+      },
     },
   }
   saveConfig(updated)
@@ -625,6 +642,11 @@ async function handleClone(rest: string[], ctx: MasterContext): Promise<string> 
     claudeMdNote = `wrote CLAUDE.md (${prompt.length} chars)`
   }
 
+  const cloneProvider = typeof flags.provider === 'string' ? flags.provider : undefined
+  if (cloneProvider !== undefined && !config.defaults.providers[cloneProvider]) {
+    return `provider "${cloneProvider}" is not in defaults.providers — add it to channels.json first`
+  }
+
   // Register in channels.json with git block.
   const updated: ChannelsConfig = {
     ...config,
@@ -633,6 +655,7 @@ async function handleClone(rest: string[], ctx: MasterContext): Promise<string> 
       [chatId]: {
         slug,
         ...(model ? { model } : {}),
+        ...(cloneProvider ? { provider: cloneProvider } : {}),
         git: {
           remote: repo,
           branch: branch ?? 'main',

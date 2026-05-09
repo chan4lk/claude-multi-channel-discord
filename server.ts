@@ -34,7 +34,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, 
 import { homedir } from 'os'
 import { join, sep } from 'path'
 
-import { loadConfig as loadChannelsConfig, resolveClaudeArgs } from './src/channels-config.ts'
+import { loadConfig as loadChannelsConfig, resolveClaudeArgs, resolveProvider } from './src/channels-config.ts'
 import { ClaudeProjectProcess } from './src/claude-process.ts'
 import { chunk as chunkText, DISCORD_HARD_CHUNK_LIMIT } from './src/discord-chunk.ts'
 import { handleMasterCommand } from './src/master-commands.ts'
@@ -973,6 +973,16 @@ async function maybeInitProjectsBackend(): Promise<void> {
 
   projectPool = new ProjectPool({
     factory: ({ chatId, project, config }) => {
+      // Resolve provider — null when project uses Claude subscription
+      // auth, non-null when routing to a third-party (MiniMax, etc.).
+      let provider: { baseUrl: string; apiKey: string; name: string } | null = null
+      try {
+        const resolved = resolveProvider(config, project)
+        if (resolved) provider = resolved
+      } catch (err) {
+        process.stderr.write(`discord: provider resolve failed for ${project.slug}: ${(err as Error).message}\n`)
+      }
+
       const proc = new ClaudeProjectProcess({
         chatId,
         slug: project.slug,
@@ -980,6 +990,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
         model: project.model ?? config.defaults.model,
         claudeArgs: resolveClaudeArgs(config, project),
         gitCredential: project.git?.credentials ?? config.defaults.git.credentials,
+        ...(provider ? { provider } : {}),
       })
       // Fire-and-forget; the pool may call deliver() before start() resolves
       // for the very first message — ClaudeProjectProcess deliver() awaits

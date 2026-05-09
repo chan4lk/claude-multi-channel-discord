@@ -19,6 +19,25 @@ const ProjectGitSchema = z.object({
 })
 
 /**
+ * Catalog entry for an Anthropic-compatible provider. The host's
+ * ANTHROPIC_API_KEY env var (or whichever name `apiKeyEnv` points at)
+ * supplies the key at spawn time; nothing is persisted in channels.json.
+ *
+ * Implicit "subscription" provider: when project.provider is unset and
+ * no defaults.provider is configured, the per-channel claude inherits
+ * the operator's existing Claude Code OAuth / keychain credentials —
+ * no env override at all. To explicitly route a project to a third
+ * party (e.g. MiniMax), define a provider here and set project.provider
+ * to its name.
+ */
+const ProviderSchema = z.object({
+  baseUrl: z.string().url(),
+  /** Name of the env var the bot reads to get the provider's API key. */
+  apiKeyEnv: z.string().min(1),
+})
+export type Provider = z.infer<typeof ProviderSchema>
+
+/**
  * Flags handed to each per-project `claude` subprocess. These all map to
  * Claude Code CLI arguments. Arbitrary `extraArgs` are appended last and
  * win on conflict — useful for flags this schema doesn't model yet, but
@@ -39,6 +58,13 @@ const ProjectSchema = z.object({
   model: z.string().optional(),
   git: ProjectGitSchema.optional(),
   claude: ClaudeArgsSchema.optional(),
+  /**
+   * References a key in defaults.providers. When set, the per-channel
+   * claude is spawned with ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY env
+   * overrides that route the model API call to that provider. Unset =
+   * use the operator's Claude Code subscription auth.
+   */
+  provider: z.string().optional(),
 })
 
 const DefaultsGitSchema = z.object({
@@ -60,6 +86,18 @@ const DefaultsSchema = z.object({
    * usable from Discord without per-tool prompts.
    */
   claude: ClaudeArgsSchema.default({ permissionMode: 'auto' }),
+  /**
+   * Catalog of Anthropic-compatible providers a project can route to.
+   * Keys are operator-chosen aliases (e.g. "minimax", "azure-anthropic").
+   * Per-project `provider` references one of these. Empty by default —
+   * unconfigured projects use the operator's Claude subscription auth.
+   */
+  providers: z.record(z.string(), ProviderSchema).default({}),
+  /**
+   * Default provider alias for projects that don't specify one. Unset
+   * means "use Claude subscription" (no env override at spawn).
+   */
+  provider: z.string().optional(),
 })
 
 const MasterSchema = z.object({
@@ -119,6 +157,38 @@ export function saveConfig(config: ChannelsConfig, path: string = channelsFile()
 
 export function findProjectByChatId(config: ChannelsConfig, chatId: string): Project | undefined {
   return config.projects[chatId]
+}
+
+/**
+ * Resolve a project's effective provider. Returns null when the project
+ * uses Claude subscription auth (no env override). Returns a non-null
+ * value with the resolved API key when the project routes to a
+ * configured third-party provider — at that point the spawn env should
+ * set ANTHROPIC_BASE_URL + ANTHROPIC_API_KEY to those values.
+ *
+ * Throws when the project references a provider alias that isn't in
+ * `defaults.providers`, or when the provider's apiKeyEnv variable is
+ * not set on the bot's process. The error string is operator-readable.
+ */
+export function resolveProvider(
+  config: ChannelsConfig,
+  project: Project,
+): { name: string; baseUrl: string; apiKey: string } | null {
+  const name = project.provider ?? config.defaults.provider
+  if (!name) return null
+  const def = config.defaults.providers[name]
+  if (!def) {
+    throw new Error(
+      `provider "${name}" referenced by ${project.slug} but not in defaults.providers — add it or change the project's provider field`,
+    )
+  }
+  const apiKey = process.env[def.apiKeyEnv]
+  if (!apiKey) {
+    throw new Error(
+      `provider "${name}" requires env var ${def.apiKeyEnv} to be set on the bot process; not currently set`,
+    )
+  }
+  return { name, baseUrl: def.baseUrl, apiKey }
 }
 
 /**
