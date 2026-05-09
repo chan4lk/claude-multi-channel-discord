@@ -939,11 +939,18 @@ async function tryMasterCommand(msg: Message, access: Access): Promise<boolean> 
     return false
   }
 
-  const result = handleMasterCommand(msg.content, {
+  const result = await handleMasterCommand(msg.content, {
     chatId: msg.channelId,
     userId: msg.author.id,
     config,
     authorizedUsers: access.allowFrom,
+    mutator: projectPool
+      ? {
+          killProject: async (id) => {
+            await projectPool!.killChat(id)
+          },
+        }
+      : undefined,
   })
 
   switch (result.kind) {

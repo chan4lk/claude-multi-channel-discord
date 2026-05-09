@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 import { parseFlags, splitArgv } from './argv.ts'
 import {
@@ -6,10 +7,13 @@ import {
   findProjectByChatId,
   findProjectBySlug,
   isMasterChannel,
+  loadConfig,
+  saveConfig,
+  SLUG_PATTERN,
   type ChannelsConfig,
   type Project,
 } from './channels-config.ts'
-import { projectClaudeMd } from './paths.ts'
+import { archiveDir, projectClaudeMd, projectDir } from './paths.ts'
 
 export type MasterCommandResult =
   | { kind: 'no-master-configured' }
@@ -22,18 +26,27 @@ export interface MasterContext {
   chatId: string
   userId: string
   config: ChannelsConfig
-  /**
-   * Discord user IDs allowed to drive master commands. Pass the union of
-   *   access.allowFrom (DM allowlist)  ∪
-   *   access.groups[masterChatId].allowFrom (or [] meaning any group member).
-   * Empty array = no one is authorized.
-   */
   authorizedUsers: string[]
+  /**
+   * Side-effects mutation verbs need. Optional so callers using only the
+   * read-only verbs (or unit tests of the parser) can omit it.
+   */
+  mutator?: MasterMutator
 }
 
-const VERBS_PHASE_1 = ['list', 'show', 'status', 'help'] as const
+export interface MasterMutator {
+  /** Kill the project's running subprocess so next message lazy-respawns. */
+  killProject: (chatId: string) => Promise<void>
+}
 
-export function handleMasterCommand(content: string, ctx: MasterContext): MasterCommandResult {
+const READ_VERBS = ['list', 'show', 'status', 'help'] as const
+const MUTATION_VERBS = ['create', 'set', 'rename', 'rm'] as const
+const PHASE_5_VERBS = ['clone', 'remote', 'pull'] as const
+
+export async function handleMasterCommand(
+  content: string,
+  ctx: MasterContext,
+): Promise<MasterCommandResult> {
   const { config, chatId, userId } = ctx
 
   if (!config.master) return { kind: 'no-master-configured' }
@@ -43,8 +56,6 @@ export function handleMasterCommand(content: string, ctx: MasterContext): Master
   const trimmed = content.trim()
   if (!trimmed.startsWith(prefix)) return { kind: 'no-prefix' }
 
-  // Authorization. The parser runs only on master-channel messages, but the
-  // group's allowFrom may further restrict who triggers commands.
   if (ctx.authorizedUsers.length === 0 || !ctx.authorizedUsers.includes(userId)) {
     return { kind: 'unauthorized' }
   }
@@ -71,34 +82,42 @@ export function handleMasterCommand(content: string, ctx: MasterContext): Master
     case 'status':
       return { kind: 'reply', text: handleShow(config, rest) }
     case 'create':
-    case 'clone':
+      return { kind: 'reply', text: await handleCreate(rest, ctx) }
     case 'set':
+      return { kind: 'reply', text: await handleSet(rest, ctx) }
     case 'rename':
-    case 'remote':
+      return { kind: 'reply', text: await handleRename(rest, ctx) }
     case 'rm':
+      return { kind: 'reply', text: await handleRm(rest, ctx) }
+    case 'clone':
+    case 'remote':
     case 'pull':
       return {
         kind: 'reply',
-        text: `\`${verb}\` lands in phase 4 once the project pool exists. For now use \`/discord:project\` from the terminal where it applies.`,
+        text: `\`${verb}\` lives in phase 5 (git layer). Not yet implemented.`,
       }
     default:
       return {
         kind: 'reply',
-        text: `unknown verb \`${verb}\`. try one of: ${VERBS_PHASE_1.join(', ')}`,
+        text: `unknown verb \`${verb}\`. try one of: ${[...READ_VERBS, ...MUTATION_VERBS, ...PHASE_5_VERBS].join(', ')}`,
       }
   }
 }
 
 function helpText(prefix: string): string {
   return [
-    '**Master commands** (read-only verbs available now):',
+    '**Master commands**',
     '```',
     `${prefix} list                          — list all projects`,
-    `${prefix} show   <chat_id-or-slug>      — show one project's config`,
+    `${prefix} show   <chat_id-or-slug>      — show one project's config + prompt preview`,
     `${prefix} status <chat_id-or-slug>      — alias for show until git lands`,
+    `${prefix} create <chat_id> --slug X --prompt "..." [--model M]   — register a new project`,
+    `${prefix} set    <chat_id-or-slug> --prompt "..."                — rewrite CLAUDE.md (restarts subprocess)`,
+    `${prefix} rename <chat_id-or-slug> --slug NEW                    — rename slug + dir`,
+    `${prefix} rm     <chat_id-or-slug> --yes                         — archive project, kill subprocess`,
     `${prefix} help                          — this message`,
     '```',
-    '_Mutation verbs (`create`, `clone`, `set`, `rename`, `remote`, `rm`, `pull`) are coming next phase._',
+    '_Phase 5 (`clone`, `remote`, `pull`) requires the git layer — coming next._',
   ].join('\n')
 }
 
@@ -124,14 +143,7 @@ function handleShow(config: ChannelsConfig, rest: string[]): string {
   if (positional.length === 0) return '`show` needs an argument: a chat_id or a slug'
   const target = positional[0]!
 
-  let entry: { chatId: string; project: Project } | undefined
-  if (/^\d{15,25}$/.test(target)) {
-    const project = findProjectByChatId(config, target)
-    if (project) entry = { chatId: target, project }
-  } else {
-    entry = findProjectBySlug(config, target)
-  }
-
+  const entry = resolveTarget(config, target)
   if (!entry) return `no project found for "${target}"`
 
   const { chatId, project } = entry
@@ -156,6 +168,184 @@ function handleShow(config: ChannelsConfig, rest: string[]): string {
   lines.push(promptPreview)
   lines.push('```')
   return lines.join('\n')
+}
+
+// ─── mutation verbs ───────────────────────────────────────────────────────
+
+async function handleCreate(rest: string[], _ctx: MasterContext): Promise<string> {
+  const { positional, flags } = parseFlags(rest)
+  if (positional.length === 0) return '`create` needs a chat_id as the first argument'
+  const chatId = positional[0]!
+  if (!/^\d{15,25}$/.test(chatId)) return `chat_id must be a Discord snowflake; got "${chatId}"`
+
+  const slug = flags.slug
+  if (typeof slug !== 'string') return '`create` requires `--slug NAME`'
+  if (!SLUG_PATTERN.test(slug)) return `slug "${slug}" must match ${SLUG_PATTERN}`
+
+  const prompt = typeof flags.prompt === 'string' ? flags.prompt : null
+  const model = typeof flags.model === 'string' ? flags.model : undefined
+  if (!prompt) return '`create` requires `--prompt "..."` (use --prompt "" if you really want an empty CLAUDE.md)'
+
+  // Re-load fresh — caller's snapshot may be stale by the time this runs.
+  const config = loadConfig()
+
+  if (config.projects[chatId]) {
+    return `chat_id ${chatId} is already mapped to project "${config.projects[chatId]!.slug}"`
+  }
+  if (findProjectBySlug(config, slug)) {
+    return `slug "${slug}" is already in use`
+  }
+
+  const dir = projectDir(slug)
+  if (existsSync(dir)) {
+    return `directory ${dir} already exists — pick a different slug or remove it first`
+  }
+
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  writeFileSync(projectClaudeMd(slug), `${prompt.trim()}\n`, { mode: 0o600 })
+
+  const updated: ChannelsConfig = {
+    ...config,
+    projects: {
+      ...config.projects,
+      [chatId]: { slug, ...(model ? { model } : {}) },
+    },
+  }
+  saveConfig(updated)
+
+  return [
+    `✅ project **${slug}** created for chat ${chatId}.`,
+    `Working dir: \`${dir}\``,
+    `CLAUDE.md: ${prompt.length} chars`,
+    `Model: ${model ?? config.defaults.model}`,
+    `_Send a message in that channel to spawn the first subprocess._`,
+  ].join('\n')
+}
+
+async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
+  const { positional, flags } = parseFlags(rest)
+  if (positional.length === 0) return '`set` needs a chat_id or slug'
+  const target = positional[0]!
+
+  const config = loadConfig()
+  const entry = resolveTarget(config, target)
+  if (!entry) return `no project found for "${target}"`
+
+  const prompt = typeof flags.prompt === 'string' ? flags.prompt : null
+  if (prompt === null) return '`set` requires `--prompt "..."`'
+
+  writeFileSync(projectClaudeMd(entry.project.slug), `${prompt.trim()}\n`, { mode: 0o600 })
+
+  // Trigger a respawn so the new prompt takes effect on the next message.
+  // CLAUDE.md is read at session start; an in-flight session would otherwise
+  // keep using the old text.
+  let respawnNote = '_subprocess will respawn on next message._'
+  if (flags['no-restart'] !== true && ctx.mutator) {
+    try {
+      await ctx.mutator.killProject(entry.chatId)
+      respawnNote = '_subprocess killed; next message will spawn it with the new prompt._'
+    } catch (err) {
+      respawnNote = `_kill failed: ${(err as Error).message}; restart manually if needed._`
+    }
+  }
+
+  return [`✅ rewrote CLAUDE.md for **${entry.project.slug}** (${prompt.length} chars).`, respawnNote].join('\n')
+}
+
+async function handleRename(rest: string[], ctx: MasterContext): Promise<string> {
+  const { positional, flags } = parseFlags(rest)
+  if (positional.length === 0) return '`rename` needs a chat_id or slug'
+  const target = positional[0]!
+
+  const newSlug = flags.slug
+  if (typeof newSlug !== 'string') return '`rename` requires `--slug NEW`'
+  if (!SLUG_PATTERN.test(newSlug)) return `slug "${newSlug}" must match ${SLUG_PATTERN}`
+
+  const config = loadConfig()
+  const entry = resolveTarget(config, target)
+  if (!entry) return `no project found for "${target}"`
+  if (entry.project.slug === newSlug) return `project ${target} already has slug "${newSlug}"`
+  if (findProjectBySlug(config, newSlug)) return `slug "${newSlug}" is already in use`
+
+  // Kill before moving so the running subprocess doesn't have a vanishing cwd.
+  if (ctx.mutator) {
+    try {
+      await ctx.mutator.killProject(entry.chatId)
+    } catch (err) {
+      return `kill before rename failed: ${(err as Error).message}`
+    }
+  }
+
+  const oldDir = projectDir(entry.project.slug)
+  const newDir = projectDir(newSlug)
+  if (existsSync(oldDir)) {
+    if (existsSync(newDir)) return `target directory ${newDir} already exists`
+    renameSync(oldDir, newDir)
+  }
+
+  const updated: ChannelsConfig = {
+    ...config,
+    projects: {
+      ...config.projects,
+      [entry.chatId]: { ...entry.project, slug: newSlug },
+    },
+  }
+  saveConfig(updated)
+
+  return `✅ renamed **${entry.project.slug}** → **${newSlug}**.`
+}
+
+async function handleRm(rest: string[], ctx: MasterContext): Promise<string> {
+  const { positional, flags } = parseFlags(rest)
+  if (positional.length === 0) return '`rm` needs a chat_id or slug'
+  const target = positional[0]!
+  if (flags.yes !== true) {
+    return `_destructive: pass \`--yes\` to confirm._\nWill archive the project's working dir and remove it from channels.json. CLAUDE.md content + git history (if any) are preserved under \`projects/.archive/\`.`
+  }
+
+  const config = loadConfig()
+  const entry = resolveTarget(config, target)
+  if (!entry) return `no project found for "${target}"`
+
+  if (entry.chatId === config.master?.chatId) {
+    return `refusing to rm the master project. If you really want to repoint master, edit channels.json by hand.`
+  }
+
+  if (ctx.mutator) {
+    try {
+      await ctx.mutator.killProject(entry.chatId)
+    } catch (err) {
+      return `kill before rm failed: ${(err as Error).message}`
+    }
+  }
+
+  const oldDir = projectDir(entry.project.slug)
+  if (existsSync(oldDir)) {
+    mkdirSync(archiveDir(), { recursive: true, mode: 0o700 })
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const archiveTarget = join(archiveDir(), `${entry.project.slug}-${stamp}`)
+    renameSync(oldDir, archiveTarget)
+  }
+
+  const projects = { ...config.projects }
+  delete projects[entry.chatId]
+  saveConfig({ ...config, projects })
+
+  return `✅ archived project **${entry.project.slug}** and removed from channels.json.\n_(working tree moved under \`projects/.archive/\` — manual cleanup if you want it gone.)_`
+}
+
+// ─── helpers ──────────────────────────────────────────────────────────────
+
+function resolveTarget(
+  config: ChannelsConfig,
+  target: string,
+): { chatId: string; project: Project } | undefined {
+  if (/^\d{15,25}$/.test(target)) {
+    const project = findProjectByChatId(config, target)
+    if (project) return { chatId: target, project }
+    return undefined
+  }
+  return findProjectBySlug(config, target)
 }
 
 function readClaudeMdPreview(slug: string, max = 500): string {

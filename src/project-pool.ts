@@ -98,6 +98,20 @@ export class ProjectPool {
     }
   }
 
+  /**
+   * Kill the running process for a single chat (if any). Used by mutation
+   * verbs (`set --prompt`, `rename`, `rm`) so the next inbound message
+   * lazy-spawns a fresh subprocess that picks up the new CLAUDE.md / slug
+   * directory. Idempotent — no-op if the chat has no live process.
+   */
+  async killChat(chatId: string, reason: 'idle-evict' | 'pool-full' | 'shutdown' | 'requested' = 'requested'): Promise<void> {
+    const proc = this.processes.get(chatId)
+    if (!proc) return
+    await proc.kill(reason)
+    // exit handler set in spawn() will remove from this.processes once the
+    // child actually exits — we don't need to delete here.
+  }
+
   /** Force an idle sweep. Public for tests. */
   evictIdle(): void {
     const config = this.opts.getConfig()
