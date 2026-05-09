@@ -13,7 +13,7 @@ import {
   type ChannelsConfig,
   type Project,
 } from './channels-config.ts'
-import { archiveDir, projectClaudeMd, projectDir } from './paths.ts'
+import { accessFile, archiveDir, projectClaudeMd, projectDir } from './paths.ts'
 
 export type MasterCommandResult =
   | { kind: 'no-master-configured' }
@@ -213,13 +213,53 @@ async function handleCreate(rest: string[], _ctx: MasterContext): Promise<string
   }
   saveConfig(updated)
 
+  // Also add the channel to access.json's groups so the gate() check
+  // upstream server.ts runs lets messages from this channel through.
+  // Without this, the bot silently drops everything in the new channel
+  // before it reaches the project pool.
+  const accessAdded = ensureChannelInAccessGroups(chatId)
+
   return [
     `✅ project **${slug}** created for chat ${chatId}.`,
     `Working dir: \`${dir}\``,
     `CLAUDE.md: ${prompt.length} chars`,
     `Model: ${model ?? config.defaults.model}`,
+    accessAdded ? `Access: added \`${chatId}\` to access.json groups (requireMention=false).` : `Access: \`${chatId}\` already in access.json groups.`,
     `_Send a message in that channel to spawn the first subprocess._`,
   ].join('\n')
+}
+
+/**
+ * Add chatId to access.json's groups map if not present. Mirrors what
+ * `/discord:access group add <id> --no-mention` would do via the upstream
+ * skill — we just write the same JSON shape directly. Returns true if we
+ * actually wrote a change, false if the entry was already present.
+ */
+function ensureChannelInAccessGroups(chatId: string): boolean {
+  const path = accessFile()
+  let raw: string
+  try {
+    raw = readFileSync(path, 'utf8')
+  } catch {
+    return false
+  }
+  let access: {
+    dmPolicy?: string
+    allowFrom?: string[]
+    groups?: Record<string, { requireMention?: boolean; allowFrom?: string[] }>
+    pending?: Record<string, unknown>
+    [k: string]: unknown
+  }
+  try {
+    access = JSON.parse(raw)
+  } catch {
+    return false
+  }
+  if (!access.groups) access.groups = {}
+  if (access.groups[chatId]) return false
+  access.groups[chatId] = { requireMention: false, allowFrom: [] }
+  writeFileSync(path, `${JSON.stringify(access, null, 2)}\n`, { mode: 0o600 })
+  return true
 }
 
 async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
@@ -331,7 +371,35 @@ async function handleRm(rest: string[], ctx: MasterContext): Promise<string> {
   delete projects[entry.chatId]
   saveConfig({ ...config, projects })
 
+  // Drop the channel from access.json groups too, so the gate stops
+  // accepting messages from it (the bot would otherwise still relay
+  // them to the legacy MCP path or, in standalone mode, drop them with
+  // a confusing diagnostic).
+  removeChannelFromAccessGroups(entry.chatId)
+
   return `✅ archived project **${entry.project.slug}** and removed from channels.json.\n_(working tree moved under \`projects/.archive/\` — manual cleanup if you want it gone.)_`
+}
+
+function removeChannelFromAccessGroups(chatId: string): void {
+  const path = accessFile()
+  let raw: string
+  try {
+    raw = readFileSync(path, 'utf8')
+  } catch {
+    return
+  }
+  let access: {
+    groups?: Record<string, unknown>
+    [k: string]: unknown
+  }
+  try {
+    access = JSON.parse(raw)
+  } catch {
+    return
+  }
+  if (!access.groups || !access.groups[chatId]) return
+  delete access.groups[chatId]
+  writeFileSync(path, `${JSON.stringify(access, null, 2)}\n`, { mode: 0o600 })
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────

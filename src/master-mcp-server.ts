@@ -209,6 +209,7 @@ export class MasterMcpServer {
         return { content: [{ type: 'text', text: `invalid reply args: ${args.error.toString()}` }], isError: true }
       }
       try {
+        this.log(`reply tool called for ${chatId}: text=${JSON.stringify(args.data.text).slice(0, 60)} reply_to=${args.data.reply_to ?? '-'}`)
         this.onReply({ kind: 'text', chatId, text: args.data.text, replyTo: args.data.reply_to })
         return { content: [{ type: 'text', text: 'ok' }] }
       } catch (err) {

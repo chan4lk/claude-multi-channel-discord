@@ -75,9 +75,11 @@ export class ProjectPool {
   /**
    * Route an outbound reply (emitted by the master MCP server when a
    * subprocess calls a tool) to the matching process so its lastActivity
-   * bumps and its onReply subscribers fire. If the chat has no live
-   * process the reply is logged and dropped — this should never happen in
-   * practice because the process held the MCP session that produced it.
+   * bumps and its onReply subscribers fire.
+   *
+   * The fan-out to opts.onReply happens via spawn()'s proc.onReply
+   * subscription — calling opts.onReply here too produced duplicate
+   * Discord posts. Single path now.
    */
   acceptReply(reply: OutboundReply): void {
     const proc = this.processes.get(reply.chatId)
@@ -87,14 +89,6 @@ export class ProjectPool {
     }
     if (typeof (proc as { acceptReply?: (r: OutboundReply) => void }).acceptReply === 'function') {
       ;(proc as unknown as { acceptReply: (r: OutboundReply) => void }).acceptReply(reply)
-    }
-    // Always fan out via the pool's own onReply sink — this is the
-    // canonical path that lands on Discord. Per-process onReply handlers
-    // are an optional secondary hook (not used by server.ts).
-    try {
-      this.opts.onReply(reply)
-    } catch (err) {
-      process.stderr.write(`pool: onReply (acceptReply path) threw: ${err}\n`)
     }
   }
 

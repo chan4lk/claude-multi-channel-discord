@@ -926,6 +926,7 @@ async function dispatchProjectReply(reply: OutboundReply): Promise<void> {
   if (!channel) return
 
   const chunks = chunkText(reply.text, limit, mode)
+  process.stderr.write(`discord: dispatch chat=${reply.chatId} chunks=${chunks.length} text=${JSON.stringify(reply.text).slice(0, 60)}\n`)
   for (let i = 0; i < chunks.length; i++) {
     const isFirst = i === 0
     const threadThis =
