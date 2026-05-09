@@ -42,6 +42,19 @@ export interface MasterMcpServerOptions {
    * via onReply).
    */
   client?: Client
+  /**
+   * Live read of the configured master chat id. Used to decide whether
+   * a given session may use the privileged `run_master_command` tool.
+   * Returns undefined when no master is configured (tool then absent).
+   */
+  getMasterChatId?: () => string | undefined
+  /**
+   * Executes a `!project ...` command body and returns the reply text
+   * the parser would have produced. Only available to the master session.
+   * The string passed in is the verb + flags WITHOUT the leading prefix:
+   * e.g. `create --new-channel foo --slug foo --prompt "..."`.
+   */
+  executeMasterCommand?: (commandLine: string) => Promise<string>
   /** Diagnostics. Defaults to stderr. */
   log?: (msg: string) => void
 }
@@ -53,6 +66,8 @@ export class MasterMcpServer {
   private boundPort = 0
   private readonly onReply: (reply: OutboundReply) => void
   private readonly client: Client | null
+  private readonly getMasterChatId: () => string | undefined
+  private readonly executeMasterCommand: ((cmd: string) => Promise<string>) | null
   private readonly log: (msg: string) => void
 
   constructor(opts: MasterMcpServerOptions) {
@@ -60,6 +75,8 @@ export class MasterMcpServer {
     this.desiredPort = opts.port ?? 0
     this.onReply = opts.onReply
     this.client = opts.client ?? null
+    this.getMasterChatId = opts.getMasterChatId ?? (() => undefined)
+    this.executeMasterCommand = opts.executeMasterCommand ?? null
     this.log = opts.log ?? ((m) => process.stderr.write(`[mcp-master] ${m}\n`))
   }
 
@@ -207,6 +224,25 @@ export class MasterMcpServer {
           },
         },
       ]
+      // Master-only privileged tool: lets the master channel's claude
+      // execute the same `!project ...` commands the operator would type.
+      // This is how natural-language requests in the master channel get
+      // turned into actions ("create a project for keyflow at <url>"
+      // → claude calls run_master_command("clone --new-channel ...")).
+      if (this.executeMasterCommand && this.getMasterChatId() === chatId) {
+        tools.push({
+          name: 'run_master_command',
+          description: 'Execute a multi-channel-discord master command (e.g. `list`, `create --new-channel foo --slug foo --prompt "..."`, `clone --new-channel x --slug y --repo URL`). Pass everything AFTER `!project` as `command`. ONLY available in the master channel — other channels can\'t see this tool. Use this to translate natural-language requests from the operator into actual project mutations.',
+          inputSchema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              command: { type: 'string', description: 'Verb + flags, e.g. `create --new-channel keyflow --slug keyflow --prompt "..."`' },
+            },
+            required: ['command'],
+          },
+        })
+      }
       if (this.client) {
         tools.push(
           {
@@ -284,6 +320,17 @@ export class MasterMcpServer {
             this.log(`reply tool called for ${chatId}: text=${JSON.stringify(parsed.data.text).slice(0, 60)} reply_to=${parsed.data.reply_to ?? '-'}`)
             this.onReply({ kind: 'text', chatId, text: parsed.data.text, replyTo: parsed.data.reply_to })
             return okResult('ok')
+          }
+          case 'run_master_command': {
+            if (!this.executeMasterCommand) return errorResult('run_master_command not configured')
+            if (this.getMasterChatId() !== chatId) {
+              return errorResult('run_master_command is only available in the master channel session')
+            }
+            const cmd = String(args.command ?? '').trim()
+            if (!cmd) return errorResult('command is required')
+            this.log(`run_master_command for ${chatId}: ${cmd.slice(0, 200)}`)
+            const reply = await this.executeMasterCommand(cmd)
+            return okResult(reply)
           }
           case 'react':
             return await this.callReact(chatId, args)

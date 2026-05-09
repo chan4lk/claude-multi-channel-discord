@@ -881,6 +881,52 @@ async function maybeInitProjectsBackend(): Promise<void> {
     // upstream-parity tools (`react`, `edit_message`, `download_attachment`,
     // `fetch_messages`) to per-channel claudes.
     client,
+    // Reread channels.json each call — `master.chatId` can change at
+    // runtime via terminal `/discord:project init` re-pointing.
+    getMasterChatId: () => loadChannelsConfig().master?.chatId,
+    // Master-only privileged path. Claude in the master channel can
+    // execute the same `!project ...` verbs the operator would type, so
+    // natural-language asks like "create a project for keyflow at <url>"
+    // turn into real mutations.
+    executeMasterCommand: async (commandLine) => {
+      const cfg = loadChannelsConfig()
+      if (!cfg.master) return 'no master configured'
+      const access = loadAccess()
+      const result = await handleMasterCommand(`${cfg.master.commandPrefix} ${commandLine}`, {
+        chatId: cfg.master.chatId,
+        // Synthetic operator id — `authorizedUsers` always contains it,
+        // so master claude bypasses the per-user gate. The check that
+        // matters (master-channel only) is enforced in MasterMcpServer
+        // before this is called.
+        userId: '__mcd_master_self__',
+        config: cfg,
+        authorizedUsers: ['__mcd_master_self__'],
+        mutator: projectPool
+          ? {
+              killProject: async (id) => {
+                await projectPool!.killChat(id)
+              },
+              createDiscordChannel: async (name, opts) => {
+                const masterChatId = cfg.master?.chatId
+                if (!masterChatId) throw new Error('no master configured')
+                const masterChannel = await client.channels.fetch(masterChatId)
+                if (!masterChannel || masterChannel.type !== ChannelType.GuildText) {
+                  throw new Error('master channel is not a guild text channel')
+                }
+                const guild = (masterChannel as { guild: { channels: { create: (opts: unknown) => Promise<{ id: string }> } } }).guild
+                const created = await guild.channels.create({
+                  name,
+                  type: ChannelType.GuildText,
+                  ...(opts?.parent ? { parent: opts.parent } : {}),
+                })
+                return created.id
+              },
+            }
+          : undefined,
+      })
+      if (result.kind === 'reply') return result.text
+      return `[${result.kind}]`
+    },
   })
   await master.start()
   masterMcp = master
