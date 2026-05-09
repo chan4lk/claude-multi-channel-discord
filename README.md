@@ -6,6 +6,8 @@ Project-aware Discord bot for Claude Code. One Discord bot, **many isolated chan
 
 Forked from [`anthropics/claude-plugins-official/external_plugins/discord`](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/discord) (Apache-2.0). Backwards-compatible with the upstream behavior when no `channels.json` is present.
 
+📖 **For runtime architecture, debugging notes, and the master CLAUDE.md template, read [`ARCHITECTURE.md`](./ARCHITECTURE.md).**
+
 ## What it adds vs upstream
 
 | | upstream | this fork |

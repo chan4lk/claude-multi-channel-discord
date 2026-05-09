@@ -106,6 +106,16 @@ MCD_CHANNELS_DIR="$STATE_DIR" bun "$REPO_DIR/src/init.ts" \
   --slug   "$SLUG" \
   --prompt "$PROMPT"
 
+# Replace the basic CLAUDE.md from init.ts with the master template that
+# documents the full command surface + run_master_command tool. The
+# operator can edit it later — it's their per-host config.
+TEMPLATE="$REPO_DIR/templates/master.CLAUDE.md"
+if [[ -r "$TEMPLATE" ]]; then
+  cp "$TEMPLATE" "$STATE_DIR/projects/$SLUG/CLAUDE.md"
+  chmod 0600 "$STATE_DIR/projects/$SLUG/CLAUDE.md"
+  echo "deployed master CLAUDE.md template"
+fi
+
 cat <<DONE
 
 Setup complete in: $STATE_DIR
