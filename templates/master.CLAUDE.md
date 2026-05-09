@@ -31,7 +31,9 @@ The bot exposes `mcp__mcd__run_master_command` — **available only in this mast
 | "every day at 9am have <slug> work on the backlog" | `run_master_command({ command: 'schedule add <slug> --at 09:00 --prompt "Pick up the next 2 backlog items from BACKLOG.md and implement them. Push to a feature branch and open a PR. If BACKLOG.md is empty, reply \\"all done — pause schedule\\"."' })` |
 | "show my scheduled jobs" | `run_master_command({ command: "schedule list" })` |
 | "pause the keyflow daily job" | `run_master_command({ command: "schedule list keyflow" })` to find the id, then `run_master_command({ command: "schedule pause <id>" })` |
-| "use minimax for the keyflow project" | If `defaults.providers.minimax` exists in channels.json: `run_master_command({ command: "show keyflow" })` (verify state), then ask the operator to confirm before running `run_master_command({ command: "set keyflow ..." })` — actually `provider` is set at create/clone time. To switch an existing project, edit channels.json or recreate. |
+| "use minimax for the keyflow project" / "switch keyflow to minimax" | `run_master_command({ command: "provider keyflow --set minimax" })` (subprocess auto-respawns) |
+| "claude is rate-limited, fall back to minimax for keyflow" | `run_master_command({ command: "provider keyflow --set minimax" })`; once the limit clears, `run_master_command({ command: "provider keyflow --clear" })` to go back to subscription |
+| "what provider is keyflow using?" | `run_master_command({ command: "provider keyflow" })` |
 | "create a fresh project that uses minimax" | `run_master_command({ command: 'create --new-channel <slug> --slug <slug> --prompt "..." --provider minimax --model MiniMax-M2.7' })` |
 
 After calling the tool, take its returned text and emit it via `mcp__mcd__reply` (lightly cleaned up if it's verbose). Don't dump raw command output unless the operator explicitly asks for it — paraphrase the success and surface any errors clearly.
@@ -71,6 +73,9 @@ stop   <chat_id-or-slug>                — kill the project's subprocess (lazy-
 schedule add    <chat_id-or-slug> --at HH:MM --prompt "..." [--max-runs N]
 schedule list   [<chat_id-or-slug>]                                     — show all (or one project's) schedules
 schedule pause/resume/rm <id>                                           — toggle or delete a scheduled job
+provider <chat_id-or-slug>                                              — show resolved provider
+provider <chat_id-or-slug> --set ALIAS                                  — switch project to a configured provider (kills subprocess)
+provider <chat_id-or-slug> --clear                                      — back to Claude subscription
 rm     <chat_id-or-slug> --yes
 help
 ```
@@ -109,7 +114,7 @@ Projects default to the operator's Claude Code subscription auth (no API key, no
 
 Then on `create` / `clone` add `--provider minimax`, optionally with `--model MiniMax-M2.7`. The bot reads `MINIMAX_API_KEY` from its process env and exposes it (along with `ANTHROPIC_BASE_URL`) to the per-project claude subprocess. The agent in that channel calls MiniMax instead of Anthropic — same `mcp__mcd__reply` tool, same git env, just a different model API on the back end.
 
-`!project show <slug>` displays the resolved provider so you can verify routing.
+`!project show <slug>` displays the resolved provider so you can verify routing. To switch an existing project on the fly (e.g. claude rate-limited → fall back to MiniMax), use `!project provider <slug> --set <alias>`. The subprocess is killed automatically; the next message in that channel respawns with the new env. Switch back with `--clear`.
 
 # Design tips
 

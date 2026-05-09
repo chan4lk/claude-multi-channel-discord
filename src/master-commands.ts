@@ -135,6 +135,8 @@ export async function handleMasterCommand(
       return { kind: 'reply', text: await handleStop(rest, ctx) }
     case 'schedule':
       return { kind: 'reply', text: await handleSchedule(rest, ctx) }
+    case 'provider':
+      return { kind: 'reply', text: await handleProvider(rest, ctx) }
     default:
       return {
         kind: 'reply',
@@ -161,6 +163,7 @@ function helpText(prefix: string): string {
     `${prefix} schedule add <chat_id-or-slug> --at HH:MM --prompt "..." [--max-runs N]   — daily recurring job`,
     `${prefix} schedule list [<chat_id-or-slug>]      — show all schedules (or just one project's)`,
     `${prefix} schedule pause/resume/rm <id>          — toggle or delete a schedule`,
+    `${prefix} provider <chat_id-or-slug> [--set ALIAS | --clear]    — switch a project to a different provider (or back to Claude subscription)`,
     `${prefix} rm     <chat_id-or-slug> --yes                         — archive + remove`,
     `${prefix} help                          — this message`,
     '```',
@@ -948,6 +951,87 @@ function scheduleRemove(tail: string[]): string {
   const removed = file.schedules.splice(idx, 1)[0]!
   saveSchedules(file)
   return `🗑 schedule **${removed.id}** removed (was for chat \`${removed.chatId}\` at ${removed.at})`
+}
+
+/**
+ * `!project provider <slug>` — view the current provider routing
+ * `!project provider <slug> --set <alias>` — switch (kills the running
+ *     subprocess so the next message respawns with the new env)
+ * `!project provider <slug> --clear` — back to Claude subscription
+ *
+ * Use case: claude hits a rate limit → switch the project to a
+ * fallback provider with a single command instead of editing
+ * channels.json + restarting.
+ */
+async function handleProvider(rest: string[], ctx: MasterContext): Promise<string> {
+  const { positional, flags } = parseFlags(rest)
+  if (positional.length === 0) {
+    return '`provider` needs a chat_id or slug. usage: `provider <slug> [--set <alias> | --clear]`'
+  }
+  const target = positional[0]!
+  const setAlias = typeof flags.set === 'string' ? flags.set : null
+  const clear = flags.clear === true
+
+  if (setAlias && clear) return 'pass either `--set <alias>` or `--clear`, not both'
+
+  const config = loadConfig()
+  const entry = resolveTarget(config, target)
+  if (!entry) return `no project found for "${target}"`
+
+  // Read-only: show current routing.
+  if (!setAlias && !clear) {
+    const name = entry.project.provider ?? config.defaults.provider
+    if (!name) return `**${entry.project.slug}**: provider = (Claude subscription)`
+    const def = config.defaults.providers[name]
+    if (!def) return `**${entry.project.slug}**: provider = ${name} ⚠ not in defaults.providers`
+    return `**${entry.project.slug}**: provider = ${name} → ${def.baseUrl} (key from $${def.apiKeyEnv})`
+  }
+
+  // Mutate. --set must reference a known alias.
+  if (setAlias) {
+    if (!config.defaults.providers[setAlias]) {
+      const known = Object.keys(config.defaults.providers).join(', ') || '(none configured)'
+      return `provider alias "${setAlias}" is not in defaults.providers. known: ${known}`
+    }
+    const def = config.defaults.providers[setAlias]!
+    if (!process.env[def.apiKeyEnv]) {
+      return `provider "${setAlias}" needs env var \`${def.apiKeyEnv}\` set on the bot process — restart the bot with that var defined`
+    }
+  }
+
+  const updatedProject = { ...entry.project }
+  if (setAlias) {
+    updatedProject.provider = setAlias
+  } else {
+    delete updatedProject.provider
+  }
+  const updated: ChannelsConfig = {
+    ...config,
+    projects: { ...config.projects, [entry.chatId]: updatedProject },
+  }
+  saveConfig(updated)
+
+  // Kill the running subprocess so next message respawns with the
+  // new env. Without this the live tmux+claude keeps using the old
+  // provider until idle-evict fires.
+  let respawnNote = '_subprocess will respawn on next message with the new provider._'
+  if (ctx.mutator?.killProject) {
+    try {
+      await ctx.mutator.killProject(entry.chatId)
+      respawnNote = '_subprocess killed; next message will spawn it with the new provider._'
+    } catch (err) {
+      respawnNote = `_kill failed: ${(err as Error).message}; restart the project manually._`
+    }
+  }
+
+  if (clear) {
+    return [`✅ **${entry.project.slug}** now uses Claude subscription auth.`, respawnNote].join('\n')
+  }
+  const def = config.defaults.providers[setAlias!]!
+  return [
+    `✅ **${entry.project.slug}** routed to provider **${setAlias}** → ${def.baseUrl}`,
+    respawnNote,
+  ].join('\n')
 }
 
 async function handleStop(rest: string[], ctx: MasterContext): Promise<string> {

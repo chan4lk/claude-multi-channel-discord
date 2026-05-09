@@ -161,6 +161,7 @@ Verbs and their handlers:
 | `usage` / `ps` / `top` | — | calls `pool.snapshot()` and renders a code-block table |
 | `stop` | running subprocess only | tells operator subprocess will respawn on next message |
 | `schedule add/list/pause/resume/rm` | `schedules.json` | daily HH:MM jobs; fires synthetic envelopes through `pool.deliver` |
+| `provider` | `channels.json` projects[].provider | view current routing, `--set ALIAS` to switch, `--clear` to revert; auto-kills the subprocess so the new env takes effect on next message |
 | `rm` | `channels.json`, `access.json`, archives `projects/<slug>` to `projects/.archive/<slug>-<ts>/` | requires `--yes`; refuses to remove the master project |
 | `help` | — | one-screen reference |
 
