@@ -42,7 +42,13 @@ import { MasterMcpServer } from './src/master-mcp-server.ts'
 import { ProjectPool } from './src/project-pool.ts'
 import type { OutboundReply } from './src/project-process.ts'
 
-const STATE_DIR = process.env.DISCORD_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'discord')
+// Single-source state dir. MCD_CHANNELS_DIR is the multi-channel-discord
+// override and wins; falls back to upstream's DISCORD_STATE_DIR for in-place
+// upgrades; finally to the default. The same value drives src/paths.ts so
+// access.json, channels.json, .env, and projects/ all live together — set
+// MCD_CHANNELS_DIR once to run the new bot in a fresh state dir alongside
+// the upstream bot.
+const STATE_DIR = process.env.MCD_CHANNELS_DIR ?? process.env.DISCORD_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'discord')
 const ACCESS_FILE = join(STATE_DIR, 'access.json')
 const APPROVED_DIR = join(STATE_DIR, 'approved')
 const ENV_FILE = join(STATE_DIR, '.env')

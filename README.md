@@ -59,28 +59,54 @@ Not yet:
 
 Live smoke against a real `claude` CLI: not yet performed. The single-session passthrough is **identical to upstream** when `channels.json` doesn't exist, so the fork is safe to run in single-session mode while phase 3c stabilizes.
 
-## Quick install (Linux dev box)
+## Side-by-side install (recommended for first time)
+
+Most operators are already running the upstream `claude-channel-discord` bot. To trial this fork without taking the existing bot offline, **register a second Discord application with its own bot token** and run the new bot in a separate state directory.
 
 ```sh
 git clone https://github.com/chan4lk/claude-multi-channel-discord ~/dev/multi-channel-discord
 cd ~/dev/multi-channel-discord
 bun install
-
-# Discord bot setup — see https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/discord
-echo "DISCORD_BOT_TOKEN=..." > ~/.claude/channels/discord/.env
-chmod 0600 ~/.claude/channels/discord/.env
-
-# Bootstrap the master channel (writes channels.json + projects/<slug>/CLAUDE.md)
-bun src/init.ts \
-  --master <your-master-channel-id> \
-  --slug   master \
-  --prompt "You are the master controller for the multi-channel bot. Be terse."
-
-# Run
-bun server.ts
-# or via systemd: cp systemd/multi-channel-discord.service ~/.config/systemd/user/
-#                 systemctl --user enable --now multi-channel-discord
 ```
+
+Then in the [Discord Developer Portal](https://discord.com/developers/applications):
+
+1. Create a new application (e.g. "MultiBot Dev")
+2. Bot tab → set username → enable **Message Content Intent**
+3. Reset Token, copy it
+4. OAuth2 → URL Generator: scope `bot`, permissions `View Channels, Send Messages, Send Messages in Threads, Read Message History, Add Reactions`. Open the URL and invite the new bot to the **same server** as your existing one — it'll appear as a second member.
+5. With Discord Developer Mode on, copy your User ID and the Channel ID you want as master (a fresh test channel is safest — your existing bot is still listening on the old channels).
+
+Finally, run the bootstrap helper. Token is read from stdin so it never lands in `argv`:
+
+```sh
+bin/setup-new-instance.sh \
+  --state-dir ~/.claude/channels/discord-multi \
+  --user-id   <your-discord-user-id> \
+  --master    <master-channel-id> \
+  --slug      master \
+  --prompt    "You are the master controller. Be terse." \
+  <<< "$DISCORD_BOT_TOKEN"
+```
+
+That writes a fresh `.env`, `access.json`, `channels.json`, and `projects/master/CLAUDE.md` under the chosen state dir — completely isolated from your existing bot's `~/.claude/channels/discord/`. Now start the new bot:
+
+```sh
+MCD_CHANNELS_DIR=~/.claude/channels/discord-multi bun server.ts
+```
+
+When you're happy, install it as a user systemd service:
+
+```sh
+cp systemd/multi-channel-discord.service ~/.config/systemd/user/
+# edit to add: Environment=MCD_CHANNELS_DIR=%h/.claude/channels/discord-multi
+systemctl --user daemon-reload
+systemctl --user enable --now multi-channel-discord
+```
+
+The old bot keeps running in `~/.claude/channels/discord/` — no overlap.
+
+> **Windows / shell-less environments:** `bin/setup-new-instance.sh` uses bash. Either run it under Git Bash / WSL, or perform the four file-writes by hand: `.env` (mode 0600), `access.json` (your user ID in `allowFrom`), then `bun src/init.ts ...`.
 
 Once running, in the master Discord channel:
 
