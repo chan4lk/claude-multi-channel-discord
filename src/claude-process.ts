@@ -216,16 +216,23 @@ export class ClaudeProjectProcess implements ProjectProcess {
 
     spawnSync('tmux', ['kill-session', '-t', sessionName], { stdio: 'ignore' })
 
-    // Build the env block tmux gives the new session — and through that,
-    // the claude subprocess and any `git`/`gh` calls it makes via Bash.
-    let spawnEnv: NodeJS.ProcessEnv = { ...process.env }
+    // Track env vars we want to land on the pane process. tmux's
+    // long-running server is the actual parent of the pane, and it
+    // ignores the `env` we pass to `spawnSync('tmux', ...)`. The only
+    // reliable way to inject is `tmux new-session -e KEY=VAL` flags.
+    // Build the list explicitly so we don't dump every var we have.
+    const tmuxEnvFlags: string[] = []
+    const addEnv = (key: string, val: string | undefined) => {
+      if (val === undefined) return
+      tmuxEnvFlags.push('-e', `${key}=${val}`)
+    }
 
     // Provider routing: when set, point claude's API client at a third
     // party Anthropic-compatible endpoint (e.g. MiniMax). Without this,
     // claude uses the operator's stored Claude Code OAuth.
     if (this.opts.provider) {
-      spawnEnv.ANTHROPIC_BASE_URL = this.opts.provider.baseUrl
-      spawnEnv.ANTHROPIC_API_KEY = this.opts.provider.apiKey
+      addEnv('ANTHROPIC_BASE_URL', this.opts.provider.baseUrl)
+      addEnv('ANTHROPIC_API_KEY', this.opts.provider.apiKey)
       this.log(`provider override: ${this.opts.provider.name ?? '(unnamed)'} → ${this.opts.provider.baseUrl}`)
     }
 
@@ -233,22 +240,26 @@ export class ClaudeProjectProcess implements ProjectProcess {
       try {
         const creds = loadCredentials()
         const cred: Credential = getCredential(creds, this.opts.gitCredential)
-        const built = buildGitEnv(cred, spawnEnv)
-        spawnEnv = built.env
-        // We can't easily clean up the askpass tmpfile across the
-        // subprocess's lifetime — leave it; it's mode 0700 in tmpdir.
+        const built = buildGitEnv(cred, process.env)
+        for (const [k, v] of Object.entries(built.env)) {
+          // Only add the keys buildGitEnv actually injected (vs the
+          // entire process.env it copied from). Detect by comparing
+          // against process.env's value — diff-only.
+          if (process.env[k] !== v) addEnv(k, v)
+        }
         this.gitCredentialCleanup = built.cleanup
       } catch (err) {
         this.log(`gitCredential resolve failed: ${(err as Error).message}`)
       }
     }
 
-    this.log(`tmux new-session -d -s ${sessionName} '${cmd}' (cwd=${cwd})`)
+    this.log(`tmux new-session -d -s ${sessionName} '${cmd}' (cwd=${cwd}, env+=${tmuxEnvFlags.length / 2})`)
     const result = spawnSync(
       'tmux',
       [
         'new-session',
         '-d',
+        ...tmuxEnvFlags,
         '-s',
         sessionName,
         '-x',
@@ -259,7 +270,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
         cwd,
         cmd,
       ],
-      { stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv },
+      { stdio: ['ignore', 'pipe', 'pipe'], env: process.env },
     )
     if (result.status !== 0) {
       const err = result.stderr.toString().trim() || result.stdout.toString().trim() || `exit ${result.status}`
