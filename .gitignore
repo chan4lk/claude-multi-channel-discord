@@ -1,0 +1,7 @@
+node_modules/
+bun.lock
+.env
+.env.*
+!.env.example
+git-credentials.json
+projects/
