@@ -368,6 +368,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
 
   private tuiReady = false
   private dismissedMcpDialog = false
+  private dismissedApiKeyDialog = false
 
   /**
    * Poll the tmux pane for claude's prompt-ready marker (the `❯` cursor
@@ -402,6 +403,24 @@ export class ClaudeProjectProcess implements ProjectProcess {
         await sleep(120)
         spawnSync('tmux', ['send-keys', '-t', session, 'C-m'], { stdio: 'ignore' })
         this.dismissedMcpDialog = true
+        await sleep(800)
+        continue
+      }
+
+      // Auto-dismiss the "Detected a custom API key" dialog. When the
+      // operator deliberately set ANTHROPIC_API_KEY for provider routing
+      // (MiniMax / Bedrock / etc.) we DO want to use it. Default is "No
+      // (recommended)" — pick "1" (Yes).
+      if (
+        !this.dismissedApiKeyDialog &&
+        pane.includes('Detected a custom API key') &&
+        pane.includes('ANTHROPIC_API_KEY')
+      ) {
+        this.log('detected custom-API-key dialog — sending 1 + Enter to use it')
+        spawnSync('tmux', ['send-keys', '-t', session, '1'], { stdio: 'ignore' })
+        await sleep(120)
+        spawnSync('tmux', ['send-keys', '-t', session, 'C-m'], { stdio: 'ignore' })
+        this.dismissedApiKeyDialog = true
         await sleep(800)
         continue
       }
