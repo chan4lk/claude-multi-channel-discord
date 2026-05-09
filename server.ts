@@ -41,6 +41,7 @@ import { handleMasterCommand } from './src/master-commands.ts'
 import { MasterMcpServer } from './src/master-mcp-server.ts'
 import { ProjectPool } from './src/project-pool.ts'
 import type { OutboundReply } from './src/project-process.ts'
+import { Scheduler } from './src/scheduler.ts'
 
 // Single-source state dir. MCD_CHANNELS_DIR is the multi-channel-discord
 // override and wins; falls back to upstream's DISCORD_STATE_DIR for in-place
@@ -760,6 +761,7 @@ function shutdown(): void {
   // Discord client. Pool.shutdown() kills child Claude subprocesses; master
   // MCP stop() closes per-chat sessions.
   void (async () => {
+    try { scheduler?.stop() } catch {}
     try {
       if (projectPool) await projectPool.shutdown()
     } catch (err) {
@@ -857,6 +859,7 @@ client.on('interactionCreate', async (interaction: Interaction) => {
 // the upstream single-session behavior unchanged.
 let projectPool: ProjectPool | null = null
 let masterMcp: MasterMcpServer | null = null
+let scheduler: Scheduler | null = null
 
 /**
  * One MasterMutator wired against the live discord.js client + project pool.
@@ -998,6 +1001,15 @@ async function maybeInitProjectsBackend(): Promise<void> {
   projectPool.start()
 
   process.stderr.write(`discord: project pool active (${Object.keys(config.projects).length} configured)\n`)
+
+  // Daily scheduler. Persists schedules.json, ticks every 60s, fires
+  // synthetic envelopes through the same pool so the underlying agent
+  // (claude / openclaw / future MiniMax runner) handles them without
+  // knowing the prompt was machine-generated.
+  scheduler = new Scheduler({
+    deliver: (chatId, envelope) => projectPool!.deliver(chatId, envelope),
+  })
+  scheduler.start()
 }
 
 async function dispatchProjectReply(reply: OutboundReply): Promise<void> {

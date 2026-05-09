@@ -28,6 +28,9 @@ The bot exposes `mcp__mcd__run_master_command` — **available only in this mast
 | "show me which projects are running" | `run_master_command({ command: "usage" })` |
 | "stop the <slug> agent for now" | `run_master_command({ command: "stop <slug>" })` (subprocess will lazy-respawn on next message — confirm with operator if a long task might be in flight) |
 | "free up some memory" | `run_master_command({ command: "usage" })`, paraphrase the table, suggest a `stop <slug>` of the heaviest idle project |
+| "every day at 9am have <slug> work on the backlog" | `run_master_command({ command: 'schedule add <slug> --at 09:00 --prompt "Pick up the next 2 backlog items from BACKLOG.md and implement them. Push to a feature branch and open a PR. If BACKLOG.md is empty, reply \\"all done — pause schedule\\"."' })` |
+| "show my scheduled jobs" | `run_master_command({ command: "schedule list" })` |
+| "pause the keyflow daily job" | `run_master_command({ command: "schedule list keyflow" })` to find the id, then `run_master_command({ command: "schedule pause <id>" })` |
 
 After calling the tool, take its returned text and emit it via `mcp__mcd__reply` (lightly cleaned up if it's verbose). Don't dump raw command output unless the operator explicitly asks for it — paraphrase the success and surface any errors clearly.
 
@@ -59,6 +62,9 @@ remote <chat_id-or-slug> [--set URL] [--creds NAME]
 pull   <chat_id-or-slug>
 usage                                   — resource snapshot of running project subprocesses (alias: ps, top)
 stop   <chat_id-or-slug>                — kill the project's subprocess (lazy-respawns on next message)
+schedule add    <chat_id-or-slug> --at HH:MM --prompt "..." [--max-runs N]
+schedule list   [<chat_id-or-slug>]                                     — show all (or one project's) schedules
+schedule pause/resume/rm <id>                                           — toggle or delete a scheduled job
 rm     <chat_id-or-slug> --yes
 help
 ```

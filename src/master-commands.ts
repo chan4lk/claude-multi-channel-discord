@@ -16,6 +16,7 @@ import {
 import { buildGitEnv, gitClone, gitPullFastForward, gitSetRemote, gitStatusSummary } from './git-ops.ts'
 import { getCredential, loadCredentials } from './git-credentials.ts'
 import { accessFile, archiveDir, projectClaudeMd, projectDir } from './paths.ts'
+import { loadSchedules, newScheduleId, saveSchedules, type Schedule } from './schedules-config.ts'
 
 export type MasterCommandResult =
   | { kind: 'no-master-configured' }
@@ -132,6 +133,8 @@ export async function handleMasterCommand(
       return { kind: 'reply', text: await handleUsage(ctx) }
     case 'stop':
       return { kind: 'reply', text: await handleStop(rest, ctx) }
+    case 'schedule':
+      return { kind: 'reply', text: await handleSchedule(rest, ctx) }
     default:
       return {
         kind: 'reply',
@@ -155,6 +158,9 @@ function helpText(prefix: string): string {
     `${prefix} pull   <chat_id-or-slug>                               — git pull --ff-only`,
     `${prefix} usage                         — resource snapshot of running project subprocesses (alias: ps, top)`,
     `${prefix} stop   <chat_id-or-slug>                               — kill the project's subprocess; lazy-respawns on next message`,
+    `${prefix} schedule add <chat_id-or-slug> --at HH:MM --prompt "..." [--max-runs N]   — daily recurring job`,
+    `${prefix} schedule list [<chat_id-or-slug>]      — show all schedules (or just one project's)`,
+    `${prefix} schedule pause/resume/rm <id>          — toggle or delete a schedule`,
     `${prefix} rm     <chat_id-or-slug> --yes                         — archive + remove`,
     `${prefix} help                          — this message`,
     '```',
@@ -783,6 +789,142 @@ async function handleUsage(ctx: MasterContext): Promise<string> {
   }
   lines.push('```')
   return lines.join('\n')
+}
+
+/**
+ * `!project schedule <subverb> ...` — daily HH:MM scheduler.
+ *
+ * Shapes:
+ *   schedule add <chat_id-or-slug> --at HH:MM --prompt "..." [--max-runs N]
+ *   schedule list [<chat_id-or-slug>]
+ *   schedule pause <id>
+ *   schedule resume <id>
+ *   schedule rm <id>
+ */
+async function handleSchedule(rest: string[], _ctx: MasterContext): Promise<string> {
+  const sub = rest[0]
+  const tail = rest.slice(1)
+  switch (sub) {
+    case 'add':
+      return await scheduleAdd(tail)
+    case 'list':
+    case undefined:
+      return scheduleList(tail)
+    case 'pause':
+      return scheduleSetEnabled(tail, false)
+    case 'resume':
+      return scheduleSetEnabled(tail, true)
+    case 'rm':
+    case 'remove':
+    case 'delete':
+      return scheduleRemove(tail)
+    default:
+      return `unknown schedule subverb \`${sub}\`. valid: add, list, pause, resume, rm`
+  }
+}
+
+async function scheduleAdd(tail: string[]): Promise<string> {
+  const { positional, flags } = parseFlags(tail)
+  if (positional.length === 0) return '`schedule add` needs a chat_id or slug as the first argument'
+
+  const at = flags.at
+  if (typeof at !== 'string') return '`schedule add` requires `--at HH:MM` (24h, host local time)'
+  if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(at)) return `\`--at\` must be HH:MM, got "${at}"`
+
+  const prompt = typeof flags.prompt === 'string' ? flags.prompt : null
+  if (!prompt) return '`schedule add` requires `--prompt "..."` — what to ask the agent each fire'
+
+  const maxRunsRaw = flags['max-runs']
+  let maxRuns: number | null = null
+  if (typeof maxRunsRaw === 'string') {
+    const n = Number(maxRunsRaw)
+    if (!Number.isInteger(n) || n <= 0) return `\`--max-runs\` must be a positive integer; got "${maxRunsRaw}"`
+    maxRuns = n
+  }
+
+  const config = loadConfig()
+  const target = positional[0]!
+  const entry = resolveTarget(config, target)
+  if (!entry) return `no project found for "${target}"`
+
+  const file = loadSchedules()
+  const id = newScheduleId()
+  const sched: Schedule = {
+    id,
+    chatId: entry.chatId,
+    at,
+    prompt,
+    enabled: true,
+    lastRunAt: null,
+    createdAt: new Date().toISOString(),
+    maxRuns,
+    runCount: 0,
+  }
+  file.schedules.push(sched)
+  saveSchedules(file)
+
+  return [
+    `✅ scheduled job **${id}**`,
+    `project: **${entry.project.slug}** (chat \`${entry.chatId}\`)`,
+    `daily at: ${at} (host local time)`,
+    `prompt: ${prompt.length > 120 ? prompt.slice(0, 120) + '…' : prompt}`,
+    maxRuns ? `max runs: ${maxRuns}` : '_no run cap (use `pause`/`rm` to stop)_',
+  ].join('\n')
+}
+
+function scheduleList(tail: string[]): string {
+  const { positional } = parseFlags(tail)
+  const config = loadConfig()
+  const filterChatId = positional.length > 0
+    ? (resolveTarget(config, positional[0]!)?.chatId ?? null)
+    : null
+
+  const file = loadSchedules()
+  let rows = file.schedules
+  if (filterChatId) rows = rows.filter((s) => s.chatId === filterChatId)
+
+  if (rows.length === 0) {
+    return filterChatId
+      ? `_no schedules for "${positional[0]}"._`
+      : '_no schedules configured. add one with `schedule add <slug> --at HH:MM --prompt "..."`._'
+  }
+
+  const lines = ['**Schedules:**', '```']
+  lines.push('id                              slug                 at     enabled  runs   last_run')
+  for (const s of rows.sort((a, b) => a.at.localeCompare(b.at))) {
+    const project = config.projects[s.chatId]
+    const slug = (project?.slug ?? '?').padEnd(20).slice(0, 20)
+    const id = s.id.padEnd(30).slice(0, 30)
+    const at = s.at.padEnd(5)
+    const en = s.enabled ? 'yes' : 'no '
+    const runs = s.maxRuns ? `${s.runCount}/${s.maxRuns}` : `${s.runCount}`
+    const last = s.lastRunAt ?? '(never)'
+    lines.push(`${id}  ${slug}  ${at}  ${en}    ${runs.padStart(5)}  ${last}`)
+  }
+  lines.push('```')
+  return lines.join('\n')
+}
+
+function scheduleSetEnabled(tail: string[], enabled: boolean): string {
+  if (tail.length === 0) return `\`${enabled ? 'resume' : 'pause'}\` needs a schedule id`
+  const id = tail[0]!
+  const file = loadSchedules()
+  const s = file.schedules.find((x) => x.id === id)
+  if (!s) return `no schedule with id \`${id}\``
+  s.enabled = enabled
+  saveSchedules(file)
+  return `✅ schedule **${id}** ${enabled ? 'resumed' : 'paused'}`
+}
+
+function scheduleRemove(tail: string[]): string {
+  if (tail.length === 0) return '`rm` needs a schedule id'
+  const id = tail[0]!
+  const file = loadSchedules()
+  const idx = file.schedules.findIndex((x) => x.id === id)
+  if (idx < 0) return `no schedule with id \`${id}\``
+  const removed = file.schedules.splice(idx, 1)[0]!
+  saveSchedules(file)
+  return `🗑 schedule **${removed.id}** removed (was for chat \`${removed.chatId}\` at ${removed.at})`
 }
 
 async function handleStop(rest: string[], ctx: MasterContext): Promise<string> {
