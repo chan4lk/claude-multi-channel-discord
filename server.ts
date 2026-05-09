@@ -1081,18 +1081,23 @@ async function handleInbound(msg: Message): Promise<void> {
   // pending permission request, emit the structured event instead of
   // relaying as chat. The sender is already gate()-approved at this point
   // (non-allowlisted senders were dropped above), so we trust the reply.
-  const permMatch = PERMISSION_REPLY_RE.exec(msg.content)
-  if (permMatch) {
-    void mcp.notification({
-      method: 'notifications/claude/channel/permission',
-      params: {
-        request_id: permMatch[2]!.toLowerCase(),
-        behavior: permMatch[1]!.toLowerCase().startsWith('y') ? 'allow' : 'deny',
-      },
-    })
-    const emoji = permMatch[1]!.toLowerCase().startsWith('y') ? '✅' : '❌'
-    void msg.react(emoji).catch(() => {})
-    return
+  // Only meaningful when there's an upstream MCP parent expecting permission
+  // events — in standalone mode the permission flow is per-project and lives
+  // entirely on the master MCP server (phase 3d/4 work).
+  if (!STANDALONE_MODE) {
+    const permMatch = PERMISSION_REPLY_RE.exec(msg.content)
+    if (permMatch) {
+      void mcp.notification({
+        method: 'notifications/claude/channel/permission',
+        params: {
+          request_id: permMatch[2]!.toLowerCase(),
+          behavior: permMatch[1]!.toLowerCase().startsWith('y') ? 'allow' : 'deny',
+        },
+      })
+      const emoji = permMatch[1]!.toLowerCase().startsWith('y') ? '✅' : '❌'
+      void msg.react(emoji).catch(() => {})
+      return
+    }
   }
 
   // Typing indicator — signals "processing" until we reply (or ~10s elapses).
@@ -1118,6 +1123,16 @@ async function handleInbound(msg: Message): Promise<void> {
   // Attachment listing goes in meta only — an in-content annotation is
   // forgeable by any allowlisted sender typing that string.
   const content = msg.content || (atts.length > 0 ? '(attachment)' : '')
+
+  if (STANDALONE_MODE) {
+    // No upstream Claude on the other side of stdin; the legacy single-
+    // session forward is meaningless. Drop with a diagnostic — most likely
+    // this is a DM from an allowlisted user that we have no per-channel
+    // project for. (Add a project for the DM channel id if you want it
+    // routed.)
+    process.stderr.write(`discord: drop — no project for chat_id ${chat_id} (standalone mode)\n`)
+    return
+  }
 
   mcp.notification({
     method: 'notifications/claude/channel',

@@ -223,9 +223,11 @@ export class ClaudeProjectProcess implements ProjectProcess {
       mcpServers: {
         // Name `discord` matches what Claude expects from upstream config —
         // tool-name conflicts are unlikely since this is the only MCP server
-        // in the per-project subprocess.
+        // in the per-project subprocess. The transport key is `type`
+        // (Claude Code's schema), NOT `transport` — early phase 3b had this
+        // wrong and Claude rejected the file before connecting.
         discord: {
-          transport: 'http',
+          type: 'http',
           url: this.master.urlFor(this.chatId),
         },
       },
