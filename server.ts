@@ -34,7 +34,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, 
 import { homedir } from 'os'
 import { join, sep } from 'path'
 
-import { loadConfig as loadChannelsConfig } from './src/channels-config.ts'
+import { loadConfig as loadChannelsConfig, resolveClaudeArgs } from './src/channels-config.ts'
 import { ClaudeProjectProcess } from './src/claude-process.ts'
 import { chunk as chunkText, DISCORD_HARD_CHUNK_LIMIT } from './src/discord-chunk.ts'
 import { handleMasterCommand } from './src/master-commands.ts'
@@ -865,6 +865,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
         slug: project.slug,
         master,
         model: project.model ?? config.defaults.model,
+        claudeArgs: resolveClaudeArgs(config, project),
       })
       // Fire-and-forget; the pool may call deliver() before start() resolves
       // for the very first message — ClaudeProjectProcess deliver() awaits

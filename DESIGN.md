@@ -64,6 +64,12 @@ projects/.archive/         soft-deleted projects, suffixed with timestamp
     "<chat_id>": {
       "slug": "support-bot",
       "model": "sonnet",                     // override default
+      "claude": {                             // optional CLI flag overrides
+        "permissionMode": "plan",             // overrides defaults.claude.permissionMode
+        "allowedTools": ["Read", "Edit"],
+        "disallowedTools": ["Bash"],
+        "extraArgs": ["--no-banner"]          // appended last; wins on conflict
+      },
       "git": {                                // optional; if absent, project is solo
         "remote": "https://github.com/owner/repo.git",
         "branch": "main",                     // base branch for PRs
@@ -73,6 +79,8 @@ projects/.archive/         soft-deleted projects, suffixed with timestamp
   }
 }
 ```
+
+`defaults.claude` covers everyone; per-project `claude` overrides scalars (replace) and concats `extraArgs` (defaults first, project last). `resolveClaudeArgs(config, project)` is the canonical merge helper used by `ClaudeProjectProcess`.
 
 Slug constraints: `^[a-z][a-z0-9_-]{0,30}$`, unique. Bootstrap requires terminal skill `/discord:project init`.
 

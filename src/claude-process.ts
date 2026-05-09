@@ -24,6 +24,7 @@ import { tmpdir } from 'node:os'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import type { ClaudeArgs } from './channels-config.ts'
 import type { MasterMcpServer } from './master-mcp-server.ts'
 import { projectDir, projectSessionFile } from './paths.ts'
 import type {
@@ -39,8 +40,12 @@ export interface ClaudeProjectProcessOptions {
   slug: string
   /** Pre-started MasterMcpServer; shared across all ClaudeProjectProcesses. */
   master: MasterMcpServer
-  /** `--permission-mode`. Defaults to `auto` (per architectural docs). */
-  permissionMode?: 'auto' | 'acceptEdits' | 'plan' | 'default'
+  /**
+   * Resolved per-project Claude CLI args (already merged with defaults).
+   * Use channels-config.ts:resolveClaudeArgs() to build this from the
+   * config + project entries.
+   */
+  claudeArgs?: ClaudeArgs
   /** Optional model alias passed via --model. Per-project model override. */
   model?: string
   /** Override `claude` binary path. Falls back to PATH lookup. */
@@ -87,19 +92,30 @@ export class ClaudeProjectProcess implements ProjectProcess {
 
     this.mcpConfigPath = this.writeMcpConfig()
 
-    const args = [
-      '--mcp-config',
-      this.mcpConfigPath,
-      '--permission-mode',
-      this.opts.permissionMode ?? 'auto',
-    ]
+    const claudeArgs = this.opts.claudeArgs ?? {}
+    const args = ['--mcp-config', this.mcpConfigPath]
+
+    args.push('--permission-mode', claudeArgs.permissionMode ?? 'auto')
+
     if (this.opts.model) {
       args.push('--model', this.opts.model)
+    }
+
+    if (claudeArgs.allowedTools && claudeArgs.allowedTools.length > 0) {
+      args.push('--allowed-tools', claudeArgs.allowedTools.join(','))
+    }
+    if (claudeArgs.disallowedTools && claudeArgs.disallowedTools.length > 0) {
+      args.push('--disallowed-tools', claudeArgs.disallowedTools.join(','))
     }
 
     const sessionId = this.readSessionId()
     if (sessionId) {
       args.push('--resume', sessionId)
+    }
+
+    // extraArgs ride at the tail so operators can override anything we set.
+    if (claudeArgs.extraArgs && claudeArgs.extraArgs.length > 0) {
+      args.push(...claudeArgs.extraArgs)
     }
 
     const bin = this.opts.claudeBin ?? 'claude'

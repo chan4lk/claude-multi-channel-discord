@@ -9,7 +9,7 @@ import { join } from 'node:path'
 
 import { splitArgv, parseFlags } from './argv.ts'
 import { handleMasterCommand, type MasterContext } from './master-commands.ts'
-import { ChannelsConfigSchema } from './channels-config.ts'
+import { ChannelsConfigSchema, resolveClaudeArgs } from './channels-config.ts'
 
 let failed = 0
 function check(label: string, cond: boolean, detail?: string) {
@@ -130,6 +130,44 @@ const noMaster = handleMasterCommand('!project list', {
   config: ChannelsConfigSchema.parse({}),
 })
 check('no master configured returns no-master-configured', noMaster.kind === 'no-master-configured')
+
+// --- resolveClaudeArgs ----------------------------------------------------
+{
+  const cfg = ChannelsConfigSchema.parse({
+    defaults: {
+      claude: {
+        permissionMode: 'auto',
+        extraArgs: ['--no-banner'],
+      },
+    },
+    projects: {
+      '111111111111111111': { slug: 'inherits' },
+      '222222222222222222': {
+        slug: 'overrides',
+        claude: {
+          permissionMode: 'plan',
+          allowedTools: ['Read'],
+          extraArgs: ['--debug'],
+        },
+      },
+    },
+  })
+
+  const inherits = resolveClaudeArgs(cfg, cfg.projects['111111111111111111']!)
+  check('claudeArgs: inherits permissionMode from defaults', inherits.permissionMode === 'auto')
+  check(
+    'claudeArgs: inherits extraArgs',
+    JSON.stringify(inherits.extraArgs) === JSON.stringify(['--no-banner']),
+  )
+
+  const overrides = resolveClaudeArgs(cfg, cfg.projects['222222222222222222']!)
+  check('claudeArgs: project permissionMode wins', overrides.permissionMode === 'plan')
+  check('claudeArgs: project allowedTools wins', JSON.stringify(overrides.allowedTools) === JSON.stringify(['Read']))
+  check(
+    'claudeArgs: extraArgs concat (defaults first, project last)',
+    JSON.stringify(overrides.extraArgs) === JSON.stringify(['--no-banner', '--debug']),
+  )
+}
 
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)

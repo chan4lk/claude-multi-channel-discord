@@ -15,10 +15,27 @@ const ProjectGitSchema = z.object({
   credentials: z.string().min(1),
 })
 
+/**
+ * Flags handed to each per-project `claude` subprocess. These all map to
+ * Claude Code CLI arguments. Arbitrary `extraArgs` are appended last and
+ * win on conflict — useful for flags this schema doesn't model yet, but
+ * remember they're operator-controlled so don't expose this surface to
+ * untrusted Discord users.
+ */
+const ClaudeArgsSchema = z.object({
+  permissionMode: z.enum(['auto', 'acceptEdits', 'plan', 'default']).optional(),
+  allowedTools: z.array(z.string()).optional(),
+  disallowedTools: z.array(z.string()).optional(),
+  /** Appended verbatim to the spawn argv. */
+  extraArgs: z.array(z.string()).optional(),
+})
+export type ClaudeArgs = z.infer<typeof ClaudeArgsSchema>
+
 const ProjectSchema = z.object({
   slug: SlugSchema,
   model: z.string().optional(),
   git: ProjectGitSchema.optional(),
+  claude: ClaudeArgsSchema.optional(),
 })
 
 const DefaultsGitSchema = z.object({
@@ -33,6 +50,13 @@ const DefaultsSchema = z.object({
   idleEvictMinutes: z.number().int().positive().default(15),
   maxConcurrent: z.number().int().positive().default(8),
   git: DefaultsGitSchema.default({}),
+  /**
+   * Claude CLI flags applied to every project subprocess unless the
+   * project overrides them. permissionMode defaults to "auto" — same as the
+   * upstream single-session bot's runner script — which keeps the bot
+   * usable from Discord without per-tool prompts.
+   */
+  claude: ClaudeArgsSchema.default({ permissionMode: 'auto' }),
 })
 
 const MasterSchema = z.object({
@@ -92,6 +116,22 @@ export function saveConfig(config: ChannelsConfig, path: string = channelsFile()
 
 export function findProjectByChatId(config: ChannelsConfig, chatId: string): Project | undefined {
   return config.projects[chatId]
+}
+
+/**
+ * Merge per-project Claude CLI args with defaults. Scalar fields use
+ * project-overrides-default semantics; arrays follow the most useful rule
+ * for each (replace for tool allow/disallow lists; concat for extraArgs).
+ */
+export function resolveClaudeArgs(config: ChannelsConfig, project: Project): ClaudeArgs {
+  const base = config.defaults.claude
+  const over = project.claude ?? {}
+  return {
+    permissionMode: over.permissionMode ?? base.permissionMode,
+    allowedTools: over.allowedTools ?? base.allowedTools,
+    disallowedTools: over.disallowedTools ?? base.disallowedTools,
+    extraArgs: [...(base.extraArgs ?? []), ...(over.extraArgs ?? [])],
+  }
 }
 
 export function findProjectBySlug(config: ChannelsConfig, slug: string): { chatId: string; project: Project } | undefined {
