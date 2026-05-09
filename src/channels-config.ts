@@ -10,7 +10,10 @@ const SlugSchema = z.string().regex(SLUG_PATTERN, 'slug must be lowercase, 1-31 
 const ChatIdSchema = z.string().regex(/^\d{15,25}$/, 'chat_id must be a Discord snowflake (15-25 digits)')
 
 const ProjectGitSchema = z.object({
-  remote: z.string().url(),
+  // Accept both URL forms and SSH-style `git@host:path` — zod's .url()
+  // rejects the SSH shorthand even though it's the canonical form
+  // most people clone with.
+  remote: z.string().min(1),
   branch: z.string().min(1).default('main'),
   credentials: z.string().min(1),
 })

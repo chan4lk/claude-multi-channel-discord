@@ -607,7 +607,10 @@ async function handleClone(rest: string[], ctx: MasterContext): Promise<string> 
         git: {
           remote: repo,
           branch: branch ?? 'main',
-          credentials: credsAlias ?? 'github-default',
+          // Honour defaults.git.credentials when the operator didn't
+          // pass --creds. Hardcoding "github-default" was a leftover
+          // from before defaults.git existed.
+          credentials: credsAlias ?? config.defaults.git.credentials ?? 'ssh-default',
         },
       },
     },

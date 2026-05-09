@@ -238,11 +238,21 @@ export class ClaudeProjectProcess implements ProjectProcess {
   }
 
   private tuiReady = false
+  private dismissedMcpDialog = false
 
   /**
    * Poll the tmux pane for claude's prompt-ready marker (the `❯` cursor
    * line + the auto-mode footer). Returns true once seen, false on
    * timeout. Spawn → TUI ready can take 3-15s depending on plugin warmup.
+   *
+   * Two interactive dialogs can pre-empt the input prompt and need
+   * dismissal: workspace-trust (claude's first-run check that the cwd
+   * is trusted) and MCP-discovery (when a .mcp.json sits in the cwd —
+   * common for cloned repos that ship their own MCP setup). For the
+   * MCP dialog we choose option `3` ("Continue without using this MCP
+   * server"); --strict-mcp-config means claude wasn't going to load
+   * those servers anyway. For the workspace-trust dialog we send Enter
+   * to accept the default (trust this folder).
    */
   private async waitForTuiReady(session: string, timeoutMs = 30_000): Promise<boolean> {
     const deadline = Date.now() + timeoutMs
@@ -251,12 +261,30 @@ export class ClaudeProjectProcess implements ProjectProcess {
         stdio: ['ignore', 'pipe', 'pipe'],
       })
       const pane = r.stdout?.toString() ?? ''
-      // Two strong signals that Ink finished bringing up the input box:
-      //  - `❯` prompt cursor at the start of the input line
-      //  - auto-mode footer ("auto mode on") rendered below the rule
+
       if (pane.includes('❯') && pane.includes('auto mode on')) {
         return true
       }
+
+      // Auto-dismiss .mcp.json discovery dialog.
+      if (!this.dismissedMcpDialog && pane.includes('New MCP server found in .mcp.json')) {
+        this.log('detected .mcp.json discovery dialog — sending 3 + Enter to skip')
+        spawnSync('tmux', ['send-keys', '-t', session, '3'], { stdio: 'ignore' })
+        await sleep(120)
+        spawnSync('tmux', ['send-keys', '-t', session, 'C-m'], { stdio: 'ignore' })
+        this.dismissedMcpDialog = true
+        await sleep(800)
+        continue
+      }
+
+      // Auto-accept workspace-trust dialog if it appears.
+      if (pane.match(/Do you trust the files in this folder\?|Trust this workspace/i)) {
+        this.log('detected workspace-trust dialog — pressing Enter to accept')
+        spawnSync('tmux', ['send-keys', '-t', session, 'C-m'], { stdio: 'ignore' })
+        await sleep(800)
+        continue
+      }
+
       await sleep(500)
     }
     return false
