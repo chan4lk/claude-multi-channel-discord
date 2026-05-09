@@ -34,6 +34,8 @@ The bot exposes `mcp__mcd__run_master_command` — **available only in this mast
 | "use minimax for the keyflow project" / "switch keyflow to minimax" | `run_master_command({ command: "provider keyflow --set minimax" })` (subprocess auto-respawns) |
 | "claude is rate-limited, fall back to minimax for keyflow" | `run_master_command({ command: "provider keyflow --set minimax" })`; once the limit clears, `run_master_command({ command: "provider keyflow --clear" })` to go back to subscription |
 | "what provider is keyflow using?" | `run_master_command({ command: "provider keyflow" })` |
+| "set ai-core's model to MiniMax-M2.7" | `run_master_command({ command: "model ai-core --set MiniMax-M2.7" })` (subprocess respawns) |
+| "what model is ai-core using?" | `run_master_command({ command: "show ai-core" })` (or `model ai-core`) |
 | "create a fresh project that uses minimax" | `run_master_command({ command: 'create --new-channel <slug> --slug <slug> --prompt "..." --provider minimax --model MiniMax-M2.7' })` |
 
 After calling the tool, take its returned text and emit it via `mcp__mcd__reply` (lightly cleaned up if it's verbose). Don't dump raw command output unless the operator explicitly asks for it — paraphrase the success and surface any errors clearly.
@@ -76,6 +78,7 @@ schedule pause/resume/rm <id>                                           — togg
 provider <chat_id-or-slug>                                              — show resolved provider
 provider <chat_id-or-slug> --set ALIAS                                  — switch project to a configured provider (kills subprocess)
 provider <chat_id-or-slug> --clear                                      — back to Claude subscription
+model    <chat_id-or-slug> [--set NAME | --clear]                        — set the project's `--model` arg (e.g. `MiniMax-M2.7`)
 rm     <chat_id-or-slug> --yes
 help
 ```

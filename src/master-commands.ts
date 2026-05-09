@@ -137,6 +137,8 @@ export async function handleMasterCommand(
       return { kind: 'reply', text: await handleSchedule(rest, ctx) }
     case 'provider':
       return { kind: 'reply', text: await handleProvider(rest, ctx) }
+    case 'model':
+      return { kind: 'reply', text: await handleModel(rest, ctx) }
     default:
       return {
         kind: 'reply',
@@ -164,6 +166,7 @@ function helpText(prefix: string): string {
     `${prefix} schedule list [<chat_id-or-slug>]      — show all schedules (or just one project's)`,
     `${prefix} schedule pause/resume/rm <id>          — toggle or delete a schedule`,
     `${prefix} provider <chat_id-or-slug> [--set ALIAS | --clear]    — switch a project to a different provider (or back to Claude subscription)`,
+    `${prefix} model    <chat_id-or-slug> [--set NAME | --clear]    — set or clear the project's --model arg`,
     `${prefix} rm     <chat_id-or-slug> --yes                         — archive + remove`,
     `${prefix} help                          — this message`,
     '```',
@@ -951,6 +954,51 @@ function scheduleRemove(tail: string[]): string {
   const removed = file.schedules.splice(idx, 1)[0]!
   saveSchedules(file)
   return `🗑 schedule **${removed.id}** removed (was for chat \`${removed.chatId}\` at ${removed.at})`
+}
+
+/**
+ * `!project model <slug>` — view the current model
+ * `!project model <slug> --set <name>` — set the project's --model arg
+ * `!project model <slug> --clear` — fall back to defaults.model
+ *
+ * Useful with provider routing: when ai-core is on MiniMax, set
+ * `--set MiniMax-M2.7` so the banner and the actual model agree.
+ * (Most provider endpoints alias arbitrary names to their own model
+ * anyway, but having the UI tell the truth avoids confusion.)
+ */
+async function handleModel(rest: string[], ctx: MasterContext): Promise<string> {
+  const { positional, flags } = parseFlags(rest)
+  if (positional.length === 0) return '`model` needs a chat_id or slug'
+  const target = positional[0]!
+  const setName = typeof flags.set === 'string' ? flags.set : null
+  const clear = flags.clear === true
+  if (setName && clear) return 'pass either `--set <name>` or `--clear`, not both'
+
+  const config = loadConfig()
+  const entry = resolveTarget(config, target)
+  if (!entry) return `no project found for "${target}"`
+
+  if (!setName && !clear) {
+    const m = entry.project.model ?? config.defaults.model
+    return `**${entry.project.slug}**: model = \`${m}\`${entry.project.model ? '' : ' (inherited from defaults)'}`
+  }
+
+  const updated = { ...entry.project }
+  if (setName) updated.model = setName
+  else delete updated.model
+  saveConfig({ ...config, projects: { ...config.projects, [entry.chatId]: updated } })
+
+  let respawnNote = '_subprocess will respawn on next message with the new model._'
+  if (ctx.mutator?.killProject) {
+    try {
+      await ctx.mutator.killProject(entry.chatId)
+      respawnNote = '_subprocess killed; next message will spawn it with the new model._'
+    } catch (err) {
+      respawnNote = `_kill failed: ${(err as Error).message}_`
+    }
+  }
+  const m = setName ?? config.defaults.model
+  return `✅ **${entry.project.slug}**: model = \`${m}\`\n${respawnNote}`
 }
 
 /**
