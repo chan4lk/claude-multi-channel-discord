@@ -734,7 +734,19 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
   }
 })
 
-await mcp.connect(new StdioServerTransport())
+// "Standalone mode" = launched as a long-lived daemon (e.g. `bun server.ts`
+// from systemd or a terminal), NOT as an MCP child of Claude Code. In that
+// mode we skip the stdio MCP transport (there's no parent Claude on the
+// other end of stdin), and we ignore stdin close events — otherwise the
+// bot exits the moment systemd / `</dev/null` closes its stdin.
+//
+// Detection: presence of MCD_CHANNELS_DIR. The upstream MCP-child path
+// never sets this; the multi-channel-discord daemon path always does.
+const STANDALONE_MODE = !!process.env.MCD_CHANNELS_DIR
+
+if (!STANDALONE_MODE) {
+  await mcp.connect(new StdioServerTransport())
+}
 
 // When Claude Code closes the MCP connection, stdin gets EOF. Without this
 // the gateway stays connected as a zombie holding resources.
@@ -764,8 +776,13 @@ function shutdown(): void {
     process.exit(0)
   })()
 }
-process.stdin.on('end', shutdown)
-process.stdin.on('close', shutdown)
+if (!STANDALONE_MODE) {
+  // Only meaningful when we ARE the MCP child — parent closes stdin to signal
+  // shutdown. In standalone mode stdin is /dev/null (or a TTY) and these
+  // events would fire immediately or never; either way they're noise.
+  process.stdin.on('end', shutdown)
+  process.stdin.on('close', shutdown)
+}
 process.on('SIGTERM', shutdown)
 process.on('SIGINT', shutdown)
 
