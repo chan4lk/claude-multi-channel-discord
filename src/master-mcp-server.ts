@@ -28,6 +28,13 @@ const ChatIdRoute = /^\/mcp\/(\d{15,25})\/?$/
 interface ChatSession {
   server: Server
   transport: StreamableHTTPServerTransport
+  /** Has the client sent its initial connect (so server.notification works)? */
+  ready: boolean
+}
+
+interface QueuedNotification {
+  method: string
+  params: Record<string, unknown>
 }
 
 export interface MasterMcpServerOptions {
@@ -47,6 +54,13 @@ export interface MasterMcpServerOptions {
 export class MasterMcpServer {
   private http: HttpServer | null = null
   private readonly sessions = new Map<string, ChatSession>()
+  /**
+   * Per-chat queue of notifications that arrived before the Claude
+   * subprocess connected its MCP transport. Flushed on first ListTools
+   * request from that chat. Bounded; oldest dropped when full.
+   */
+  private readonly pending = new Map<string, QueuedNotification[]>()
+  private static readonly MAX_PENDING_PER_CHAT = 32
   private readonly host: string
   private readonly desiredPort: number
   private boundPort = 0
@@ -110,19 +124,45 @@ export class MasterMcpServer {
   }
 
   /**
-   * Push a server-initiated notification to one chat's Claude session. No-ops
-   * if the chat has no live MCP transport yet (Claude hasn't connected).
+   * Push a server-initiated notification to one chat's Claude session.
+   * Queues if the chat doesn't have a live MCP transport yet — Claude takes
+   * a few seconds to spawn + connect, and the user's first inbound message
+   * usually arrives before then. Queued notifications flush on connect.
    */
   async notifyChat(chatId: string, method: string, params: Record<string, unknown>): Promise<void> {
     const session = this.sessions.get(chatId)
-    if (!session) {
-      this.log(`notify dropped — no live session for ${chatId}`)
+    if (!session || !session.ready) {
+      this.enqueuePending(chatId, { method, params })
+      this.log(`notify queued for ${chatId} (session ${session ? 'not yet ready' : 'absent'})`)
       return
     }
     try {
       await session.server.notification({ method, params })
     } catch (err) {
       this.log(`notification to ${chatId} failed: ${err}`)
+    }
+  }
+
+  private enqueuePending(chatId: string, n: QueuedNotification): void {
+    const q = this.pending.get(chatId) ?? []
+    q.push(n)
+    while (q.length > MasterMcpServer.MAX_PENDING_PER_CHAT) q.shift()
+    this.pending.set(chatId, q)
+  }
+
+  private async flushPending(chatId: string): Promise<void> {
+    const q = this.pending.get(chatId)
+    if (!q || q.length === 0) return
+    this.pending.delete(chatId)
+    const session = this.sessions.get(chatId)
+    if (!session) return
+    this.log(`flushing ${q.length} queued notification(s) for ${chatId}`)
+    for (const n of q) {
+      try {
+        await session.server.notification({ method: n.method, params: n.params })
+      } catch (err) {
+        this.log(`flush to ${chatId} failed: ${err}`)
+      }
     }
   }
 
@@ -172,23 +212,33 @@ export class MasterMcpServer {
       },
     )
 
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [
-        {
-          name: 'reply',
-          description: 'Send a text reply to the Discord channel. Optionally thread under an inbound message_id.',
-          inputSchema: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              text: { type: 'string', description: 'Reply body. Up to ~2000 chars per chunk.' },
-              reply_to: { type: 'string', description: 'Inbound message_id to thread under.' },
+    server.setRequestHandler(ListToolsRequestSchema, async () => {
+      // First ListTools = Claude has connected and is asking for our tool
+      // catalog. Mark the session ready and flush any notifications that
+      // arrived during the spawn window.
+      const s = this.sessions.get(chatId)
+      if (s && !s.ready) {
+        s.ready = true
+        void this.flushPending(chatId)
+      }
+      return {
+        tools: [
+          {
+            name: 'reply',
+            description: 'Send a text reply to the Discord channel. Optionally thread under an inbound message_id.',
+            inputSchema: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                text: { type: 'string', description: 'Reply body. Up to ~2000 chars per chunk.' },
+                reply_to: { type: 'string', description: 'Inbound message_id to thread under.' },
+              },
+              required: ['text'],
             },
-            required: ['text'],
           },
-        },
-      ],
-    }))
+        ],
+      }
+    })
 
     const ReplyArgsSchema = z.object({
       text: z.string().min(1),
@@ -226,8 +276,12 @@ export class MasterMcpServer {
     })
 
     const transport = new StreamableHTTPServerTransport({
-      // Stateless: the URL path already identifies the chat session.
-      sessionIdGenerator: () => randomUUID(),
+      // Stateless mode — the URL path already identifies the chat. The
+      // tmux+send-keys flow doesn't use server-initiated notifications, so
+      // no SSE channel needs to stay open between requests. Avoids
+      // "Conflict: Only one SSE stream is allowed per session" / "Server
+      // already initialized" loops we hit with stateful sessionIds.
+      sessionIdGenerator: undefined,
     })
     transport.onclose = () => {
       this.sessions.delete(chatId)
@@ -241,7 +295,7 @@ export class MasterMcpServer {
       this.log(`server.connect failed for ${chatId}: ${err}`)
     })
 
-    const session: ChatSession = { server, transport }
+    const session: ChatSession = { server, transport, ready: false }
     this.sessions.set(chatId, session)
     return session
   }
