@@ -858,6 +858,64 @@ client.on('interactionCreate', async (interaction: Interaction) => {
 let projectPool: ProjectPool | null = null
 let masterMcp: MasterMcpServer | null = null
 
+/**
+ * One MasterMutator wired against the live discord.js client + project pool.
+ * Used by both the master-channel `!project ...` intercept (operator typing
+ * the verbs) and by `run_master_command` (master claude executing them on
+ * the operator's behalf). Defined as a thunk so it always reads the current
+ * pool/client at call time.
+ */
+function buildMutator(): import('./src/master-commands.ts').MasterMutator {
+  return {
+    killProject: async (id) => {
+      if (!projectPool) throw new Error('project pool not initialized')
+      await projectPool.killChat(id)
+    },
+    createDiscordChannel: async (name, opts) => {
+      // Find-or-create. If a guild text channel with this name already
+      // exists in master's guild, reuse it instead of making yet another.
+      // This survives master claude retrying a failed clone — without it,
+      // each retry would create a fresh orphan channel.
+      const cfg = loadChannelsConfig()
+      const masterChatId = cfg.master?.chatId
+      if (!masterChatId) throw new Error('no master channel configured')
+      const masterChannel = await client.channels.fetch(masterChatId)
+      if (!masterChannel || masterChannel.type !== ChannelType.GuildText) {
+        throw new Error('master channel is not a guild text channel — auto-create only works in a server context')
+      }
+      const guild = (masterChannel as { guild: { channels: { create: (opts: unknown) => Promise<{ id: string; name: string; type: number }>; cache: Map<string, { id: string; name: string; type: number }> } } }).guild
+
+      const lower = name.toLowerCase()
+      for (const ch of guild.channels.cache.values()) {
+        if (ch.type === ChannelType.GuildText && ch.name.toLowerCase() === lower) {
+          return ch.id
+        }
+      }
+
+      const created = await guild.channels.create({
+        name,
+        type: ChannelType.GuildText,
+        ...(opts?.parent ? { parent: opts.parent } : {}),
+      })
+      return created.id
+    },
+    deleteDiscordChannel: async (chatId) => {
+      try {
+        const ch = await client.channels.fetch(chatId)
+        if (ch && 'delete' in ch && typeof (ch as { delete: () => Promise<unknown> }).delete === 'function') {
+          await (ch as { delete: (reason?: string) => Promise<unknown> }).delete('multi-channel-discord rollback')
+        }
+      } catch (err) {
+        process.stderr.write(`deleteDiscordChannel(${chatId}) failed: ${err}\n`)
+      }
+    },
+    poolStats: async () => {
+      if (!projectPool) return []
+      return await projectPool.snapshot()
+    },
+  }
+}
+
 async function maybeInitProjectsBackend(): Promise<void> {
   let config
   try {
@@ -901,28 +959,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
         userId: '__mcd_master_self__',
         config: cfg,
         authorizedUsers: ['__mcd_master_self__'],
-        mutator: projectPool
-          ? {
-              killProject: async (id) => {
-                await projectPool!.killChat(id)
-              },
-              createDiscordChannel: async (name, opts) => {
-                const masterChatId = cfg.master?.chatId
-                if (!masterChatId) throw new Error('no master configured')
-                const masterChannel = await client.channels.fetch(masterChatId)
-                if (!masterChannel || masterChannel.type !== ChannelType.GuildText) {
-                  throw new Error('master channel is not a guild text channel')
-                }
-                const guild = (masterChannel as { guild: { channels: { create: (opts: unknown) => Promise<{ id: string }> } } }).guild
-                const created = await guild.channels.create({
-                  name,
-                  type: ChannelType.GuildText,
-                  ...(opts?.parent ? { parent: opts.parent } : {}),
-                })
-                return created.id
-              },
-            }
-          : undefined,
+        mutator: projectPool ? buildMutator() : undefined,
       })
       if (result.kind === 'reply') return result.text
       return `[${result.kind}]`
@@ -1019,54 +1056,7 @@ async function tryMasterCommand(msg: Message, access: Access): Promise<boolean> 
     userId: msg.author.id,
     config,
     authorizedUsers: access.allowFrom,
-    mutator: projectPool
-      ? {
-          killProject: async (id) => {
-            await projectPool!.killChat(id)
-          },
-          createDiscordChannel: async (name, opts) => {
-            // Find-or-create. If a guild text channel with that name
-            // already exists in master's guild, reuse it instead of
-            // making yet another. This survives master claude retrying
-            // a failed clone — without it, each retry created a fresh
-            // orphan channel.
-            const cfg = loadChannelsConfig()
-            const masterChatId = cfg.master?.chatId
-            if (!masterChatId) throw new Error('no master channel configured')
-            const masterChannel = await client.channels.fetch(masterChatId)
-            if (!masterChannel || masterChannel.type !== ChannelType.GuildText) {
-              throw new Error('master channel is not a guild text channel — auto-create only works in a server context')
-            }
-            const guild = (masterChannel as { guild: { channels: { create: (opts: unknown) => Promise<{ id: string; name: string; type: number }>; cache: Map<string, { id: string; name: string; type: number }> } } }).guild
-
-            const lower = name.toLowerCase()
-            for (const ch of guild.channels.cache.values()) {
-              if (ch.type === ChannelType.GuildText && ch.name.toLowerCase() === lower) {
-                return ch.id
-              }
-            }
-
-            const created = await guild.channels.create({
-              name,
-              type: ChannelType.GuildText,
-              ...(opts?.parent ? { parent: opts.parent } : {}),
-            })
-            return created.id
-          },
-          deleteDiscordChannel: async (chatId) => {
-            // Used by clone-rollback to clean up auto-created channels
-            // when the rest of the clone flow fails.
-            try {
-              const ch = await client.channels.fetch(chatId)
-              if (ch && 'delete' in ch && typeof (ch as { delete: () => Promise<unknown> }).delete === 'function') {
-                await (ch as { delete: (reason?: string) => Promise<unknown> }).delete('multi-channel-discord rollback')
-              }
-            } catch (err) {
-              process.stderr.write(`deleteDiscordChannel(${chatId}) failed: ${err}\n`)
-            }
-          },
-        }
-      : undefined,
+    mutator: projectPool ? buildMutator() : undefined,
   })
 
   switch (result.kind) {

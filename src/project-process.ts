@@ -26,6 +26,17 @@ export type OutboundReply =
   | { kind: 'text'; chatId: string; text: string; replyTo?: string }
   | { kind: 'react'; chatId: string; messageId: string; emoji: string }
 
+export interface ProcessStats {
+  /** Resolved claude PID. null if we couldn't find one. */
+  pid: number | null
+  /** Total CPU time in ms (jiffies × clock-tick). */
+  cpuTimeMs?: number
+  /** Resident set size, in megabytes (VmRSS). */
+  memoryMb?: number
+  /** ms since the underlying claude process started. */
+  uptimeMs?: number
+}
+
 export interface ProjectProcess {
   /** Discord chat id this process is dedicated to. Set at construction. */
   readonly chatId: string
@@ -35,6 +46,11 @@ export interface ProjectProcess {
   lastActivityMs(): number
   /** Whether the process is still alive. False after kill() resolves. */
   isAlive(): boolean
+  /**
+   * Best-effort current resource stats. Returns null when not implemented
+   * (mock backend) or when the pid couldn't be resolved.
+   */
+  getStats?(): Promise<ProcessStats | null>
   /**
    * Push an inbound Discord message into this process. Resolves once the
    * message has been queued for the underlying agent — does NOT wait for the

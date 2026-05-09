@@ -188,6 +188,48 @@ export class ProjectPool {
     return !!p && p.isAlive()
   }
 
+  /**
+   * Snapshot of every tracked process (alive AND recently-exited that
+   * hasn't been GC'd yet). Used by `!project usage` to show resource
+   * stats. Calls each process's getStats() if implemented.
+   */
+  async snapshot(): Promise<Array<{
+    chatId: string
+    slug: string
+    alive: boolean
+    pid: number | null
+    cpuTimeMs?: number
+    memoryMb?: number
+    uptimeMs?: number
+    lastActivityMs: number
+  }>> {
+    const out: Array<{
+      chatId: string
+      slug: string
+      alive: boolean
+      pid: number | null
+      cpuTimeMs?: number
+      memoryMb?: number
+      uptimeMs?: number
+      lastActivityMs: number
+    }> = []
+    for (const [chatId, proc] of this.processes) {
+      const alive = proc.isAlive()
+      const stats = alive && typeof proc.getStats === 'function' ? await proc.getStats().catch(() => null) : null
+      out.push({
+        chatId,
+        slug: proc.slug,
+        alive,
+        pid: stats?.pid ?? null,
+        cpuTimeMs: stats?.cpuTimeMs,
+        memoryMb: stats?.memoryMb,
+        uptimeMs: stats?.uptimeMs,
+        lastActivityMs: proc.lastActivityMs(),
+      })
+    }
+    return out
+  }
+
   private async spawn(chatId: string, project: Project, config: ChannelsConfig): Promise<ProjectProcess | null> {
     if (this.size() >= config.defaults.maxConcurrent) {
       const evicted = this.evictLeastRecentlyUsed()

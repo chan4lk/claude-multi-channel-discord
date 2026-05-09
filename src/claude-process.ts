@@ -49,6 +49,85 @@ function shellEscape(arg: string): string {
   return `'${arg.replace(/'/g, `'\\''`)}'`
 }
 
+/**
+ * Walk descendants of pid looking for a process whose comm == "claude" or
+ * "node" (claude runs on node). Returns the pid of the first match or null.
+ */
+function findClaudeChild(rootPid: number): number | null {
+  // BFS via /proc/<pid>/task/<tid>/children. We don't pull in a
+  // process-tree dep — single fs scan is enough.
+  const queue: number[] = [rootPid]
+  const seen = new Set<number>()
+  while (queue.length > 0) {
+    const pid = queue.shift()!
+    if (seen.has(pid)) continue
+    seen.add(pid)
+    let comm = ''
+    try {
+      // /proc/<pid>/comm is the short executable name.
+      const fs = require('node:fs') as typeof import('node:fs')
+      comm = fs.readFileSync(`/proc/${pid}/comm`, 'utf8').trim()
+    } catch {
+      continue
+    }
+    if (comm === 'claude' || comm === 'node') return pid
+    let childrenRaw = ''
+    try {
+      const fs = require('node:fs') as typeof import('node:fs')
+      childrenRaw = fs.readFileSync(`/proc/${pid}/task/${pid}/children`, 'utf8').trim()
+    } catch {
+      continue
+    }
+    for (const c of childrenRaw.split(/\s+/).filter(Boolean)) {
+      const n = parseInt(c, 10)
+      if (Number.isFinite(n)) queue.push(n)
+    }
+  }
+  return null
+}
+
+/**
+ * Read /proc/<pid>/stat (CPU time + start time) and /proc/<pid>/status
+ * (VmRSS) into a stat snapshot. Returns null if /proc isn't present
+ * (non-Linux) or the pid disappeared mid-read.
+ */
+function readProcStats(pid: number): { pid: number; cpuTimeMs?: number; memoryMb?: number; uptimeMs?: number } | null {
+  try {
+    const fs = require('node:fs') as typeof import('node:fs')
+
+    // /proc/<pid>/stat — fields after `comm` are space-separated. comm itself
+    // is wrapped in `()` and may contain spaces, so split off everything
+    // after the LAST `)`.
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8')
+    const tail = stat.slice(stat.lastIndexOf(')') + 2).split(/\s+/)
+    const utime = Number(tail[11] ?? 0)
+    const stime = Number(tail[12] ?? 0)
+    const starttime = Number(tail[19] ?? 0) // jiffies since boot
+    const clk = 100 // CLK_TCK; conventionally 100 on Linux. ok within ~1%.
+
+    const cpuTimeMs = ((utime + stime) / clk) * 1000
+
+    let bootTimeSec = 0
+    try {
+      const uptime = fs.readFileSync('/proc/uptime', 'utf8').split(/\s+/)[0]
+      bootTimeSec = Date.now() / 1000 - Number(uptime)
+    } catch {}
+    const startTimeMs = bootTimeSec ? (bootTimeSec + starttime / clk) * 1000 : 0
+    const uptimeMs = startTimeMs ? Math.max(0, Date.now() - startTimeMs) : undefined
+
+    let memoryMb: number | undefined
+    try {
+      const status = fs.readFileSync(`/proc/${pid}/status`, 'utf8')
+      const m = status.match(/VmRSS:\s+(\d+)\s+kB/)
+      if (m) memoryMb = Number(m[1]) / 1024
+    } catch {}
+
+    return { pid, cpuTimeMs, memoryMb, uptimeMs }
+  } catch {
+    return null
+  }
+}
+
 export interface ClaudeProjectProcessOptions {
   chatId: string
   slug: string
@@ -181,6 +260,28 @@ export class ClaudeProjectProcess implements ProjectProcess {
 
   isAlive(): boolean {
     return this._alive
+  }
+
+  /**
+   * Find the claude pid inside our tmux session and read /proc for
+   * cpu time, memory, and uptime. POSIX-only (relies on /proc); Windows
+   * operators won't get stats but the call won't throw.
+   */
+  async getStats(): Promise<{ pid: number | null; cpuTimeMs?: number; memoryMb?: number; uptimeMs?: number } | null> {
+    if (!this._alive || !this.tmuxSessionName) return null
+    const r = spawnSync(
+      'tmux',
+      ['list-panes', '-t', this.tmuxSessionName, '-F', '#{pane_pid}'],
+      { stdio: ['ignore', 'pipe', 'pipe'] },
+    )
+    if (r.status !== 0) return null
+    const panePid = parseInt(r.stdout.toString().trim().split('\n')[0]!, 10)
+    if (!Number.isFinite(panePid)) return null
+
+    // Walk children for the actual claude pid (the pane usually wraps
+    // it under /bin/sh -c).
+    const claudePid = findClaudeChild(panePid) ?? panePid
+    return readProcStats(claudePid)
   }
 
   /**

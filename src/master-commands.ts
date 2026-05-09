@@ -53,6 +53,21 @@ export interface MasterMutator {
    * obscure the original error.
    */
   deleteDiscordChannel?: (chatId: string) => Promise<void>
+  /**
+   * Snapshot of the project pool's live processes — used by `usage`.
+   * Returns one entry per chat_id that has a tracked process (alive
+   * or recently exited).
+   */
+  poolStats?: () => Promise<Array<{
+    chatId: string
+    slug: string
+    alive: boolean
+    pid: number | null
+    cpuTimeMs?: number
+    memoryMb?: number
+    uptimeMs?: number
+    lastActivityMs: number
+  }>>
 }
 
 const READ_VERBS = ['list', 'show', 'status', 'help'] as const
@@ -111,6 +126,12 @@ export async function handleMasterCommand(
       return { kind: 'reply', text: await handleRemote(rest, ctx) }
     case 'pull':
       return { kind: 'reply', text: await handlePull(rest, ctx) }
+    case 'usage':
+    case 'ps':
+    case 'top':
+      return { kind: 'reply', text: await handleUsage(ctx) }
+    case 'stop':
+      return { kind: 'reply', text: await handleStop(rest, ctx) }
     default:
       return {
         kind: 'reply',
@@ -132,6 +153,8 @@ function helpText(prefix: string): string {
     `${prefix} rename <chat_id-or-slug> --slug NEW                    — rename slug + dir`,
     `${prefix} remote <chat_id-or-slug> [--set URL] [--creds NAME]    — show/set git remote`,
     `${prefix} pull   <chat_id-or-slug>                               — git pull --ff-only`,
+    `${prefix} usage                         — resource snapshot of running project subprocesses (alias: ps, top)`,
+    `${prefix} stop   <chat_id-or-slug>                               — kill the project's subprocess; lazy-respawns on next message`,
     `${prefix} rm     <chat_id-or-slug> --yes                         — archive + remove`,
     `${prefix} help                          — this message`,
     '```',
@@ -724,6 +747,61 @@ async function handlePull(rest: string[], _ctx: MasterContext): Promise<string> 
  * subprocess claude how the repo, the operator, and git auth are set up
  * so it can do real work without bouncing back for clarification.
  */
+async function handleUsage(ctx: MasterContext): Promise<string> {
+  if (!ctx.mutator?.poolStats) {
+    return 'pool stats not wired into the mutator (run from a live bot context)'
+  }
+  const rows = await ctx.mutator.poolStats()
+  if (rows.length === 0) return '_no project subprocesses are currently spawned. (They start lazily on first message and idle-evict after 15min by default.)_'
+
+  const now = Date.now()
+  const fmtAgo = (ms: number) => {
+    const s = Math.max(0, Math.round((now - ms) / 1000))
+    if (s < 60) return `${s}s`
+    if (s < 3600) return `${Math.round(s / 60)}m`
+    return `${Math.round(s / 3600)}h`
+  }
+  const fmtUp = (ms?: number) => {
+    if (!ms) return '?'
+    const s = Math.round(ms / 1000)
+    if (s < 60) return `${s}s`
+    if (s < 3600) return `${Math.round(s / 60)}m`
+    return `${(s / 3600).toFixed(1)}h`
+  }
+
+  const lines = ['**Project subprocesses:**', '```']
+  lines.push('slug                 alive  pid       mem(MB)  cpu(s)  up      last_act')
+  for (const r of rows.sort((a, b) => a.slug.localeCompare(b.slug))) {
+    const slug = r.slug.padEnd(20).slice(0, 20)
+    const alive = r.alive ? 'yes' : 'no '
+    const pid = (r.pid ?? '-').toString().padStart(8)
+    const mem = r.memoryMb !== undefined ? r.memoryMb.toFixed(0).padStart(7) : '      ?'
+    const cpu = r.cpuTimeMs !== undefined ? (r.cpuTimeMs / 1000).toFixed(1).padStart(6) : '     ?'
+    const up = fmtUp(r.uptimeMs).padStart(6)
+    const last = fmtAgo(r.lastActivityMs).padStart(8)
+    lines.push(`${slug}  ${alive}    ${pid}  ${mem}  ${cpu}  ${up}  ${last} ago`)
+  }
+  lines.push('```')
+  return lines.join('\n')
+}
+
+async function handleStop(rest: string[], ctx: MasterContext): Promise<string> {
+  const { positional } = parseFlags(rest)
+  if (positional.length === 0) return '`stop` needs a chat_id or slug'
+  const target = positional[0]!
+  const config = loadConfig()
+  const entry = resolveTarget(config, target)
+  if (!entry) return `no project found for "${target}"`
+
+  if (!ctx.mutator?.killProject) return 'kill not wired (run from a live bot context)'
+  try {
+    await ctx.mutator.killProject(entry.chatId)
+  } catch (err) {
+    return `kill failed: ${(err as Error).message}`
+  }
+  return `✅ stopped **${entry.project.slug}**. The next message in that channel will spawn a fresh subprocess.`
+}
+
 /**
  * Discord-conventions footer baked into every freshly-created project's
  * CLAUDE.md so Claude knows how to reply (mcd vs upstream tools) and can
