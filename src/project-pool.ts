@@ -72,6 +72,32 @@ export class ProjectPool {
     await proc.deliver(envelope)
   }
 
+  /**
+   * Route an outbound reply (emitted by the master MCP server when a
+   * subprocess calls a tool) to the matching process so its lastActivity
+   * bumps and its onReply subscribers fire. If the chat has no live
+   * process the reply is logged and dropped — this should never happen in
+   * practice because the process held the MCP session that produced it.
+   */
+  acceptReply(reply: OutboundReply): void {
+    const proc = this.processes.get(reply.chatId)
+    if (!proc || !proc.isAlive()) {
+      process.stderr.write(`pool: orphan reply from ${reply.chatId}, dropped\n`)
+      return
+    }
+    if (typeof (proc as { acceptReply?: (r: OutboundReply) => void }).acceptReply === 'function') {
+      ;(proc as unknown as { acceptReply: (r: OutboundReply) => void }).acceptReply(reply)
+    }
+    // Always fan out via the pool's own onReply sink — this is the
+    // canonical path that lands on Discord. Per-process onReply handlers
+    // are an optional secondary hook (not used by server.ts).
+    try {
+      this.opts.onReply(reply)
+    } catch (err) {
+      process.stderr.write(`pool: onReply (acceptReply path) threw: ${err}\n`)
+    }
+  }
+
   /** Force an idle sweep. Public for tests. */
   evictIdle(): void {
     const config = this.opts.getConfig()
