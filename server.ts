@@ -1061,6 +1061,7 @@ async function handleInbound(msg: Message): Promise<void> {
         void msg.react(result.access.ackReaction).catch(() => {})
       }
 
+      process.stderr.write(`discord: route msg=${msg.id} chat=${msg.channelId} user=${msg.author.id} → pool\n`)
       void projectPool
         .deliver(msg.channelId, {
           messageId: msg.id,

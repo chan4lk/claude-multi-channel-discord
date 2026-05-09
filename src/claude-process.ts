@@ -25,6 +25,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
 
 import type { ClaudeArgs } from './channels-config.ts'
 import type { MasterMcpServer } from './master-mcp-server.ts'
@@ -99,6 +100,13 @@ export class ClaudeProjectProcess implements ProjectProcess {
     const claudeArgs = this.opts.claudeArgs ?? {}
     const argv: string[] = [this.opts.claudeBin ?? 'claude']
     argv.push('--mcp-config', this.mcpConfigPath)
+    // Without this, the auto-loaded upstream claude-plugins-official Discord
+    // plugin still installs its `mcp__discord__reply` tool and Claude often
+    // picks that one over our `mcp__mcd__reply` — and it then refuses with
+    // "channel not allowlisted" because the upstream's access.json is for a
+    // different bot. --strict-mcp-config restricts MCP servers to ONLY the
+    // ones we provide via --mcp-config above.
+    argv.push('--strict-mcp-config')
     argv.push('--permission-mode', claudeArgs.permissionMode ?? 'auto')
     if (this.opts.model) argv.push('--model', this.opts.model)
     if (claudeArgs.allowedTools?.length) argv.push('--allowed-tools', claudeArgs.allowedTools.join(','))
@@ -151,18 +159,38 @@ export class ClaudeProjectProcess implements ProjectProcess {
 
   /**
    * Inject a Discord message into the running interactive claude as if the
-   * operator typed it. Two send-keys: `-l` for literal text (avoids tmux
-   * interpreting parts of the message as key names), then bare `Enter` to
-   * submit. Multi-line messages travel through unmodified — claude's prompt
-   * box accepts newlines just fine.
+   * operator typed it.
+   *
+   * Critical timing detail: if this fires while claude's TUI is still
+   * booting, the text lands but the Enter keystroke is silently dropped
+   * (the input handler isn't bound yet). So we poll the pane for the
+   * prompt-ready marker before sending. After the first message lands,
+   * subsequent deliveries skip the wait — fast path.
    */
   async deliver(envelope: InboundEnvelope): Promise<void> {
     if (!this._alive || !this.tmuxSessionName) {
       throw new Error(`deliver() called on dead ClaudeProjectProcess ${this.slug}`)
     }
     this._lastActivity = Date.now()
+    this.log(`deliver msg_id=${envelope.messageId} ts=${envelope.ts}`)
 
     const session = this.tmuxSessionName
+
+    if (!this.tuiReady) {
+      const ok = await this.waitForTuiReady(session)
+      if (!ok) {
+        this.log('TUI not ready after timeout — dropping message')
+        return
+      }
+      this.tuiReady = true
+    }
+
+    // Stateless mode now — there's no persistent MCP session to wait on.
+    // The TUI prompt being up is our readiness signal; claude eagerly
+    // connects --mcp-config servers at startup, so the handshake has
+    // already happened by the time the user prompt renders.
+    await this.master.waitForChatReady(this.chatId)
+
     const text = this.formatPrompt(envelope)
 
     const sendText = spawnSync('tmux', ['send-keys', '-t', session, '-l', text], {
@@ -172,12 +200,40 @@ export class ClaudeProjectProcess implements ProjectProcess {
       this.log(`send-keys (literal) failed: ${sendText.stderr.toString().trim()}`)
       return
     }
-    const sendEnter = spawnSync('tmux', ['send-keys', '-t', session, 'Enter'], {
+
+    // Brief settle so Ink re-renders the buffer before we submit.
+    await sleep(120)
+    const sendEnter = spawnSync('tmux', ['send-keys', '-t', session, 'C-m'], {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     if (sendEnter.status !== 0) {
-      this.log(`send-keys (Enter) failed: ${sendEnter.stderr.toString().trim()}`)
+      this.log(`send-keys (C-m) failed: ${sendEnter.stderr.toString().trim()}`)
     }
+  }
+
+  private tuiReady = false
+
+  /**
+   * Poll the tmux pane for claude's prompt-ready marker (the `❯` cursor
+   * line + the auto-mode footer). Returns true once seen, false on
+   * timeout. Spawn → TUI ready can take 3-15s depending on plugin warmup.
+   */
+  private async waitForTuiReady(session: string, timeoutMs = 30_000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      const r = spawnSync('tmux', ['capture-pane', '-p', '-t', session], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      const pane = r.stdout?.toString() ?? ''
+      // Two strong signals that Ink finished bringing up the input box:
+      //  - `❯` prompt cursor at the start of the input line
+      //  - auto-mode footer ("auto mode on") rendered below the rule
+      if (pane.includes('❯') && pane.includes('auto mode on')) {
+        return true
+      }
+      await sleep(500)
+    }
+    return false
   }
 
   /**
@@ -261,9 +317,15 @@ export class ClaudeProjectProcess implements ProjectProcess {
   private writeMcpConfig(): string {
     const dir = mkdtempSync(join(tmpdir(), `mcd-${this.slug}-`))
     const path = join(dir, 'mcp-config.json')
+    // Server name must NOT collide with the auto-loaded upstream
+    // claude-plugins-official Discord plugin (which is also "discord").
+    // Without this rename Claude can't tell the two `reply` tools apart
+    // and consistently picked the upstream one — which then refused with
+    // "channel not allowlisted" because its access.json belongs to the
+    // OLD bot.
     const config = {
       mcpServers: {
-        discord: {
+        mcd: {
           type: 'http',
           url: this.master.urlFor(this.chatId),
         },
