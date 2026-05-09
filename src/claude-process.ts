@@ -202,6 +202,23 @@ export class ClaudeProjectProcess implements ProjectProcess {
     // different bot. --strict-mcp-config restricts MCP servers to ONLY the
     // ones we provide via --mcp-config above.
     argv.push('--strict-mcp-config')
+
+    // When routing to a third-party provider (MiniMax, etc.), the
+    // operator's Claude Code OAuth token coexists with our ANTHROPIC_API_KEY
+    // env override. Claude prints "Auth conflict: Both a token (claude.ai)
+    // and an API key (ANTHROPIC_API_KEY) are set" and defaults to OAuth —
+    // so calls go to Anthropic instead of the provider. --bare forces
+    // strict API-key auth (OAuth and keychain are never read). It also
+    // disables CLAUDE.md auto-discovery, so we re-add the project dir
+    // explicitly via --add-dir.
+    //
+    // Subscription-auth projects (no provider override) skip --bare to
+    // preserve hooks, auto-memory, plugin sync, etc.
+    if (this.opts.provider) {
+      argv.push('--bare')
+      argv.push('--add-dir', cwd)
+    }
+
     argv.push('--permission-mode', claudeArgs.permissionMode ?? 'auto')
     if (this.opts.model) argv.push('--model', this.opts.model)
     if (claudeArgs.allowedTools?.length) argv.push('--allowed-tools', claudeArgs.allowedTools.join(','))
