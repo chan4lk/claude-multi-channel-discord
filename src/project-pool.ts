@@ -1,0 +1,185 @@
+import type { ChannelsConfig, Project } from './channels-config.ts'
+import type { InboundEnvelope, OutboundReply, ProjectProcess } from './project-process.ts'
+
+export type PoolEvent =
+  | { kind: 'spawn'; chatId: string; slug: string }
+  | { kind: 'evict'; chatId: string; slug: string; reason: 'idle-evict' | 'pool-full' }
+  | { kind: 'rejected'; chatId: string; reason: 'unknown-project' | 'pool-full-no-evict-candidate' }
+  | { kind: 'crashed'; chatId: string; slug: string; code: number | null; signal: NodeJS.Signals | null }
+
+export interface ProjectPoolOptions {
+  /**
+   * Factory invoked on lazy spawn. Production wires this to spawn a real
+   * Claude Code subprocess. Tests wire it to MockProjectProcess.
+   */
+  factory: (args: { chatId: string; project: Project; config: ChannelsConfig }) => ProjectProcess
+  /**
+   * Read the current channels config. Re-read on every dispatch so pool
+   * decisions track config edits without restart.
+   */
+  getConfig: () => ChannelsConfig
+  /** Outbound reply sink. Pool tags origin chatId for the caller. */
+  onReply: (reply: OutboundReply) => void
+  /** Diagnostics — fire-and-forget. */
+  onEvent?: (evt: PoolEvent) => void
+  /** Override Date.now for tests. */
+  now?: () => number
+}
+
+export class ProjectPool {
+  private readonly opts: ProjectPoolOptions
+  private readonly processes = new Map<string, ProjectProcess>()
+  private readonly cleanups = new Map<string, () => void>()
+  private idleTimer: ReturnType<typeof setInterval> | null = null
+
+  constructor(opts: ProjectPoolOptions) {
+    this.opts = opts
+  }
+
+  /** Start background idle eviction. Idempotent. */
+  start(checkIntervalMs = 30_000): void {
+    if (this.idleTimer) return
+    this.idleTimer = setInterval(() => {
+      try {
+        this.evictIdle()
+      } catch (err) {
+        process.stderr.write(`pool: idle sweep failed: ${err}\n`)
+      }
+    }, checkIntervalMs)
+    // Don't keep the event loop alive just for the sweeper.
+    if (typeof this.idleTimer.unref === 'function') this.idleTimer.unref()
+  }
+
+  /** Push a Discord message to the right project process. */
+  async deliver(chatId: string, envelope: InboundEnvelope): Promise<void> {
+    const config = this.opts.getConfig()
+    const project = config.projects[chatId]
+    if (!project) {
+      this.fireEvent({ kind: 'rejected', chatId, reason: 'unknown-project' })
+      return
+    }
+
+    const existing = this.processes.get(chatId)
+    let proc: ProjectProcess
+    if (existing && existing.isAlive()) {
+      proc = existing
+    } else {
+      const spawned = await this.spawn(chatId, project, config)
+      if (!spawned) return // pool was full and no eviction candidate
+      proc = spawned
+    }
+
+    await proc.deliver(envelope)
+  }
+
+  /** Force an idle sweep. Public for tests. */
+  evictIdle(): void {
+    const config = this.opts.getConfig()
+    const idleMs = config.defaults.idleEvictMinutes * 60_000
+    const cutoff = this.now() - idleMs
+    for (const [chatId, proc] of this.processes) {
+      if (!proc.isAlive()) {
+        this.processes.delete(chatId)
+        this.cleanups.get(chatId)?.()
+        this.cleanups.delete(chatId)
+        continue
+      }
+      if (proc.lastActivityMs() < cutoff) {
+        this.fireEvent({ kind: 'evict', chatId, slug: proc.slug, reason: 'idle-evict' })
+        void proc.kill('idle-evict')
+      }
+    }
+  }
+
+  /** Tear down the pool. Resolves once every process has exited. */
+  async shutdown(): Promise<void> {
+    if (this.idleTimer) {
+      clearInterval(this.idleTimer)
+      this.idleTimer = null
+    }
+    const tasks: Promise<void>[] = []
+    for (const proc of this.processes.values()) tasks.push(proc.kill('shutdown'))
+    await Promise.allSettled(tasks)
+    this.processes.clear()
+    for (const fn of this.cleanups.values()) fn()
+    this.cleanups.clear()
+  }
+
+  /** Test/debug accessor. */
+  size(): number {
+    return Array.from(this.processes.values()).filter((p) => p.isAlive()).length
+  }
+
+  /** Test/debug accessor. */
+  has(chatId: string): boolean {
+    const p = this.processes.get(chatId)
+    return !!p && p.isAlive()
+  }
+
+  private async spawn(chatId: string, project: Project, config: ChannelsConfig): Promise<ProjectProcess | null> {
+    if (this.size() >= config.defaults.maxConcurrent) {
+      const evicted = this.evictLeastRecentlyUsed()
+      if (!evicted) {
+        this.fireEvent({ kind: 'rejected', chatId, reason: 'pool-full-no-evict-candidate' })
+        return null
+      }
+    }
+
+    const proc = this.opts.factory({ chatId, project, config })
+    this.processes.set(chatId, proc)
+
+    const offReply = proc.onReply((reply) => {
+      try {
+        this.opts.onReply(reply)
+      } catch (err) {
+        process.stderr.write(`pool: onReply handler threw: ${err}\n`)
+      }
+    })
+    const offExit = proc.onExit(({ code, signal }) => {
+      this.processes.delete(chatId)
+      if (code !== 0 && code !== null) {
+        this.fireEvent({ kind: 'crashed', chatId, slug: project.slug, code, signal })
+      }
+      this.cleanups.get(chatId)?.()
+      this.cleanups.delete(chatId)
+    })
+    this.cleanups.set(chatId, () => {
+      offReply()
+      offExit()
+    })
+
+    this.fireEvent({ kind: 'spawn', chatId, slug: project.slug })
+    return proc
+  }
+
+  /**
+   * Find the alive process with the oldest lastActivity and kill it. Returns
+   * its chat_id, or null if no alive candidates were found (e.g., everything
+   * is currently mid-spawn). Fires 'pool-full' eviction events.
+   */
+  private evictLeastRecentlyUsed(): string | null {
+    let oldest: { chatId: string; proc: ProjectProcess; ts: number } | null = null
+    for (const [chatId, proc] of this.processes) {
+      if (!proc.isAlive()) continue
+      const ts = proc.lastActivityMs()
+      if (!oldest || ts < oldest.ts) oldest = { chatId, proc, ts }
+    }
+    if (!oldest) return null
+    this.fireEvent({ kind: 'evict', chatId: oldest.chatId, slug: oldest.proc.slug, reason: 'pool-full' })
+    void oldest.proc.kill('pool-full')
+    return oldest.chatId
+  }
+
+  private fireEvent(evt: PoolEvent): void {
+    if (!this.opts.onEvent) return
+    try {
+      this.opts.onEvent(evt)
+    } catch (err) {
+      process.stderr.write(`pool: onEvent handler threw: ${err}\n`)
+    }
+  }
+
+  private now(): number {
+    return this.opts.now ? this.opts.now() : Date.now()
+  }
+}
