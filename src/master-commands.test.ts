@@ -164,10 +164,11 @@ const created = await handleMasterCommand(
 )
 check('create: success reply', created.kind === 'reply' && created.text.includes('newproj'))
 check('create: directory exists', existsSync(join(stateDir, 'projects', 'newproj')))
-check(
-  'create: CLAUDE.md written',
-  readFileSync(join(stateDir, 'projects', 'newproj', 'CLAUDE.md'), 'utf8').trim() === 'be helpful',
-)
+{
+  const claudeMd = readFileSync(join(stateDir, 'projects', 'newproj', 'CLAUDE.md'), 'utf8')
+  check('create: CLAUDE.md starts with the user prompt', claudeMd.startsWith('be helpful'))
+  check('create: CLAUDE.md includes Discord-conventions footer', claudeMd.includes('mcp__mcd__reply'))
+}
 const afterCreate = loadConfig()
 check('create: registered in channels.json', afterCreate.projects['444444444444444444']?.slug === 'newproj')
 

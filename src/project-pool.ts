@@ -31,6 +31,15 @@ export class ProjectPool {
   private readonly processes = new Map<string, ProjectProcess>()
   private readonly cleanups = new Map<string, () => void>()
   private idleTimer: ReturnType<typeof setInterval> | null = null
+  /**
+   * Per-chat dedup cache of recently-delivered Discord message IDs.
+   * Discord's gateway can replay events after a reconnect/RESUME — if
+   * the same messageCreate fires twice, we'd send-keys twice and claude
+   * would process the same prompt twice. 60s TTL is more than enough to
+   * dedup a resume burst without leaking memory.
+   */
+  private readonly recentMessages = new Map<string, Map<string, number>>()
+  private static readonly MSG_DEDUP_TTL_MS = 60_000
 
   constructor(opts: ProjectPoolOptions) {
     this.opts = opts
@@ -59,6 +68,11 @@ export class ProjectPool {
       return
     }
 
+    if (this.isDuplicate(chatId, envelope.messageId)) {
+      process.stderr.write(`pool: drop duplicate msg=${envelope.messageId} chat=${chatId}\n`)
+      return
+    }
+
     const existing = this.processes.get(chatId)
     let proc: ProjectProcess
     if (existing && existing.isAlive()) {
@@ -70,6 +84,30 @@ export class ProjectPool {
     }
 
     await proc.deliver(envelope)
+  }
+
+  /**
+   * Returns true if we've delivered this messageId for this chat within
+   * the last MSG_DEDUP_TTL_MS. Marks it as seen on first call.
+   */
+  private isDuplicate(chatId: string, messageId: string): boolean {
+    const now = this.now()
+    const cutoff = now - ProjectPool.MSG_DEDUP_TTL_MS
+
+    let bucket = this.recentMessages.get(chatId)
+    if (!bucket) {
+      bucket = new Map()
+      this.recentMessages.set(chatId, bucket)
+    }
+
+    // Drop expired entries from this bucket so memory stays bounded.
+    for (const [id, ts] of bucket) {
+      if (ts < cutoff) bucket.delete(id)
+    }
+
+    if (bucket.has(messageId)) return true
+    bucket.set(messageId, now)
+    return false
   }
 
   /**

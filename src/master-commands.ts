@@ -284,7 +284,10 @@ async function handleCreate(rest: string[], ctx: MasterContext): Promise<string>
     }
   } else {
     mkdirSync(dir, { recursive: true, mode: 0o700 })
-    writeFileSync(projectClaudeMd(slug), `${prompt.trim()}\n`, { mode: 0o600 })
+    // Append a stable Discord-conventions footer so newly-created projects
+    // know how to reply, just like cloned ones do.
+    const enriched = `${prompt.trim()}\n\n${defaultDiscordFooter()}`
+    writeFileSync(projectClaudeMd(slug), `${enriched}\n`, { mode: 0o600 })
   }
 
   const updated: ChannelsConfig = {
@@ -549,9 +552,7 @@ async function handleClone(rest: string[], ctx: MasterContext): Promise<string> 
   if (existsSync(claudeMd)) {
     claudeMdNote = '_kept existing CLAUDE.md in the repo._'
   } else {
-    const prompt =
-      promptArg ??
-      `You are working on the ${slug} project (cloned from ${repo}). Read README.md to orient. Use git for changes; commit small, push to a feature branch and open a PR rather than committing to main. Reply briefly.`
+    const prompt = promptArg ?? defaultClonePrompt(slug, repo, branch ?? 'main')
     writeFileSync(claudeMd, `${prompt.trim()}\n`, { mode: 0o600 })
     claudeMdNote = `wrote CLAUDE.md (${prompt.length} chars)`
   }
@@ -674,6 +675,59 @@ async function handlePull(rest: string[], _ctx: MasterContext): Promise<string> 
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────
+
+/**
+ * Default system prompt baked into projects/<slug>/CLAUDE.md when
+ * `!project clone` is invoked without an explicit --prompt. Tells the
+ * subprocess claude how the repo, the operator, and git auth are set up
+ * so it can do real work without bouncing back for clarification.
+ */
+/**
+ * Discord-conventions footer baked into every freshly-created project's
+ * CLAUDE.md so Claude knows how to reply (mcd vs upstream tools) and can
+ * use the bot's tool surface immediately.
+ */
+function defaultDiscordFooter(): string {
+  return [
+    '# Discord conventions',
+    '',
+    'Inbound messages arrive wrapped in `<channel source="discord" ...>BODY</channel>` envelopes — BODY is what the operator typed. Respond by calling `mcp__mcd__reply` with `{ text, reply_to? }`. Do NOT call `mcp__discord__reply`. Don\'t print transcript text outside the reply tool — Discord users only see what `mcp__mcd__reply` emits. Keep replies brief.',
+    '',
+    'Other available tools (when needed): `mcp__mcd__react`, `mcp__mcd__edit_message`, `mcp__mcd__download_attachment`, `mcp__mcd__fetch_messages`.',
+    '',
+    '# Git + shell',
+    '',
+    'You have Bash (auto permission mode), `git`, and `gh` (GitHub CLI). Authentication is preconfigured via `GIT_ASKPASS` or `GIT_SSH_COMMAND` for HTTPS / SSH respectively — `git push` and `gh pr create` work without token prompts. For commits, prefer feature branches over committing to `main`. `git clone` works for pulling additional repos when you need to inspect dependencies.',
+  ].join('\n')
+}
+
+function defaultClonePrompt(slug: string, repo: string, baseBranch: string): string {
+  return [
+    `You are the assistant for the **${slug}** project.`,
+    '',
+    `Working directory: this is a git checkout of ${repo} (base branch \`${baseBranch}\`). Commands run from here.`,
+    'You can use Bash freely (auto permission mode). Useful binaries on PATH: git, gh (GitHub CLI), node/npm, bun, python.',
+    '',
+    '# Git workflow',
+    '',
+    '- Always `git pull --ff-only origin ' + baseBranch + '` before starting work.',
+    '- Make changes on a feature branch — never commit directly to `' + baseBranch + '`. Branch names: `claude/<short-task>` or `<operator-handle>/<topic>`.',
+    '- Stage and commit small focused units. Use clear commit messages with the *why*, not just the *what*.',
+    '- Push the branch (`git push -u origin <branch>`). Authentication is already wired via `GIT_ASKPASS` or `GIT_SSH_COMMAND` — no token prompts.',
+    '- Open a pull request with `gh pr create --base ' + baseBranch + ' --title "..." --body "..."`. Reply in Discord with the PR URL.',
+    '- For small fixes, request review in the PR body or `@mention` the operator.',
+    '',
+    '# Cloning additional repos',
+    '',
+    'If you need to look at another repo: `git clone <url>` into a sibling directory under `~/.claude/channels/discord-multi/projects/' + slug + '/_deps/<name>` or wherever fits. Don\'t pollute this working tree with unrelated code.',
+    '',
+    '# Discord conventions',
+    '',
+    'Inbound messages arrive wrapped in `<channel source="discord" ...>BODY</channel>` envelopes — BODY is what the operator typed. Respond by calling `mcp__mcd__reply` with `{ text, reply_to? }`. Do NOT call `mcp__discord__reply`. Don\'t print transcript text outside the reply tool — Discord users only see what `mcp__mcd__reply` emits. Keep replies brief; for long output, post the highlights and offer to dig in.',
+    '',
+    'Other tools (`mcp__mcd__react`, `mcp__mcd__edit_message`, `mcp__mcd__download_attachment`, `mcp__mcd__fetch_messages`) are available when useful — for example `download_attachment` to grab an inbound file, or `react` for a fast acknowledgment before a long task.',
+  ].join('\n')
+}
 
 function removeChannelFromAccessGroups(chatId: string): void {
   const path = accessFile()

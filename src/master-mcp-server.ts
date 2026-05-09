@@ -116,35 +116,15 @@ export class MasterMcpServer {
     return `http://${this.host}:${this.boundPort}/mcp/${chatId}`
   }
 
-  /**
-   * Stateless transport gives us no persistent connection to track. The
-   * pool's earlier "wait for ready" was tied to that. Without it, we just
-   * lean on the tmux TUI gate — claude eagerly connects MCP servers at
-   * startup, so by the time the prompt is up the handshake has happened.
-   * Keep the method as a no-op for callers that still expect it.
-   */
-  isChatReady(_chatId: string): boolean {
-    return true
-  }
-
-  async waitForChatReady(_chatId: string): Promise<void> {
-    // Stateless mode: no persistent session to wait on. Caller already
-    // gated on the TUI prompt; that's our readiness signal.
-  }
-
-  /** No-op in stateless mode — kept for API compatibility with callers. */
-  async closeChat(_chatId: string): Promise<void> {
-    return
-  }
-
-  /**
-   * Stateless mode has no persistent server-initiated notification path.
-   * Send-keys delivers inbound messages to the per-channel claude
-   * directly via its TTY; this method is intentionally a no-op.
-   */
-  async notifyChat(_chatId: string, _method: string, _params: Record<string, unknown>): Promise<void> {
-    return
-  }
+  // Stateless transport: no persistent server-side state per chat. The
+  // pool used to call isChatReady / waitForChatReady / closeChat /
+  // notifyChat against this server; with stateless HTTP MCP all of those
+  // are meaningless. Kept here as a one-liner for any caller that hasn't
+  // been migrated yet. New code should not call these.
+  isChatReady(_chatId: string): boolean { return true }
+  async waitForChatReady(_chatId: string): Promise<void> { /* no-op */ }
+  async closeChat(_chatId: string): Promise<void> { /* no-op */ }
+  async notifyChat(_chatId: string, _method: string, _params: Record<string, unknown>): Promise<void> { /* no-op */ }
 
   private async route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = req.url ?? ''

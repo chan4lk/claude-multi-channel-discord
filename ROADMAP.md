@@ -111,14 +111,20 @@ Master MCP server currently ships only `reply`. Port the rest from upstream `ser
 
 These all run against the master process's `discord.js` client — same code paths upstream uses, just lifted into chat-id-aware closures inside `MasterMcpServer.buildServer()`.
 
-### Phase 8 — Multi-user, cross-project, polish
+### Phase 8 — Multi-user, cross-project, polish (partial ✅)
 
+Done:
+- ✅ Natural-language master via `mcp__mcd__run_master_command` (master claude executes commands the operator describes in plain English).
+- ✅ Auto-loaded git/Discord workflow guidance baked into every project's CLAUDE.md (clone + create paths). Agents now know about `git push`, `gh pr create`, and how to use `mcp__mcd__reply` without being told.
+- ✅ Discord gateway-resume dedup: pool drops duplicate `messageCreate` events by `(chatId, messageId)` with a 60s TTL.
+- ✅ Stale `notifyChat` / `isChatReady` / `waitForChatReady` / `closeChat` stubs in MasterMcpServer collapsed to one-line no-ops.
+
+Remaining:
 - Per-channel allowlists beyond what `access.json groups[].allowFrom` covers (e.g. role-based)
 - Cross-project handoff (`@<slug> please finish this`)
 - `/discord:project` skill verbs that proxy to the master via the Gateway's RPC (so a terminal user can drive `create/clone` without typing in Discord)
-- Auto-respawn on `claude` crash inside the tmux session
+- Explicit auto-respawn on `claude` crash inside the tmux session (currently lazy-respawns on next message; a watchdog would respawn proactively)
 - Resume-broken-PR support (when the bot died mid-push)
-- Drop the now-unused notification queue stubs in `MasterMcpServer`
 
 ---
 
