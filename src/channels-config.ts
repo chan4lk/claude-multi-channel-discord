@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { dirname } from 'node:path'
 import { z } from 'zod'
 
-import { CHANNELS_FILE } from './paths.ts'
+import { channelsFile } from './paths.ts'
 
 export const SLUG_PATTERN = /^[a-z][a-z0-9_-]{0,30}$/
 
@@ -52,7 +52,7 @@ export type Project = z.infer<typeof ProjectSchema>
 
 const EMPTY_CONFIG: ChannelsConfig = ChannelsConfigSchema.parse({})
 
-export function loadConfig(path: string = CHANNELS_FILE): ChannelsConfig {
+export function loadConfig(path: string = channelsFile()): ChannelsConfig {
   if (!existsSync(path)) return EMPTY_CONFIG
   let raw: string
   try {
@@ -81,7 +81,7 @@ export function loadConfig(path: string = CHANNELS_FILE): ChannelsConfig {
   return result.data
 }
 
-export function saveConfig(config: ChannelsConfig, path: string = CHANNELS_FILE): void {
+export function saveConfig(config: ChannelsConfig, path: string = channelsFile()): void {
   // Re-parse to apply defaults and reject malformed in-memory mutations before persisting.
   const validated = ChannelsConfigSchema.parse(config)
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 })

@@ -34,6 +34,9 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, 
 import { homedir } from 'os'
 import { join, sep } from 'path'
 
+import { loadConfig as loadChannelsConfig } from './src/channels-config.ts'
+import { handleMasterCommand } from './src/master-commands.ts'
+
 const STATE_DIR = process.env.DISCORD_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'discord')
 const ACCESS_FILE = join(STATE_DIR, 'access.json')
 const APPROVED_DIR = join(STATE_DIR, 'approved')
@@ -802,6 +805,54 @@ client.on('interactionCreate', async (interaction: Interaction) => {
     .catch(() => {})
 })
 
+/**
+ * Master-channel command handler. Returns true when the message was consumed
+ * (caller should NOT forward it to Claude). Returns false on no-prefix /
+ * not-master / no-master-configured so handleInbound falls through to the
+ * existing single-session forwarding path.
+ *
+ * Loads channels.json on every call; the file is small and the bot is not
+ * latency-critical. If the file is malformed we log and let the message
+ * pass through as if no master is configured — better than dropping chat.
+ */
+async function tryMasterCommand(msg: Message, access: Access): Promise<boolean> {
+  let config
+  try {
+    config = loadChannelsConfig()
+  } catch (err) {
+    process.stderr.write(`discord: channels.json load failed, skipping master parse: ${err}\n`)
+    return false
+  }
+
+  const result = handleMasterCommand(msg.content, {
+    chatId: msg.channelId,
+    userId: msg.author.id,
+    config,
+    authorizedUsers: access.allowFrom,
+  })
+
+  switch (result.kind) {
+    case 'no-master-configured':
+    case 'not-master':
+    case 'no-prefix':
+      return false
+    case 'unauthorized':
+      try {
+        await msg.reply('not authorized — only the paired DM operator can run master commands.')
+      } catch (err) {
+        process.stderr.write(`discord: unauthorized reply failed: ${err}\n`)
+      }
+      return true
+    case 'reply':
+      try {
+        await msg.reply({ content: result.text, allowedMentions: { parse: [] } })
+      } catch (err) {
+        process.stderr.write(`discord: master reply failed: ${err}\n`)
+      }
+      return true
+  }
+}
+
 client.on('messageCreate', msg => {
   if (msg.author.bot) return
   handleInbound(msg).catch(e => process.stderr.write(`discord: handleInbound failed: ${e}\n`))
@@ -829,6 +880,14 @@ async function handleInbound(msg: Message): Promise<void> {
   if (msg.channel.type === ChannelType.DM) {
     dmChannelUsers.set(chat_id, msg.author.id)
   }
+
+  // Master-command intercept (multi-channel-discord fork): if channels.json
+  // designates this chat as the master channel and the message starts with
+  // the configured prefix, parse it as `!project ...` and reply inline
+  // without forwarding to Claude. Authorization is anchored to the existing
+  // DM allowlist (access.allowFrom) so a single, deliberately-paired user is
+  // the only one who can mutate state.
+  if (await tryMasterCommand(msg, result.access)) return
 
   // Permission-reply intercept: if this looks like "yes xxxxx" for a
   // pending permission request, emit the structured event instead of

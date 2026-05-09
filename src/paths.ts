@@ -1,16 +1,43 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-const CHANNELS_DIR_ENV = process.env.MCD_CHANNELS_DIR
-export const CHANNELS_DIR = CHANNELS_DIR_ENV ?? join(homedir(), '.claude', 'channels', 'discord')
+/**
+ * All paths are computed lazily so MCD_CHANNELS_DIR can be set after import
+ * (notably by tests using mkdtempSync), and so symlink swaps of the home
+ * directory are honored without restart.
+ */
+export function channelsDir(): string {
+  return process.env.MCD_CHANNELS_DIR ?? join(homedir(), '.claude', 'channels', 'discord')
+}
 
-export const ACCESS_FILE = join(CHANNELS_DIR, 'access.json')
-export const CHANNELS_FILE = join(CHANNELS_DIR, 'channels.json')
-export const CREDS_FILE = join(CHANNELS_DIR, 'git-credentials.json')
+export function accessFile(): string {
+  return join(channelsDir(), 'access.json')
+}
 
-export const PROJECTS_DIR = join(CHANNELS_DIR, 'projects')
-export const ARCHIVE_DIR = join(PROJECTS_DIR, '.archive')
+export function channelsFile(): string {
+  return join(channelsDir(), 'channels.json')
+}
 
-export const projectDir = (slug: string): string => join(PROJECTS_DIR, slug)
-export const projectClaudeMd = (slug: string): string => join(projectDir(slug), 'CLAUDE.md')
-export const projectSessionFile = (slug: string): string => join(projectDir(slug), '.session-id')
+export function credsFile(): string {
+  return join(channelsDir(), 'git-credentials.json')
+}
+
+export function projectsDir(): string {
+  return join(channelsDir(), 'projects')
+}
+
+export function archiveDir(): string {
+  return join(projectsDir(), '.archive')
+}
+
+export function projectDir(slug: string): string {
+  return join(projectsDir(), slug)
+}
+
+export function projectClaudeMd(slug: string): string {
+  return join(projectDir(slug), 'CLAUDE.md')
+}
+
+export function projectSessionFile(slug: string): string {
+  return join(projectDir(slug), '.session-id')
+}

@@ -22,7 +22,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { argv, exit } from 'node:process'
 
 import { loadConfig, saveConfig, SLUG_PATTERN } from './channels-config.ts'
-import { CHANNELS_DIR, projectClaudeMd, projectDir } from './paths.ts'
+import { channelsDir, projectClaudeMd, projectDir } from './paths.ts'
 
 interface Args {
   master?: string
@@ -98,7 +98,7 @@ async function main() {
 
   const dir = projectDir(args.slug)
   mkdirSync(dir, { recursive: true, mode: 0o700 })
-  mkdirSync(CHANNELS_DIR, { recursive: true, mode: 0o700 })
+  mkdirSync(channelsDir(), { recursive: true, mode: 0o700 })
 
   const claudeMdPath = projectClaudeMd(args.slug)
   if (!existsSync(claudeMdPath) || args.forcePrompt) {

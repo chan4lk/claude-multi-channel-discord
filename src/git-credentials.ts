@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { z } from 'zod'
 
-import { CREDS_FILE } from './paths.ts'
+import { credsFile } from './paths.ts'
 
 const GithubPatSchema = z.object({
   type: z.literal('github-pat'),
@@ -26,7 +26,7 @@ export type CredentialsFile = z.infer<typeof CredentialsFileSchema>
 
 export class CredentialsLookupError extends Error {}
 
-export function loadCredentials(path: string = CREDS_FILE): CredentialsFile {
+export function loadCredentials(path: string = credsFile()): CredentialsFile {
   if (!existsSync(path)) return {}
   // Refuse to load if the file is world- or group-readable; PATs/keys live here.
   const mode = statSync(path).mode & 0o777

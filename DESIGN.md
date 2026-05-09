@@ -55,7 +55,7 @@ projects/.archive/         soft-deleted projects, suffixed with timestamp
     "maxConcurrent": 8,
     "git": {
       "userName":  "claude-bot",
-      "userEmail": "claude-bot@bistecglobal.com",
+      "userEmail": "claude-bot@example.com",
       "credentials": "github-default",
       "branchPrefix": "claude/"
     }

@@ -1,0 +1,35 @@
+# Drop into ~/.config/systemd/user/multi-channel-discord.service and run:
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now multi-channel-discord
+#
+# Substitute %h or set absolute paths if your home directory differs.
+# The unit assumes:
+#   - bun is on PATH (e.g. ~/.bun/bin)
+#   - the repo is cloned at ~/dev/multi-channel-discord
+#   - DISCORD_BOT_TOKEN (and any GITHUB_TOKEN / AZURE_DEVOPS_PAT used in
+#     git-credentials.json) live in EnvironmentFile=%h/.config/multi-channel-discord/env
+
+[Unit]
+Description=multi-channel-discord — project-aware Discord bot for Claude Code
+Documentation=https://github.com/chan4lk/claude-multi-channel-discord
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/dev/multi-channel-discord
+EnvironmentFile=-%h/.config/multi-channel-discord/env
+# bun + claude CLI must be on PATH for spawned subprocesses to find them.
+Environment=PATH=%h/.bun/bin:%h/.npm-global/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.bun/bin/bun server.ts
+Restart=on-failure
+RestartSec=10s
+# Per-project Claude subprocesses are children of this service. systemd will
+# kill them on stop. Generous startup window — first launch installs deps.
+TimeoutStartSec=60
+# Discord interactions are user-driven; no need to keep CPU pinned. Allow
+# enough RAM for ≤8 concurrent claude subprocesses (~512 MB each).
+MemoryMax=8G
+
+[Install]
+WantedBy=default.target
