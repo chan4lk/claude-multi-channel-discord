@@ -1025,8 +1025,11 @@ async function tryMasterCommand(msg: Message, access: Access): Promise<boolean> 
             await projectPool!.killChat(id)
           },
           createDiscordChannel: async (name, opts) => {
-            // Resolve the master channel's guild and create a fresh text
-            // channel there. Requires the bot to have Manage Channels.
+            // Find-or-create. If a guild text channel with that name
+            // already exists in master's guild, reuse it instead of
+            // making yet another. This survives master claude retrying
+            // a failed clone — without it, each retry created a fresh
+            // orphan channel.
             const cfg = loadChannelsConfig()
             const masterChatId = cfg.master?.chatId
             if (!masterChatId) throw new Error('no master channel configured')
@@ -1034,13 +1037,33 @@ async function tryMasterCommand(msg: Message, access: Access): Promise<boolean> 
             if (!masterChannel || masterChannel.type !== ChannelType.GuildText) {
               throw new Error('master channel is not a guild text channel — auto-create only works in a server context')
             }
-            const guild = (masterChannel as { guild: { channels: { create: (opts: unknown) => Promise<{ id: string }> } } }).guild
+            const guild = (masterChannel as { guild: { channels: { create: (opts: unknown) => Promise<{ id: string; name: string; type: number }>; cache: Map<string, { id: string; name: string; type: number }> } } }).guild
+
+            const lower = name.toLowerCase()
+            for (const ch of guild.channels.cache.values()) {
+              if (ch.type === ChannelType.GuildText && ch.name.toLowerCase() === lower) {
+                return ch.id
+              }
+            }
+
             const created = await guild.channels.create({
               name,
               type: ChannelType.GuildText,
               ...(opts?.parent ? { parent: opts.parent } : {}),
             })
             return created.id
+          },
+          deleteDiscordChannel: async (chatId) => {
+            // Used by clone-rollback to clean up auto-created channels
+            // when the rest of the clone flow fails.
+            try {
+              const ch = await client.channels.fetch(chatId)
+              if (ch && 'delete' in ch && typeof (ch as { delete: () => Promise<unknown> }).delete === 'function') {
+                await (ch as { delete: (reason?: string) => Promise<unknown> }).delete('multi-channel-discord rollback')
+              }
+            } catch (err) {
+              process.stderr.write(`deleteDiscordChannel(${chatId}) failed: ${err}\n`)
+            }
           },
         }
       : undefined,

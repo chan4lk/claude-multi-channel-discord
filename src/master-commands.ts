@@ -40,12 +40,19 @@ export interface MasterMutator {
   /** Kill the project's running subprocess so next message lazy-respawns. */
   killProject: (chatId: string) => Promise<void>
   /**
-   * Auto-create a guild text channel in the same guild as the master
-   * channel, returning its snowflake. Available if the bot has
-   * Manage Channels permission. Throws on missing perm or transport
-   * error — handler should surface a useful message.
+   * Find-or-create a guild text channel by name in the master's guild.
+   * If a channel with the given name (case-insensitive) already exists,
+   * return its id without creating. Idempotent — survives retries from
+   * master claude that fail mid-flow.
    */
   createDiscordChannel?: (name: string, opts?: { parent?: string }) => Promise<string>
+  /**
+   * Best-effort delete of a guild channel — used to roll back
+   * `--new-channel` orphans when the rest of `clone` / `create` fails.
+   * Logs and swallows errors; we never want a rollback failure to
+   * obscure the original error.
+   */
+  deleteDiscordChannel?: (chatId: string) => Promise<void>
 }
 
 const READ_VERBS = ['list', 'show', 'status', 'help'] as const
@@ -212,10 +219,12 @@ async function handleCreate(rest: string[], ctx: MasterContext): Promise<string>
 
   // Channel id can come from a positional argument OR `--new-channel <name>`
   // which auto-creates a fresh guild text channel using the bot's
-  // Manage Channels permission.
+  // Manage Channels permission. (Idempotent — reuses an existing channel
+  // with the same name if one's there.)
   const newChannelName = typeof flags['new-channel'] === 'string' ? flags['new-channel'] : null
   let chatId: string
   let createdChannelNote: string | null = null
+  let weCreatedChannel = false
 
   if (newChannelName !== null) {
     if (!ctx.mutator?.createDiscordChannel) {
@@ -228,7 +237,8 @@ async function handleCreate(rest: string[], ctx: MasterContext): Promise<string>
       chatId = await ctx.mutator.createDiscordChannel(newChannelName, {
         parent: typeof flags.parent === 'string' ? flags.parent : undefined,
       })
-      createdChannelNote = `Created channel **#${newChannelName}** (id \`${chatId}\`).`
+      createdChannelNote = `Channel **#${newChannelName}** (id \`${chatId}\`).`
+      weCreatedChannel = true
     } catch (err) {
       const msg = (err as Error).message
       if (/missing(.+)permission|access/i.test(msg)) {
@@ -243,19 +253,30 @@ async function handleCreate(rest: string[], ctx: MasterContext): Promise<string>
     return '`create` needs `<chat_id>` (positional) OR `--new-channel <name>` to auto-create one'
   }
 
+  const rollback = async (reason: string): Promise<string> => {
+    if (weCreatedChannel && ctx.mutator?.deleteDiscordChannel) {
+      try {
+        await ctx.mutator.deleteDiscordChannel(chatId)
+      } catch (err) {
+        process.stderr.write(`create rollback: deleteDiscordChannel failed: ${err}\n`)
+      }
+    }
+    return reason
+  }
+
   // Re-load fresh — caller's snapshot may be stale by the time this runs.
   const config = loadConfig()
 
   if (config.projects[chatId]) {
-    return `chat_id ${chatId} is already mapped to project "${config.projects[chatId]!.slug}"`
+    return await rollback(`chat_id ${chatId} is already mapped to project "${config.projects[chatId]!.slug}"`)
   }
   if (findProjectBySlug(config, slug)) {
-    return `slug "${slug}" is already in use`
+    return await rollback(`slug "${slug}" is already in use`)
   }
 
   const dir = projectDir(slug)
   if (existsSync(dir)) {
-    return `directory ${dir} already exists — pick a different slug or remove it first`
+    return await rollback(`directory ${dir} already exists — pick a different slug or remove it first`)
   }
 
   // --repo-dir: attach this project to an EXISTING local directory instead
@@ -495,6 +516,10 @@ async function handleClone(rest: string[], ctx: MasterContext): Promise<string> 
   let chatId: string
   let createdChannelNote: string | null = null
 
+  // Track whether we auto-created the channel — if anything below fails
+  // we roll back by deleting it (so retries don't pile up orphan channels).
+  let weCreatedChannel = false
+
   if (newChannelName !== null) {
     if (!ctx.mutator?.createDiscordChannel) return 'auto-create channel unavailable'
     if (!/^[a-z0-9-]{1,90}$/.test(newChannelName)) return 'channel name must match `[a-z0-9-]{1,90}`'
@@ -502,7 +527,8 @@ async function handleClone(rest: string[], ctx: MasterContext): Promise<string> 
       chatId = await ctx.mutator.createDiscordChannel(newChannelName, {
         parent: typeof flags.parent === 'string' ? flags.parent : undefined,
       })
-      createdChannelNote = `Created channel **#${newChannelName}** (id \`${chatId}\`).`
+      createdChannelNote = `Channel **#${newChannelName}** (id \`${chatId}\`).`
+      weCreatedChannel = true
     } catch (err) {
       return `auto-create channel failed: ${(err as Error).message}`
     }
@@ -513,14 +539,27 @@ async function handleClone(rest: string[], ctx: MasterContext): Promise<string> 
     return '`clone` needs `<chat_id>` (positional) OR `--new-channel <name>`'
   }
 
+  const rollback = async (reason: string): Promise<string> => {
+    if (weCreatedChannel && ctx.mutator?.deleteDiscordChannel) {
+      try {
+        await ctx.mutator.deleteDiscordChannel(chatId)
+      } catch (err) {
+        process.stderr.write(`clone rollback: deleteDiscordChannel failed: ${err}\n`)
+      }
+    }
+    return reason
+  }
+
   const config = loadConfig()
   if (config.projects[chatId]) {
-    return `chat_id ${chatId} is already mapped to project "${config.projects[chatId]!.slug}"`
+    return await rollback(`chat_id ${chatId} is already mapped to project "${config.projects[chatId]!.slug}"`)
   }
-  if (findProjectBySlug(config, slug)) return `slug "${slug}" is already in use`
+  if (findProjectBySlug(config, slug)) {
+    return await rollback(`slug "${slug}" is already in use`)
+  }
 
   const dir = projectDir(slug)
-  if (existsSync(dir)) return `directory ${dir} already exists`
+  if (existsSync(dir)) return await rollback(`directory ${dir} already exists`)
 
   // Resolve creds → env.
   let credEnv: NodeJS.ProcessEnv = process.env
@@ -533,14 +572,14 @@ async function handleClone(rest: string[], ctx: MasterContext): Promise<string> 
       credEnv = built.env
       cleanupCreds = built.cleanup
     } catch (err) {
-      return `credentials lookup failed: ${(err as Error).message}`
+      return await rollback(`credentials lookup failed: ${(err as Error).message}`)
     }
   }
 
   try {
     const result = gitClone({ repo, target: dir, branch, env: credEnv })
     if (!result.ok) {
-      return `git clone failed (exit ${result.code}):\n\`\`\`\n${(result.stderr || result.stdout).slice(0, 1500)}\n\`\`\``
+      return await rollback(`git clone failed (exit ${result.code}):\n\`\`\`\n${(result.stderr || result.stdout).slice(0, 1500)}\n\`\`\``)
     }
   } finally {
     cleanupCreds()
