@@ -877,6 +877,10 @@ async function maybeInitProjectsBackend(): Promise<void> {
       // any pool-side observers fire before we hit Discord.
       projectPool?.acceptReply(reply)
     },
+    // Pass the live discord.js Client so the master MCP exposes the
+    // upstream-parity tools (`react`, `edit_message`, `download_attachment`,
+    // `fetch_messages`) to per-channel claudes.
+    client,
   })
   await master.start()
   masterMcp = master
@@ -889,6 +893,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
         master,
         model: project.model ?? config.defaults.model,
         claudeArgs: resolveClaudeArgs(config, project),
+        gitCredential: project.git?.credentials ?? config.defaults.git.credentials,
       })
       // Fire-and-forget; the pool may call deliver() before start() resolves
       // for the very first message — ClaudeProjectProcess deliver() awaits
@@ -972,6 +977,24 @@ async function tryMasterCommand(msg: Message, access: Access): Promise<boolean> 
       ? {
           killProject: async (id) => {
             await projectPool!.killChat(id)
+          },
+          createDiscordChannel: async (name, opts) => {
+            // Resolve the master channel's guild and create a fresh text
+            // channel there. Requires the bot to have Manage Channels.
+            const cfg = loadChannelsConfig()
+            const masterChatId = cfg.master?.chatId
+            if (!masterChatId) throw new Error('no master channel configured')
+            const masterChannel = await client.channels.fetch(masterChatId)
+            if (!masterChannel || masterChannel.type !== ChannelType.GuildText) {
+              throw new Error('master channel is not a guild text channel — auto-create only works in a server context')
+            }
+            const guild = (masterChannel as { guild: { channels: { create: (opts: unknown) => Promise<{ id: string }> } } }).guild
+            const created = await guild.channels.create({
+              name,
+              type: ChannelType.GuildText,
+              ...(opts?.parent ? { parent: opts.parent } : {}),
+            })
+            return created.id
           },
         }
       : undefined,

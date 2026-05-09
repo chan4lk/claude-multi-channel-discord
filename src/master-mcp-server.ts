@@ -19,8 +19,12 @@ import type { AddressInfo } from 'node:net'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
+import { ChannelType, type Attachment, type Client, type Message, type TextBasedChannel } from 'discord.js'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { z } from 'zod'
 
+import { channelsDir } from './paths.ts'
 import type { OutboundReply } from './project-process.ts'
 
 const ChatIdRoute = /^\/mcp\/(\d{15,25})\/?$/
@@ -30,6 +34,14 @@ export interface MasterMcpServerOptions {
   port?: number
   /** Replies emitted by Claude tool calls flow here, tagged with chat_id. */
   onReply: (reply: OutboundReply) => void
+  /**
+   * Discord.js client. Optional — when set, the master MCP server
+   * exposes the full upstream tool surface (`react`, `edit_message`,
+   * `download_attachment`, `fetch_messages`) which all act on Discord
+   * directly. Without a client, only `reply` is exposed (delivered
+   * via onReply).
+   */
+  client?: Client
   /** Diagnostics. Defaults to stderr. */
   log?: (msg: string) => void
 }
@@ -40,12 +52,14 @@ export class MasterMcpServer {
   private readonly desiredPort: number
   private boundPort = 0
   private readonly onReply: (reply: OutboundReply) => void
+  private readonly client: Client | null
   private readonly log: (msg: string) => void
 
   constructor(opts: MasterMcpServerOptions) {
     this.host = opts.host ?? '127.0.0.1'
     this.desiredPort = opts.port ?? 0
     this.onReply = opts.onReply
+    this.client = opts.client ?? null
     this.log = opts.log ?? ((m) => process.stderr.write(`[mcp-master] ${m}\n`))
   }
 
@@ -177,8 +191,8 @@ export class MasterMcpServer {
       },
     )
 
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [
+    server.setRequestHandler(ListToolsRequestSchema, async () => {
+      const tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }> = [
         {
           name: 'reply',
           description: 'Send a text reply to the Discord channel for this project session. Optional reply_to threads under an inbound message_id.',
@@ -192,8 +206,67 @@ export class MasterMcpServer {
             required: ['text'],
           },
         },
-      ],
-    }))
+      ]
+      if (this.client) {
+        tools.push(
+          {
+            name: 'react',
+            description: 'Add an emoji reaction to a Discord message. Unicode emoji work directly; custom emoji need the <:name:id> form.',
+            inputSchema: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                message_id: { type: 'string' },
+                emoji: { type: 'string' },
+                chat_id: { type: 'string', description: 'Defaults to this session\'s channel.' },
+              },
+              required: ['message_id', 'emoji'],
+            },
+          },
+          {
+            name: 'edit_message',
+            description: "Edit a message the bot previously sent in this channel. Useful for interim progress updates. Edits don't trigger push notifications — send a new reply when a long task completes so the user's device pings.",
+            inputSchema: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                message_id: { type: 'string' },
+                text: { type: 'string' },
+                chat_id: { type: 'string', description: 'Defaults to this session\'s channel.' },
+              },
+              required: ['message_id', 'text'],
+            },
+          },
+          {
+            name: 'download_attachment',
+            description: 'Download attachments from a specific Discord message to ~/.claude/channels/discord-multi/inbox/. Returns local paths ready to Read.',
+            inputSchema: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                message_id: { type: 'string' },
+                chat_id: { type: 'string', description: 'Defaults to this session\'s channel.' },
+              },
+              required: ['message_id'],
+            },
+          },
+          {
+            name: 'fetch_messages',
+            description: "Fetch recent messages from a Discord channel. Returns oldest-first with message IDs. Discord's search API isn't exposed to bots, so this is the only way to look back.",
+            inputSchema: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                limit: { type: 'number', description: 'Max messages (default 20, Discord caps at 100).' },
+                channel: { type: 'string', description: 'Defaults to this session\'s channel.' },
+              },
+              required: [],
+            },
+          },
+        )
+      }
+      return { tools }
+    })
 
     const ReplyArgsSchema = z.object({
       text: z.string().min(1),
@@ -201,24 +274,129 @@ export class MasterMcpServer {
     })
 
     server.setRequestHandler(CallToolRequestSchema, async (req) => {
-      if (req.params.name !== 'reply') {
-        return { content: [{ type: 'text', text: `unknown tool: ${req.params.name}` }], isError: true }
-      }
-      const args = ReplyArgsSchema.safeParse(req.params.arguments)
-      if (!args.success) {
-        return { content: [{ type: 'text', text: `invalid reply args: ${args.error.toString()}` }], isError: true }
-      }
+      const name = req.params.name
+      const args = (req.params.arguments ?? {}) as Record<string, unknown>
       try {
-        this.log(`reply tool called for ${chatId}: text=${JSON.stringify(args.data.text).slice(0, 60)} reply_to=${args.data.reply_to ?? '-'}`)
-        this.onReply({ kind: 'text', chatId, text: args.data.text, replyTo: args.data.reply_to })
-        return { content: [{ type: 'text', text: 'ok' }] }
+        switch (name) {
+          case 'reply': {
+            const parsed = ReplyArgsSchema.safeParse(args)
+            if (!parsed.success) return errorResult(`invalid reply args: ${parsed.error.toString()}`)
+            this.log(`reply tool called for ${chatId}: text=${JSON.stringify(parsed.data.text).slice(0, 60)} reply_to=${parsed.data.reply_to ?? '-'}`)
+            this.onReply({ kind: 'text', chatId, text: parsed.data.text, replyTo: parsed.data.reply_to })
+            return okResult('ok')
+          }
+          case 'react':
+            return await this.callReact(chatId, args)
+          case 'edit_message':
+            return await this.callEditMessage(chatId, args)
+          case 'download_attachment':
+            return await this.callDownloadAttachment(chatId, args)
+          case 'fetch_messages':
+            return await this.callFetchMessages(chatId, args)
+          default:
+            return errorResult(`unknown tool: ${name}`)
+        }
       } catch (err) {
-        return { content: [{ type: 'text', text: `reply dispatch failed: ${(err as Error).message}` }], isError: true }
+        return errorResult(`${name} failed: ${(err as Error).message}`)
       }
     })
 
     return server
   }
+
+  // ─── upstream-parity tools (require this.client) ────────────────────────
+
+  private async callReact(defaultChatId: string, args: Record<string, unknown>) {
+    if (!this.client) return errorResult('react requires a discord client')
+    const chatId = (args.chat_id as string | undefined) ?? defaultChatId
+    const messageId = String(args.message_id ?? '')
+    const emoji = String(args.emoji ?? '')
+    if (!messageId || !emoji) return errorResult('react requires message_id + emoji')
+    const channel = await this.fetchTextChannel(chatId)
+    const msg = await (channel as TextBasedChannel & { messages: { fetch: (id: string) => Promise<Message> } }).messages.fetch(messageId)
+    await msg.react(emoji)
+    return okResult('reacted')
+  }
+
+  private async callEditMessage(defaultChatId: string, args: Record<string, unknown>) {
+    if (!this.client) return errorResult('edit_message requires a discord client')
+    const chatId = (args.chat_id as string | undefined) ?? defaultChatId
+    const messageId = String(args.message_id ?? '')
+    const text = String(args.text ?? '')
+    if (!messageId || !text) return errorResult('edit_message requires message_id + text')
+    const channel = await this.fetchTextChannel(chatId)
+    const msg = await (channel as TextBasedChannel & { messages: { fetch: (id: string) => Promise<Message> } }).messages.fetch(messageId)
+    if (msg.author.id !== this.client.user?.id) return errorResult('can only edit messages this bot sent')
+    await msg.edit(text)
+    return okResult('edited')
+  }
+
+  private async callDownloadAttachment(defaultChatId: string, args: Record<string, unknown>) {
+    if (!this.client) return errorResult('download_attachment requires a discord client')
+    const chatId = (args.chat_id as string | undefined) ?? defaultChatId
+    const messageId = String(args.message_id ?? '')
+    if (!messageId) return errorResult('download_attachment requires message_id')
+    const channel = await this.fetchTextChannel(chatId)
+    const msg = await (channel as TextBasedChannel & { messages: { fetch: (id: string) => Promise<Message> } }).messages.fetch(messageId)
+    if (msg.attachments.size === 0) return okResult('(no attachments on that message)')
+
+    const inbox = join(channelsDir(), 'inbox')
+    mkdirSync(inbox, { recursive: true, mode: 0o700 })
+
+    const out: string[] = []
+    for (const att of msg.attachments.values() as IterableIterator<Attachment>) {
+      if (att.size > 25 * 1024 * 1024) {
+        out.push(`(skipped ${att.name}: ${(att.size / 1024 / 1024).toFixed(1)}MB exceeds 25MB cap)`)
+        continue
+      }
+      const res = await fetch(att.url)
+      const buf = Buffer.from(await res.arrayBuffer())
+      const safeName = (att.name ?? att.id).replace(/[^a-zA-Z0-9._-]/g, '_')
+      const path = join(inbox, `${messageId}-${att.id}-${safeName}`)
+      writeFileSync(path, buf, { mode: 0o600 })
+      out.push(path)
+    }
+    return okResult(out.join('\n'))
+  }
+
+  private async callFetchMessages(defaultChatId: string, args: Record<string, unknown>) {
+    if (!this.client) return errorResult('fetch_messages requires a discord client')
+    const chatId = (args.channel as string | undefined) ?? defaultChatId
+    const limitRaw = args.limit
+    const limit = Math.max(1, Math.min(typeof limitRaw === 'number' ? limitRaw : 20, 100))
+    const channel = await this.fetchTextChannel(chatId)
+    const fetched = await (channel as TextBasedChannel & {
+      messages: { fetch: (opts: { limit: number }) => Promise<Map<string, Message>> }
+    }).messages.fetch({ limit })
+
+    // Discord returns newest-first; flip to oldest-first.
+    const ordered = Array.from(fetched.values()).reverse()
+    const lines = ordered.map((m) => {
+      const atts = m.attachments.size > 0 ? ` +${m.attachments.size}att` : ''
+      const body = (m.content || '(no content)').replace(/\n/g, ' ').slice(0, 240)
+      return `[${m.id}] ${m.author.username}: ${body}${atts}`
+    })
+    return okResult(lines.join('\n') || '(no messages)')
+  }
+
+  private async fetchTextChannel(chatId: string): Promise<TextBasedChannel> {
+    if (!this.client) throw new Error('no discord client')
+    const ch = await this.client.channels.fetch(chatId)
+    if (!ch || !ch.isTextBased()) throw new Error(`channel ${chatId} not found or not text-based`)
+    if (ch.type !== ChannelType.GuildText && ch.type !== ChannelType.DM) {
+      // also allow threads which inherit text
+      // (best-effort, narrowed for the common cases)
+    }
+    return ch as TextBasedChannel
+  }
+}
+
+function okResult(text: string) {
+  return { content: [{ type: 'text' as const, text }] }
+}
+
+function errorResult(text: string) {
+  return { content: [{ type: 'text' as const, text }], isError: true }
 }
 
 async function readBody(req: IncomingMessage): Promise<unknown> {

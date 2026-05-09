@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  macOS launchd plist for multi-channel-discord.
+  Drop into ~/Library/LaunchAgents/com.bistec.multi-channel-discord.plist
+  then: launchctl load -w ~/Library/LaunchAgents/com.bistec.multi-channel-discord.plist
+
+  Adjust the bun path and repo path for your home directory. Tokens / git
+  PATs live in ~/.config/multi-channel-discord/env (sourced by a wrapper)
+  or directly in ~/.claude/channels/discord-multi/.env.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bistec.multi-channel-discord</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/USERNAME/.bun/bin/bun</string>
+        <string>/Users/USERNAME/dev/multi-channel-discord/server.ts</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/USERNAME/dev/multi-channel-discord</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/USERNAME/.bun/bin:/Users/USERNAME/.npm-global/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>MCD_CHANNELS_DIR</key>
+        <string>/Users/USERNAME/.claude/channels/discord-multi</string>
+        <!-- Set GITHUB_TOKEN / AZURE_DEVOPS_PAT here too if you reference them in git-credentials.json -->
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/USERNAME/Library/Logs/multi-channel-discord.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/USERNAME/Library/Logs/multi-channel-discord.err</string>
+</dict>
+</plist>

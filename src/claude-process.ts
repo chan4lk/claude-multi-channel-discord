@@ -30,6 +30,8 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import type { ClaudeArgs } from './channels-config.ts'
 import type { MasterMcpServer } from './master-mcp-server.ts'
 import { projectDir, projectSessionFile } from './paths.ts'
+import { buildGitEnv, type GitResult as _GitResultUnused } from './git-ops.ts'
+import { getCredential, loadCredentials, type Credential } from './git-credentials.ts'
 import type {
   InboundEnvelope,
   OutboundReply,
@@ -60,6 +62,12 @@ export interface ClaudeProjectProcessOptions {
   claudeArgs?: ClaudeArgs
   /** Optional model alias passed via --model. Per-project model override. */
   model?: string
+  /**
+   * Credential alias from git-credentials.json. When set, the
+   * subprocess inherits GIT_ASKPASS / GIT_SSH_COMMAND env vars so
+   * `git push` and `gh pr create` work non-interactively.
+   */
+  gitCredential?: string
   /** Override `claude` binary path. Falls back to PATH lookup. */
   claudeBin?: string
   /** Diagnostics. Defaults to stderr with a slug prefix. */
@@ -76,6 +84,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
   private mcpConfigPath: string | null = null
   private tmuxSessionName: string | null = null
   private aliveCheckTimer: ReturnType<typeof setInterval> | null = null
+  private gitCredentialCleanup: (() => void) | null = null
   private _alive = false
   private _lastActivity = Date.now()
   private replyHandlers = new Set<(reply: OutboundReply) => void>()
@@ -121,6 +130,23 @@ export class ClaudeProjectProcess implements ProjectProcess {
 
     spawnSync('tmux', ['kill-session', '-t', sessionName], { stdio: 'ignore' })
 
+    // Build the env block tmux gives the new session — and through that,
+    // the claude subprocess and any `git`/`gh` calls it makes via Bash.
+    let spawnEnv: NodeJS.ProcessEnv = { ...process.env }
+    if (this.opts.gitCredential) {
+      try {
+        const creds = loadCredentials()
+        const cred: Credential = getCredential(creds, this.opts.gitCredential)
+        const built = buildGitEnv(cred, spawnEnv)
+        spawnEnv = built.env
+        // We can't easily clean up the askpass tmpfile across the
+        // subprocess's lifetime — leave it; it's mode 0700 in tmpdir.
+        this.gitCredentialCleanup = built.cleanup
+      } catch (err) {
+        this.log(`gitCredential resolve failed: ${(err as Error).message}`)
+      }
+    }
+
     this.log(`tmux new-session -d -s ${sessionName} '${cmd}' (cwd=${cwd})`)
     const result = spawnSync(
       'tmux',
@@ -137,7 +163,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
         cwd,
         cmd,
       ],
-      { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env } },
+      { stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv },
     )
     if (result.status !== 0) {
       const err = result.stderr.toString().trim() || result.stdout.toString().trim() || `exit ${result.status}`
@@ -309,6 +335,12 @@ export class ClaudeProjectProcess implements ProjectProcess {
     if (this.aliveCheckTimer) {
       clearInterval(this.aliveCheckTimer)
       this.aliveCheckTimer = null
+    }
+    if (this.gitCredentialCleanup) {
+      try {
+        this.gitCredentialCleanup()
+      } catch {}
+      this.gitCredentialCleanup = null
     }
     void this.master.closeChat(this.chatId)
     for (const h of this.exitHandlers) h({ code, signal })

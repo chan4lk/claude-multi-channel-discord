@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { isAbsolute, join, resolve } from 'node:path'
 
 import { parseFlags, splitArgv } from './argv.ts'
 import {
@@ -13,6 +13,8 @@ import {
   type ChannelsConfig,
   type Project,
 } from './channels-config.ts'
+import { buildGitEnv, gitClone, gitPullFastForward, gitSetRemote, gitStatusSummary } from './git-ops.ts'
+import { getCredential, loadCredentials } from './git-credentials.ts'
 import { accessFile, archiveDir, projectClaudeMd, projectDir } from './paths.ts'
 
 export type MasterCommandResult =
@@ -37,6 +39,13 @@ export interface MasterContext {
 export interface MasterMutator {
   /** Kill the project's running subprocess so next message lazy-respawns. */
   killProject: (chatId: string) => Promise<void>
+  /**
+   * Auto-create a guild text channel in the same guild as the master
+   * channel, returning its snowflake. Available if the bot has
+   * Manage Channels permission. Throws on missing perm or transport
+   * error — handler should surface a useful message.
+   */
+  createDiscordChannel?: (name: string, opts?: { parent?: string }) => Promise<string>
 }
 
 const READ_VERBS = ['list', 'show', 'status', 'help'] as const
@@ -90,12 +99,11 @@ export async function handleMasterCommand(
     case 'rm':
       return { kind: 'reply', text: await handleRm(rest, ctx) }
     case 'clone':
+      return { kind: 'reply', text: await handleClone(rest, ctx) }
     case 'remote':
+      return { kind: 'reply', text: await handleRemote(rest, ctx) }
     case 'pull':
-      return {
-        kind: 'reply',
-        text: `\`${verb}\` lives in phase 5 (git layer). Not yet implemented.`,
-      }
+      return { kind: 'reply', text: await handlePull(rest, ctx) }
     default:
       return {
         kind: 'reply',
@@ -109,15 +117,19 @@ function helpText(prefix: string): string {
     '**Master commands**',
     '```',
     `${prefix} list                          — list all projects`,
-    `${prefix} show   <chat_id-or-slug>      — show one project's config + prompt preview`,
-    `${prefix} status <chat_id-or-slug>      — alias for show until git lands`,
-    `${prefix} create <chat_id> --slug X --prompt "..." [--model M]   — register a new project`,
-    `${prefix} set    <chat_id-or-slug> --prompt "..."                — rewrite CLAUDE.md (restarts subprocess)`,
+    `${prefix} show   <chat_id-or-slug>      — show config + prompt preview + git status`,
+    `${prefix} status <chat_id-or-slug>      — alias for show`,
+    `${prefix} create <chat_id-or--new-channel NAME> --slug X --prompt "..." [--model M] [--repo-dir PATH]`,
+    `${prefix} clone  <chat_id-or--new-channel NAME> --slug X --repo URL [--branch BR] [--creds NAME]`,
+    `${prefix} set    <chat_id-or-slug> --prompt "..."                — rewrite CLAUDE.md`,
     `${prefix} rename <chat_id-or-slug> --slug NEW                    — rename slug + dir`,
-    `${prefix} rm     <chat_id-or-slug> --yes                         — archive project, kill subprocess`,
+    `${prefix} remote <chat_id-or-slug> [--set URL] [--creds NAME]    — show/set git remote`,
+    `${prefix} pull   <chat_id-or-slug>                               — git pull --ff-only`,
+    `${prefix} rm     <chat_id-or-slug> --yes                         — archive + remove`,
     `${prefix} help                          — this message`,
     '```',
-    '_Phase 5 (`clone`, `remote`, `pull`) requires the git layer — coming next._',
+    '_`--new-channel NAME` auto-creates the Discord channel (needs Manage Channels perm)._',
+    '_`--repo-dir PATH` attaches a project to an existing local checkout via symlink._',
   ].join('\n')
 }
 
@@ -159,8 +171,23 @@ function handleShow(config: ChannelsConfig, rest: string[]): string {
     lines.push(`remote: ${project.git.remote}`)
     lines.push(`branch: ${project.git.branch}`)
     lines.push(`creds:  ${project.git.credentials}`)
+    // If the project dir is a git working tree, show live git status too.
+    const dir = projectDir(project.slug)
+    if (existsSync(dir)) {
+      const status = gitStatusSummary(dir)
+      if (status.ok) lines.push(`git: ${status.text}`)
+    }
   } else {
-    lines.push('git: (no remote configured)')
+    // Not configured in channels.json, but the dir might still be a repo
+    // (e.g. attached via --repo-dir). Try a status anyway.
+    const dir = projectDir(project.slug)
+    if (existsSync(dir)) {
+      const status = gitStatusSummary(dir)
+      if (status.ok) lines.push(`git: ${status.text} (no remote in channels.json)`)
+      else lines.push('git: (no remote configured)')
+    } else {
+      lines.push('git: (no remote configured)')
+    }
   }
   lines.push('')
   lines.push('**system prompt** (first 500 chars):')
@@ -172,11 +199,8 @@ function handleShow(config: ChannelsConfig, rest: string[]): string {
 
 // ─── mutation verbs ───────────────────────────────────────────────────────
 
-async function handleCreate(rest: string[], _ctx: MasterContext): Promise<string> {
+async function handleCreate(rest: string[], ctx: MasterContext): Promise<string> {
   const { positional, flags } = parseFlags(rest)
-  if (positional.length === 0) return '`create` needs a chat_id as the first argument'
-  const chatId = positional[0]!
-  if (!/^\d{15,25}$/.test(chatId)) return `chat_id must be a Discord snowflake; got "${chatId}"`
 
   const slug = flags.slug
   if (typeof slug !== 'string') return '`create` requires `--slug NAME`'
@@ -185,6 +209,39 @@ async function handleCreate(rest: string[], _ctx: MasterContext): Promise<string
   const prompt = typeof flags.prompt === 'string' ? flags.prompt : null
   const model = typeof flags.model === 'string' ? flags.model : undefined
   if (!prompt) return '`create` requires `--prompt "..."` (use --prompt "" if you really want an empty CLAUDE.md)'
+
+  // Channel id can come from a positional argument OR `--new-channel <name>`
+  // which auto-creates a fresh guild text channel using the bot's
+  // Manage Channels permission.
+  const newChannelName = typeof flags['new-channel'] === 'string' ? flags['new-channel'] : null
+  let chatId: string
+  let createdChannelNote: string | null = null
+
+  if (newChannelName !== null) {
+    if (!ctx.mutator?.createDiscordChannel) {
+      return 'auto-create channel unavailable — bot client not wired into the mutator'
+    }
+    if (!/^[a-z0-9-]{1,90}$/.test(newChannelName)) {
+      return 'channel name must match `[a-z0-9-]{1,90}` (Discord normalizes anything else)'
+    }
+    try {
+      chatId = await ctx.mutator.createDiscordChannel(newChannelName, {
+        parent: typeof flags.parent === 'string' ? flags.parent : undefined,
+      })
+      createdChannelNote = `Created channel **#${newChannelName}** (id \`${chatId}\`).`
+    } catch (err) {
+      const msg = (err as Error).message
+      if (/missing(.+)permission|access/i.test(msg)) {
+        return `auto-create failed — bot is missing **Manage Channels** permission. Re-tick it under OAuth2 → URL Generator → Bot Permissions, open the regenerated URL and authorize. (${msg})`
+      }
+      return `auto-create channel failed: ${msg}`
+    }
+  } else if (positional.length > 0) {
+    chatId = positional[0]!
+    if (!/^\d{15,25}$/.test(chatId)) return `chat_id must be a Discord snowflake; got "${chatId}"`
+  } else {
+    return '`create` needs `<chat_id>` (positional) OR `--new-channel <name>` to auto-create one'
+  }
 
   // Re-load fresh — caller's snapshot may be stale by the time this runs.
   const config = loadConfig()
@@ -201,8 +258,34 @@ async function handleCreate(rest: string[], _ctx: MasterContext): Promise<string
     return `directory ${dir} already exists — pick a different slug or remove it first`
   }
 
-  mkdirSync(dir, { recursive: true, mode: 0o700 })
-  writeFileSync(projectClaudeMd(slug), `${prompt.trim()}\n`, { mode: 0o600 })
+  // --repo-dir: attach this project to an EXISTING local directory instead
+  // of mkdir-ing a fresh one. We symlink `projects/<slug>` → <repo-dir> so
+  // claude's cwd is the real working tree (file edits, git status, etc.
+  // all hit that dir directly). CLAUDE.md is written INTO that dir unless
+  // it already exists (use --force-prompt to overwrite).
+  const repoDirRaw = typeof flags['repo-dir'] === 'string' ? flags['repo-dir'] : null
+  let repoDirNote: string | null = null
+  if (repoDirRaw !== null) {
+    let repoDir = repoDirRaw.startsWith('~/') ? repoDirRaw.replace(/^~/, process.env.HOME ?? '') : repoDirRaw
+    if (!isAbsolute(repoDir)) repoDir = resolve(repoDir)
+    if (!existsSync(repoDir)) return `--repo-dir "${repoDir}" does not exist`
+    if (!statSync(repoDir).isDirectory()) return `--repo-dir "${repoDir}" is not a directory`
+
+    // Parent dir must exist (it always should — channelsDir/projects).
+    mkdirSync(join(dir, '..'), { recursive: true, mode: 0o700 })
+    symlinkSync(repoDir, dir)
+
+    const claudeMd = projectClaudeMd(slug)
+    if (existsSync(claudeMd) && flags['force-prompt'] !== true) {
+      repoDirNote = `Attached to **${repoDir}**. Kept existing CLAUDE.md (pass \`--force-prompt\` to overwrite).`
+    } else {
+      writeFileSync(claudeMd, `${prompt.trim()}\n`, { mode: 0o600 })
+      repoDirNote = `Attached to **${repoDir}**. Wrote CLAUDE.md (${prompt.length} chars).`
+    }
+  } else {
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    writeFileSync(projectClaudeMd(slug), `${prompt.trim()}\n`, { mode: 0o600 })
+  }
 
   const updated: ChannelsConfig = {
     ...config,
@@ -219,14 +302,21 @@ async function handleCreate(rest: string[], _ctx: MasterContext): Promise<string
   // before it reaches the project pool.
   const accessAdded = ensureChannelInAccessGroups(chatId)
 
-  return [
+  const lines = [
     `✅ project **${slug}** created for chat ${chatId}.`,
-    `Working dir: \`${dir}\``,
-    `CLAUDE.md: ${prompt.length} chars`,
-    `Model: ${model ?? config.defaults.model}`,
-    accessAdded ? `Access: added \`${chatId}\` to access.json groups (requireMention=false).` : `Access: \`${chatId}\` already in access.json groups.`,
-    `_Send a message in that channel to spawn the first subprocess._`,
-  ].join('\n')
+    `Working dir: \`${dir}\`${repoDirNote ? '  (symlink → repo)' : ''}`,
+  ]
+  if (repoDirNote) lines.push(repoDirNote)
+  else lines.push(`CLAUDE.md: ${prompt.length} chars`)
+  lines.push(`Model: ${model ?? config.defaults.model}`)
+  lines.push(
+    accessAdded
+      ? `Access: added \`${chatId}\` to access.json groups (requireMention=false).`
+      : `Access: \`${chatId}\` already in access.json groups.`,
+  )
+  if (createdChannelNote) lines.unshift(createdChannelNote)
+  lines.push(`_Send a message in that channel to spawn the first subprocess._`)
+  return lines.join('\n')
 }
 
 /**
@@ -379,6 +469,211 @@ async function handleRm(rest: string[], ctx: MasterContext): Promise<string> {
 
   return `✅ archived project **${entry.project.slug}** and removed from channels.json.\n_(working tree moved under \`projects/.archive/\` — manual cleanup if you want it gone.)_`
 }
+
+// ─── git verbs (phase 5) ──────────────────────────────────────────────────
+
+async function handleClone(rest: string[], ctx: MasterContext): Promise<string> {
+  const { positional, flags } = parseFlags(rest)
+
+  const slug = flags.slug
+  if (typeof slug !== 'string') return '`clone` requires `--slug NAME`'
+  if (!SLUG_PATTERN.test(slug)) return `slug "${slug}" must match ${SLUG_PATTERN}`
+
+  const repo = flags.repo
+  if (typeof repo !== 'string') return '`clone` requires `--repo URL`'
+
+  const branch = typeof flags.branch === 'string' ? flags.branch : undefined
+  const credsAlias = typeof flags.creds === 'string' ? flags.creds : undefined
+  const promptArg = typeof flags.prompt === 'string' ? flags.prompt : null
+  const model = typeof flags.model === 'string' ? flags.model : undefined
+
+  // Channel id (positional or auto-create) — same shape as create.
+  const newChannelName = typeof flags['new-channel'] === 'string' ? flags['new-channel'] : null
+  let chatId: string
+  let createdChannelNote: string | null = null
+
+  if (newChannelName !== null) {
+    if (!ctx.mutator?.createDiscordChannel) return 'auto-create channel unavailable'
+    if (!/^[a-z0-9-]{1,90}$/.test(newChannelName)) return 'channel name must match `[a-z0-9-]{1,90}`'
+    try {
+      chatId = await ctx.mutator.createDiscordChannel(newChannelName, {
+        parent: typeof flags.parent === 'string' ? flags.parent : undefined,
+      })
+      createdChannelNote = `Created channel **#${newChannelName}** (id \`${chatId}\`).`
+    } catch (err) {
+      return `auto-create channel failed: ${(err as Error).message}`
+    }
+  } else if (positional.length > 0) {
+    chatId = positional[0]!
+    if (!/^\d{15,25}$/.test(chatId)) return `chat_id must be a Discord snowflake; got "${chatId}"`
+  } else {
+    return '`clone` needs `<chat_id>` (positional) OR `--new-channel <name>`'
+  }
+
+  const config = loadConfig()
+  if (config.projects[chatId]) {
+    return `chat_id ${chatId} is already mapped to project "${config.projects[chatId]!.slug}"`
+  }
+  if (findProjectBySlug(config, slug)) return `slug "${slug}" is already in use`
+
+  const dir = projectDir(slug)
+  if (existsSync(dir)) return `directory ${dir} already exists`
+
+  // Resolve creds → env.
+  let credEnv: NodeJS.ProcessEnv = process.env
+  let cleanupCreds = () => {}
+  if (credsAlias) {
+    try {
+      const creds = loadCredentials()
+      const cred = getCredential(creds, credsAlias)
+      const built = buildGitEnv(cred)
+      credEnv = built.env
+      cleanupCreds = built.cleanup
+    } catch (err) {
+      return `credentials lookup failed: ${(err as Error).message}`
+    }
+  }
+
+  try {
+    const result = gitClone({ repo, target: dir, branch, env: credEnv })
+    if (!result.ok) {
+      return `git clone failed (exit ${result.code}):\n\`\`\`\n${(result.stderr || result.stdout).slice(0, 1500)}\n\`\`\``
+    }
+  } finally {
+    cleanupCreds()
+  }
+
+  // Per-project CLAUDE.md inside the cloned tree (only if absent).
+  const claudeMd = projectClaudeMd(slug)
+  let claudeMdNote: string
+  if (existsSync(claudeMd)) {
+    claudeMdNote = '_kept existing CLAUDE.md in the repo._'
+  } else {
+    const prompt =
+      promptArg ??
+      `You are working on the ${slug} project (cloned from ${repo}). Read README.md to orient. Use git for changes; commit small, push to a feature branch and open a PR rather than committing to main. Reply briefly.`
+    writeFileSync(claudeMd, `${prompt.trim()}\n`, { mode: 0o600 })
+    claudeMdNote = `wrote CLAUDE.md (${prompt.length} chars)`
+  }
+
+  // Register in channels.json with git block.
+  const updated: ChannelsConfig = {
+    ...config,
+    projects: {
+      ...config.projects,
+      [chatId]: {
+        slug,
+        ...(model ? { model } : {}),
+        git: {
+          remote: repo,
+          branch: branch ?? 'main',
+          credentials: credsAlias ?? 'github-default',
+        },
+      },
+    },
+  }
+  saveConfig(updated)
+  ensureChannelInAccessGroups(chatId)
+
+  const status = gitStatusSummary(dir)
+  const lines: string[] = []
+  if (createdChannelNote) lines.push(createdChannelNote)
+  lines.push(`✅ project **${slug}** cloned from ${repo} for chat ${chatId}.`)
+  lines.push(`Working dir: \`${dir}\``)
+  lines.push(claudeMdNote)
+  if (status.ok) lines.push(status.text)
+  lines.push('_Send a message in that channel to spawn the first subprocess._')
+  return lines.join('\n')
+}
+
+async function handleRemote(rest: string[], _ctx: MasterContext): Promise<string> {
+  const { positional, flags } = parseFlags(rest)
+  if (positional.length === 0) return '`remote` needs a chat_id or slug'
+  const target = positional[0]!
+  const config = loadConfig()
+  const entry = resolveTarget(config, target)
+  if (!entry) return `no project found for "${target}"`
+
+  const setUrl = typeof flags.set === 'string' ? flags.set : null
+  const credsAlias = typeof flags.creds === 'string' ? flags.creds : null
+
+  if (!setUrl && !credsAlias) {
+    // Show only.
+    if (!entry.project.git) return `**${entry.project.slug}**: no remote configured`
+    return [
+      `**${entry.project.slug}** remote:`,
+      `url: ${entry.project.git.remote}`,
+      `branch: ${entry.project.git.branch}`,
+      `creds: ${entry.project.git.credentials}`,
+    ].join('\n')
+  }
+
+  // Mutate. Requires an existing git block (use clone for first remote setup).
+  if (!entry.project.git && !setUrl) {
+    return 'this project has no git block yet — pass `--set URL --creds NAME` to attach one'
+  }
+  const newGit = {
+    remote: setUrl ?? entry.project.git!.remote,
+    branch: entry.project.git?.branch ?? 'main',
+    credentials: credsAlias ?? entry.project.git?.credentials ?? 'github-default',
+  }
+
+  // Push the URL change to the actual git working tree's `origin` remote
+  // so commands run inside the project pick it up automatically.
+  if (setUrl) {
+    const dir = projectDir(entry.project.slug)
+    if (existsSync(dir)) {
+      const r = gitSetRemote(dir, 'origin', setUrl)
+      if (!r.ok) return `git remote set-url failed: ${(r.stderr || r.stdout).slice(0, 800)}`
+    }
+  }
+
+  const updated: ChannelsConfig = {
+    ...config,
+    projects: { ...config.projects, [entry.chatId]: { ...entry.project, git: newGit } },
+  }
+  saveConfig(updated)
+  return `✅ remote updated for **${entry.project.slug}**: \`${newGit.remote}\` (creds=${newGit.credentials})`
+}
+
+async function handlePull(rest: string[], _ctx: MasterContext): Promise<string> {
+  const { positional } = parseFlags(rest)
+  if (positional.length === 0) return '`pull` needs a chat_id or slug'
+  const target = positional[0]!
+  const config = loadConfig()
+  const entry = resolveTarget(config, target)
+  if (!entry) return `no project found for "${target}"`
+
+  const dir = projectDir(entry.project.slug)
+  if (!existsSync(dir)) return `working dir missing: ${dir}`
+
+  let credEnv: NodeJS.ProcessEnv = process.env
+  let cleanupCreds = () => {}
+  if (entry.project.git?.credentials) {
+    try {
+      const creds = loadCredentials()
+      const cred = getCredential(creds, entry.project.git.credentials)
+      const built = buildGitEnv(cred)
+      credEnv = built.env
+      cleanupCreds = built.cleanup
+    } catch (err) {
+      return `credentials lookup failed: ${(err as Error).message}`
+    }
+  }
+
+  try {
+    const r = gitPullFastForward(dir, entry.project.git?.branch, credEnv)
+    if (!r.ok) {
+      return `git pull --ff-only failed (exit ${r.code}):\n\`\`\`\n${(r.stderr || r.stdout).slice(0, 1500)}\n\`\`\``
+    }
+    const status = gitStatusSummary(dir)
+    return `✅ pulled.\n${(r.stdout || '(no changes)').slice(0, 600)}\n${status.text}`
+  } finally {
+    cleanupCreds()
+  }
+}
+
+// ─── helpers ──────────────────────────────────────────────────────────────
 
 function removeChannelFromAccessGroups(chatId: string): void {
   const path = accessFile()

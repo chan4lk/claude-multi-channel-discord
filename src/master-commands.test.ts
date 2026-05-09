@@ -122,8 +122,23 @@ check(
   unknown.kind === 'reply' && unknown.text.includes('list, show'),
 )
 
-const phase5 = await handleMasterCommand('!project clone 123 --slug x', ctx())
-check('phase-5 verb stubbed', phase5.kind === 'reply' && phase5.text.includes('phase 5'))
+// clone now requires --repo. Without it we get a validation error rather
+// than the previous "phase 5 stub" message.
+const cloneNoRepo = await handleMasterCommand('!project clone 123456789012345678 --slug x', ctx())
+check(
+  'clone: validates --repo',
+  cloneNoRepo.kind === 'reply' && cloneNoRepo.text.includes('--repo'),
+)
+const remoteShow = await handleMasterCommand('!project remote support', ctx())
+check(
+  'remote: shows configured remote when present',
+  remoteShow.kind === 'reply' && remoteShow.text.includes('https://github.com/x/y.git'),
+)
+const pullNoArg = await handleMasterCommand('!project pull', ctx())
+check(
+  'pull: needs target arg',
+  pullNoArg.kind === 'reply' && pullNoArg.text.includes('chat_id or slug'),
+)
 
 const noMaster = await handleMasterCommand('!project list', {
   ...ctx(),

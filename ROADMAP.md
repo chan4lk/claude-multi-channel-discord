@@ -26,9 +26,11 @@ Net: end-to-end working in single-user mode. Master channel commands work; proje
 
 ---
 
-## Planned
+## Planned (and now also done)
 
-### Phase 4.5 — auto-create the Discord channel from `!project create`
+> **Update:** phases 4.5, 5, 5.5, 6, and 7 are merged. Remaining work is phase 8 (multi-user polish) and the smaller follow-ups at the bottom.
+
+### Phase 4.5 — auto-create the Discord channel from `!project create` ✅
 
 Today `!project create` requires an existing channel ID. New flag:
 
@@ -45,7 +47,7 @@ Implementation sketch:
 
 Estimated diff: ~80 lines including help text + tests.
 
-### Phase 5 — Git layer
+### Phase 5 — Git layer ✅
 
 The motivating use case: a project channel maps to a git working tree, so chat-driven edits commit to a per-task branch and open a PR.
 
@@ -79,7 +81,7 @@ Push/PR flow (option **(b)** from the original design call):
 4. Opens PR via Octokit (`pulls.create`) or Azure DevOps REST.
 5. Reply chunk in Discord channel includes the PR URL.
 
-### Phase 5.5 — `--cwd` / `--repo-dir` for existing repos
+### Phase 5.5 — `--cwd` / `--repo-dir` for existing repos ✅
 
 Currently `!project create` always `mkdir`s `projects/<slug>/`. To attach a project channel to an existing local checkout (like this very repo on dev boxes), allow:
 
@@ -89,7 +91,7 @@ Currently `!project create` always `mkdir`s `projects/<slug>/`. To attach a proj
 
 Implementation: instead of mkdir + write CLAUDE.md, symlink `projects/<slug>` → `<repo-dir>` and write CLAUDE.md INTO the repo (or skip if one already exists with `--keep-existing-claudemd`). The Claude subprocess's `cwd` becomes the real repo, so file edits and git commands work directly.
 
-### Phase 6 — Cross-platform deploy
+### Phase 6 — Cross-platform deploy ✅
 
 Add to `systemd/`:
 
@@ -98,7 +100,7 @@ Add to `systemd/`:
 
 Document `tmux` dependency clearly: required on Linux/macOS, requires WSL or future node-pty fallback on Windows.
 
-### Phase 7 — Tool surface parity with upstream
+### Phase 7 — Tool surface parity with upstream ✅
 
 Master MCP server currently ships only `reply`. Port the rest from upstream `server.ts`:
 
