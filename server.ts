@@ -919,7 +919,45 @@ function buildMutator(): import('./src/master-commands.ts').MasterMutator {
   }
 }
 
+/**
+ * Validate ~/.claude/settings.json parses cleanly. A malformed file
+ * silently breaks every spawned `claude` subprocess (the CLI aborts
+ * before its TUI renders, leaving a blank tmux pane), so we'd rather
+ * fail fast at boot than spawn into a guaranteed-broken state. Missing
+ * file is fine — claude has its own defaults.
+ *
+ * Returns null on success; returns a human-readable error string on
+ * parse failure so the caller can decide whether to abort or warn.
+ */
+function validateClaudeUserSettings(): string | null {
+  const path = join(homedir(), '.claude', 'settings.json')
+  let raw: string
+  try {
+    raw = readFileSync(path, 'utf8')
+  } catch (err: unknown) {
+    const code = (err as { code?: string }).code
+    if (code === 'ENOENT') return null
+    return `read failed: ${(err as Error).message}`
+  }
+  try {
+    JSON.parse(raw)
+    return null
+  } catch (err) {
+    return `${path}: ${(err as Error).message}`
+  }
+}
+
 async function maybeInitProjectsBackend(): Promise<void> {
+  const settingsErr = validateClaudeUserSettings()
+  if (settingsErr) {
+    process.stderr.write(
+      `discord: ~/.claude/settings.json is malformed — every spawned claude would fail to render its TUI.\n` +
+      `  ${settingsErr}\n` +
+      `  Fix the file (e.g. \`python3 -m json.tool ~/.claude/settings.json\`) and restart.\n`,
+    )
+    process.exit(1)
+  }
+
   let config
   try {
     config = loadChannelsConfig()
@@ -1007,7 +1045,26 @@ async function maybeInitProjectsBackend(): Promise<void> {
         process.stderr.write(`discord: project reply dispatch failed: ${err}\n`)
       })
     },
-    onEvent: (evt) => process.stderr.write(`pool: ${JSON.stringify(evt)}\n`),
+    onEvent: (evt) => {
+      process.stderr.write(`pool: ${JSON.stringify(evt)}\n`)
+      // Surface stuck-watchdog kills to Discord. The user otherwise sees
+      // their channel go silent for hours after the first hung turn —
+      // tell them the agent was torn down so the next message respawns.
+      // `crashed` already gets a Discord post via ClaudeProjectProcess
+      // (synthetic reply from handleTuiFailure), so we don't double-post here.
+      if (evt.kind === 'stuck') {
+        const minutes = Math.round(evt.sinceLastReplyMs / 60_000)
+        const reply: OutboundReply = {
+          kind: 'text',
+          chatId: evt.chatId,
+          text: `⚠️ \`${evt.slug}\`: agent stopped responding (no reply for ${minutes} min). ` +
+            'Tearing down — send another message to respawn.',
+        }
+        void dispatchProjectReply(reply).catch((err) => {
+          process.stderr.write(`discord: stuck notify failed: ${err}\n`)
+        })
+      }
+    },
   })
   projectPool.start()
 

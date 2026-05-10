@@ -195,6 +195,76 @@ function envelope(content: string): InboundEnvelope {
   )
 }
 
+// --- 7. Stuck-watchdog: kills hung process after STUCK_THRESHOLD_MS ---------
+{
+  const config = makeConfig({ idleEvictMinutes: 60 }) // long idle window so we isolate stuck-detection
+  let now = 1_000_000
+  const events: PoolEvent[] = []
+  const created: MockProjectProcess[] = []
+  const pool = new ProjectPool({
+    factory: ({ chatId, project }) => {
+      const p = new MockProjectProcess({ chatId, slug: project.slug, now: () => now, hangs: true })
+      created.push(p)
+      return p
+    },
+    getConfig: () => config,
+    onReply: () => {},
+    onEvent: (e) => events.push(e),
+    now: () => now,
+  })
+
+  // Deliver but the mock hangs — never replies.
+  await pool.deliver('111111111111111111', envelope('hang'))
+  check('7: alive before stuck timeout', pool.has('111111111111111111'))
+
+  // 4 minutes — under STUCK_THRESHOLD_MS (5 min). No watchdog kill yet.
+  now += 4 * 60_000
+  pool.evictIdle()
+  await sleep(5)
+  check('7: not killed before threshold', pool.has('111111111111111111'))
+  check('7: no stuck event yet', !events.some((e) => e.kind === 'stuck'))
+
+  // Push past 5 min. Watchdog fires.
+  now += 2 * 60_000
+  pool.evictIdle()
+  await sleep(5)
+  check('7: killed after threshold', !pool.has('111111111111111111'))
+  check(
+    '7: stuck event fired',
+    events.some((e) => e.kind === 'stuck' && e.chatId === '111111111111111111'),
+  )
+  void created
+
+  await pool.shutdown()
+}
+
+// --- 8. Stuck-watchdog: does NOT kill an idle-but-replied chat --------------
+{
+  const config = makeConfig({ idleEvictMinutes: 60 })
+  let now = 1_000_000
+  const events: PoolEvent[] = []
+  const pool = new ProjectPool({
+    factory: ({ chatId, project }) => new MockProjectProcess({ chatId, slug: project.slug, now: () => now }),
+    getConfig: () => config,
+    onReply: () => {},
+    onEvent: (e) => events.push(e),
+    now: () => now,
+  })
+
+  await pool.deliver('111111111111111111', envelope('hello'))
+  await sleep(5) // let the auto-reply land — bumps lastReplyMs to current `now`
+
+  now += 30 * 60_000 // 30 min idle, but reply is up-to-date — not stuck.
+  pool.evictIdle()
+  await sleep(5)
+  check(
+    '8: idle-but-replied chat not flagged stuck',
+    !events.some((e) => e.kind === 'stuck'),
+  )
+
+  await pool.shutdown()
+}
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)
   process.exit(1)

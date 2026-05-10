@@ -44,8 +44,24 @@ export interface ProjectProcess {
   readonly slug: string
   /** Wall-clock ms of the most recent inbound or outbound activity. */
   lastActivityMs(): number
+  /**
+   * Wall-clock ms of the oldest delivered message that has NOT yet
+   * produced a reply. Returns null when the process is up-to-date
+   * (no in-flight turn). Used by the pool's stuck-watchdog: if a
+   * deliver sat unanswered for more than STUCK_THRESHOLD_MS, the
+   * subprocess is hung and gets torn down. Optional — backends that
+   * don't track this are skipped by the watchdog.
+   */
+  pendingDeliverAtMs?(): number | null
   /** Whether the process is still alive. False after kill() resolves. */
   isAlive(): boolean
+  /**
+   * Cheap liveness probe — for the tmux backend, captures the pane and
+   * checks for the prompt marker. Stronger guarantee than isAlive(): a
+   * blank pane returns false even though the tmux session exists.
+   * Optional; defaults to isAlive() when not implemented.
+   */
+  isResponsive?(): boolean
   /**
    * Best-effort current resource stats. Returns null when not implemented
    * (mock backend) or when the pid couldn't be resolved.
@@ -80,21 +96,28 @@ export class MockProjectProcess implements ProjectProcess {
 
   private _alive = true
   private _lastActivity: number
+  private _pendingDeliverAt: number | null = null
   private now: () => number
+  private hangs: boolean
   private replyHandlers = new Set<(reply: OutboundReply) => void>()
   private exitHandlers = new Set<(info: { code: number | null; signal: NodeJS.Signals | null }) => void>()
   /** Test hook: track every kill() reason. */
   killReasons: string[] = []
 
-  constructor(args: { chatId: string; slug: string; now?: () => number }) {
+  constructor(args: { chatId: string; slug: string; now?: () => number; hangs?: boolean }) {
     this.chatId = args.chatId
     this.slug = args.slug
     this.now = args.now ?? (() => Date.now())
     this._lastActivity = this.now()
+    this.hangs = !!args.hangs
   }
 
   lastActivityMs(): number {
     return this._lastActivity
+  }
+
+  pendingDeliverAtMs(): number | null {
+    return this._pendingDeliverAt
   }
 
   isAlive(): boolean {
@@ -103,10 +126,15 @@ export class MockProjectProcess implements ProjectProcess {
 
   async deliver(envelope: InboundEnvelope): Promise<void> {
     if (!this._alive) throw new Error('MockProjectProcess: deliver() after kill')
-    this._lastActivity = this.now()
+    const at = this.now()
+    this._lastActivity = at
+    if (this._pendingDeliverAt === null) this._pendingDeliverAt = at
+    if (this.hangs) return
     queueMicrotask(() => {
       if (!this._alive) return
-      this._lastActivity = this.now()
+      const replyAt = this.now()
+      this._lastActivity = replyAt
+      this._pendingDeliverAt = null
       const reply: OutboundReply = {
         kind: 'text',
         chatId: this.chatId,

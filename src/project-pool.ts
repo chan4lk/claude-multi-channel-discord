@@ -6,6 +6,7 @@ export type PoolEvent =
   | { kind: 'evict'; chatId: string; slug: string; reason: 'idle-evict' | 'pool-full' }
   | { kind: 'rejected'; chatId: string; reason: 'unknown-project' | 'pool-full-no-evict-candidate' }
   | { kind: 'crashed'; chatId: string; slug: string; code: number | null; signal: NodeJS.Signals | null }
+  | { kind: 'stuck'; chatId: string; slug: string; sinceLastReplyMs: number }
 
 export interface ProjectPoolOptions {
   /**
@@ -40,6 +41,15 @@ export class ProjectPool {
    */
   private readonly recentMessages = new Map<string, Map<string, number>>()
   private static readonly MSG_DEDUP_TTL_MS = 60_000
+
+  /**
+   * If a chat has received messages we've delivered (`lastActivityMs`)
+   * but produced no reply (`lastReplyMs`) for this long, consider the
+   * subprocess hung and tear it down. Next inbound message respawns
+   * fresh. 5 min is comfortably longer than a normal long-thinking turn
+   * but short enough that operators don't sit on a dead channel.
+   */
+  static readonly STUCK_THRESHOLD_MS = 5 * 60_000
 
   constructor(opts: ProjectPoolOptions) {
     this.opts = opts
@@ -148,7 +158,8 @@ export class ProjectPool {
   evictIdle(): void {
     const config = this.opts.getConfig()
     const idleMs = config.defaults.idleEvictMinutes * 60_000
-    const cutoff = this.now() - idleMs
+    const now = this.now()
+    const idleCutoff = now - idleMs
     for (const [chatId, proc] of this.processes) {
       if (!proc.isAlive()) {
         this.processes.delete(chatId)
@@ -156,7 +167,24 @@ export class ProjectPool {
         this.cleanups.delete(chatId)
         continue
       }
-      if (proc.lastActivityMs() < cutoff) {
+
+      // Stuck-watchdog: a deliver landed but no reply came back for
+      // STUCK_THRESHOLD_MS. The subprocess is hung (TUI crashed mid-life,
+      // infinite-loop bash, upstream API gateway timeout, …). Kill it
+      // so the next inbound message respawns clean. Skip when the
+      // backend doesn't expose pendingDeliverAtMs — the watchdog is
+      // best-effort.
+      const pendingAt = typeof proc.pendingDeliverAtMs === 'function' ? proc.pendingDeliverAtMs() : null
+      if (pendingAt !== null) {
+        const sincePending = now - pendingAt
+        if (sincePending > ProjectPool.STUCK_THRESHOLD_MS) {
+          this.fireEvent({ kind: 'stuck', chatId, slug: proc.slug, sinceLastReplyMs: sincePending })
+          void proc.kill('requested')
+          continue
+        }
+      }
+
+      if (proc.lastActivityMs() < idleCutoff) {
         this.fireEvent({ kind: 'evict', chatId, slug: proc.slug, reason: 'idle-evict' })
         void proc.kill('idle-evict')
       }

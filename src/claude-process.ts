@@ -41,6 +41,14 @@ import type {
 const TMUX_POLL_INTERVAL_MS = 5_000
 
 /**
+ * Exit code we synthesise when a spawned `claude` subprocess never
+ * renders its TUI within the wait timeout (or regresses to a non-prompt
+ * state mid-life). The pool turns this into a `crashed` event so the
+ * server can surface it on Discord.
+ */
+export const TUI_FAILURE_EXIT_CODE = 99
+
+/**
  * Shell-escape a single argv entry for use inside a `tmux new-session ... '<cmd>'`
  * string. Single-quote everything; embedded single quotes become `'\''`.
  */
@@ -173,6 +181,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
   private gitCredentialCleanup: (() => void) | null = null
   private _alive = false
   private _lastActivity = Date.now()
+  private _pendingDeliverAt: number | null = null
   private replyHandlers = new Set<(reply: OutboundReply) => void>()
   private exitHandlers = new Set<(info: { code: number | null; signal: NodeJS.Signals | null }) => void>()
 
@@ -303,8 +312,33 @@ export class ClaudeProjectProcess implements ProjectProcess {
     return this._lastActivity
   }
 
+  pendingDeliverAtMs(): number | null {
+    return this._pendingDeliverAt
+  }
+
   isAlive(): boolean {
     return this._alive
+  }
+
+  /**
+   * Synchronous capture-pane check: returns true only if the pane shows
+   * the live `❯` prompt + auto-mode footer. Stronger than `isAlive()`,
+   * which only verifies the tmux session exists. A subprocess whose TUI
+   * never rendered (e.g. malformed `~/.claude/settings.json` aborts the
+   * `claude` CLI before Ink draws anything) passes `isAlive()` but fails
+   * `isResponsive()`.
+   *
+   * Cheap (~5ms) — used by the pool's stuck-watchdog and as a pre-send
+   * sanity check inside `deliver()`.
+   */
+  isResponsive(): boolean {
+    if (!this._alive || !this.tmuxSessionName) return false
+    const r = spawnSync('tmux', ['capture-pane', '-p', '-t', this.tmuxSessionName], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    if (r.status !== 0) return false
+    const pane = r.stdout?.toString() ?? ''
+    return pane.includes('❯') && pane.includes('auto mode on')
   }
 
   /**
@@ -343,15 +377,34 @@ export class ClaudeProjectProcess implements ProjectProcess {
     if (!this._alive || !this.tmuxSessionName) {
       throw new Error(`deliver() called on dead ClaudeProjectProcess ${this.slug}`)
     }
-    this._lastActivity = Date.now()
+    const at = Date.now()
+    this._lastActivity = at
+    if (this._pendingDeliverAt === null) this._pendingDeliverAt = at
     this.log(`deliver msg_id=${envelope.messageId} ts=${envelope.ts}`)
 
     const session = this.tmuxSessionName
 
+    // First-message wait: the spawned `claude` may still be booting. A
+    // failure here means the TUI never came up (malformed ~/.claude/settings.json,
+    // login required, plugin install hang, …). Surface to Discord and
+    // tear down so the next message respawns clean.
     if (!this.tuiReady) {
       const ok = await this.waitForTuiReady(session)
       if (!ok) {
-        this.log('TUI not ready after timeout — dropping message')
+        await this.handleTuiFailure(envelope, 'startup')
+        return
+      }
+      this.tuiReady = true
+    } else if (!this.isResponsive()) {
+      // Pane regression: the cached `tuiReady = true` is no longer
+      // truthful. Re-enter the wait so we don't `send-keys` into a
+      // crashed/dialog-blocked pane. If it still won't come back, fail
+      // loudly rather than silently dropping the message.
+      this.log('pane regressed off prompt — re-validating before send')
+      this.tuiReady = false
+      const ok = await this.waitForTuiReady(session)
+      if (!ok) {
+        await this.handleTuiFailure(envelope, 'regression')
         return
       }
       this.tuiReady = true
@@ -381,6 +434,42 @@ export class ClaudeProjectProcess implements ProjectProcess {
     if (sendEnter.status !== 0) {
       this.log(`send-keys (C-m) failed: ${sendEnter.stderr.toString().trim()}`)
     }
+  }
+
+  /**
+   * Common path when waitForTuiReady gives up — at startup or after a
+   * mid-life regression. Posts an error to Discord (synthetic reply) and
+   * tears the session down, exiting with TUI_FAILURE_EXIT_CODE so the
+   * pool's onExit emits a `crashed` event the operator can act on.
+   */
+  private async handleTuiFailure(
+    envelope: InboundEnvelope,
+    cause: 'startup' | 'regression',
+  ): Promise<void> {
+    this.log(`TUI not ready (${cause}) — dropping message ${envelope.messageId} and tearing down`)
+    const text =
+      cause === 'startup'
+        ? `❌ \`${this.slug}\`: agent failed to start (TUI did not render in 30s). ` +
+          'Check `~/.claude/settings.json` for syntax errors, then send another message to retry.'
+        : `❌ \`${this.slug}\`: agent stopped responding (pane regressed off prompt). ` +
+          'Tearing down — send another message to respawn.'
+    const reply: OutboundReply = {
+      kind: 'text',
+      chatId: this.chatId,
+      text,
+      replyTo: envelope.messageId,
+    }
+    for (const h of this.replyHandlers) {
+      try {
+        h(reply)
+      } catch (err) {
+        this.log(`replyHandler threw during TUI-failure notify: ${(err as Error).message}`)
+      }
+    }
+    if (this._alive && this.tmuxSessionName) {
+      spawnSync('tmux', ['kill-session', '-t', this.tmuxSessionName], { stdio: 'ignore' })
+    }
+    this.markDead(TUI_FAILURE_EXIT_CODE, null)
   }
 
   private tuiReady = false
@@ -495,6 +584,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
    */
   acceptReply(reply: OutboundReply): void {
     this._lastActivity = Date.now()
+    this._pendingDeliverAt = null
     for (const h of this.replyHandlers) h(reply)
   }
 
