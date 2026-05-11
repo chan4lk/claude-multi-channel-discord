@@ -22,8 +22,8 @@
  * WSL until a future fallback path lands.
  */
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
@@ -61,6 +61,48 @@ function shellEscape(arg: string): string {
  * Walk descendants of pid looking for a process whose comm == "claude" or
  * "node" (claude runs on node). Returns the pid of the first match or null.
  */
+/**
+ * Encode a cwd the same way Claude Code does when computing its
+ * transcript directory under `~/.claude/projects/<encoded>`. Every
+ * non-alphanumeric char becomes `-`. So
+ *   /home/openclaw/.claude/channels/discord-multi/projects/academy-videos
+ *   → -home-openclaw--claude-channels-discord-multi-projects-academy-videos
+ */
+function encodeProjectCwd(cwd: string): string {
+  return cwd.replace(/[^a-zA-Z0-9]/g, '-')
+}
+
+/**
+ * Find the session UUID Claude Code wrote when it started in `cwd`.
+ * Claude maintains `~/.claude/projects/<encoded-cwd>/<uuid>.jsonl` for
+ * every session it has touched in that directory; the newest one is the
+ * session we just spawned. Returns null if the directory is missing or
+ * empty (caller falls back to "no resume id yet").
+ */
+function findNewestSessionId(cwd: string): string | null {
+  const dir = join(homedir(), '.claude', 'projects', encodeProjectCwd(cwd))
+  if (!existsSync(dir)) return null
+  let entries: string[]
+  try {
+    entries = readdirSync(dir)
+  } catch {
+    return null
+  }
+  const jsonl = entries.filter((f) => f.endsWith('.jsonl'))
+  if (jsonl.length === 0) return null
+  let newest: { name: string; mtime: number } | null = null
+  for (const f of jsonl) {
+    try {
+      const m = statSync(join(dir, f)).mtimeMs
+      if (!newest || m > newest.mtime) newest = { name: f, mtime: m }
+    } catch {
+      // Race: file deleted between readdir and stat. Skip.
+    }
+  }
+  if (!newest) return null
+  return newest.name.replace(/\.jsonl$/, '')
+}
+
 function findClaudeChild(rootPid: number): number | null {
   // BFS via /proc/<pid>/task/<tid>/children. We don't pull in a
   // process-tree dep — single fs scan is enough.
@@ -182,6 +224,9 @@ export class ClaudeProjectProcess implements ProjectProcess {
   private _alive = false
   private _lastActivity = Date.now()
   private _pendingDeliverAt: number | null = null
+  private resumedSession = false
+  private projectCwd: string | null = null
+  private sessionIdPersisted = false
   private replyHandlers = new Set<(reply: OutboundReply) => void>()
   private exitHandlers = new Set<(info: { code: number | null; signal: NodeJS.Signals | null }) => void>()
 
@@ -233,7 +278,13 @@ export class ClaudeProjectProcess implements ProjectProcess {
     if (claudeArgs.allowedTools?.length) argv.push('--allowed-tools', claudeArgs.allowedTools.join(','))
     if (claudeArgs.disallowedTools?.length) argv.push('--disallowed-tools', claudeArgs.disallowedTools.join(','))
     const sessionId = this.readSessionId()
-    if (sessionId) argv.push('--resume', sessionId)
+    if (sessionId) {
+      argv.push('--resume', sessionId)
+      this.log(`resuming session ${sessionId}`)
+    }
+    // Remember whether we're resuming for first-turn bookkeeping below.
+    this.resumedSession = !!sessionId
+    this.projectCwd = cwd
     if (claudeArgs.extraArgs?.length) argv.push(...claudeArgs.extraArgs)
 
     const cmd = argv.map(shellEscape).join(' ')
@@ -395,6 +446,13 @@ export class ClaudeProjectProcess implements ProjectProcess {
         return
       }
       this.tuiReady = true
+      // First-turn-only: capture the session UUID claude opened in its
+      // transcript dir so the NEXT spawn can `--resume` it (the actual
+      // wiring uses readSessionId() at start()). Also send /rename so
+      // operators see `mcd-<slug>` in `claude --resume` pickers instead
+      // of a UUID. Only do the rename for fresh spawns — resumed ones
+      // already carry the name from their prior life.
+      await this.persistSessionAndRename(session)
     } else if (!this.isResponsive()) {
       // Pane regression: the cached `tuiReady = true` is no longer
       // truthful. Re-enter the wait so we don't `send-keys` into a
@@ -434,6 +492,56 @@ export class ClaudeProjectProcess implements ProjectProcess {
     if (sendEnter.status !== 0) {
       this.log(`send-keys (C-m) failed: ${sendEnter.stderr.toString().trim()}`)
     }
+  }
+
+  /**
+   * After the first successful `waitForTuiReady` of a fresh spawn,
+   * persist Claude Code's session UUID so the next spawn can `--resume`
+   * it, and fire `/rename mcd-<slug>` so operators see the project name
+   * in `claude --resume` pickers. Idempotent — guarded by
+   * `sessionIdPersisted`. Resumed spawns skip both: their `.session-id`
+   * is already current, and they inherit the previous rename. Failures
+   * are non-fatal — the worst case is we lose memory continuity for one
+   * cycle, which is exactly the pre-fix behaviour.
+   */
+  private async persistSessionAndRename(session: string): Promise<void> {
+    if (this.sessionIdPersisted) return
+    if (this.resumedSession) {
+      // No-op for resumed spawns. Still mark persisted so we don't keep
+      // re-checking on every turn.
+      this.sessionIdPersisted = true
+      return
+    }
+    if (!this.projectCwd) {
+      this.sessionIdPersisted = true
+      return
+    }
+
+    const sid = findNewestSessionId(this.projectCwd)
+    if (!sid) {
+      this.log(`session-id capture: no transcript file found yet for cwd=${this.projectCwd}`)
+      // Don't mark persisted — try again next deliver in case the
+      // transcript was just slow to land.
+      return
+    }
+    try {
+      writeFileSync(projectSessionFile(this.slug), sid, { mode: 0o600 })
+      this.log(`session-id captured: ${sid}`)
+    } catch (err) {
+      this.log(`session-id write failed: ${(err as Error).message}`)
+      return
+    }
+    this.sessionIdPersisted = true
+
+    // Cosmetic rename so the resume picker shows a readable label. The
+    // slash command is consumed immediately by claude's input handler;
+    // we give Ink a beat to render before sending the real user prompt.
+    const renameTo = `mcd-${this.slug}`
+    spawnSync('tmux', ['send-keys', '-t', session, '-l', `/rename ${renameTo}`], { stdio: 'ignore' })
+    await sleep(120)
+    spawnSync('tmux', ['send-keys', '-t', session, 'C-m'], { stdio: 'ignore' })
+    await sleep(400)
+    this.log(`renamed session → ${renameTo}`)
   }
 
   /**
