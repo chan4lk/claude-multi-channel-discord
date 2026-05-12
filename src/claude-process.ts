@@ -22,7 +22,7 @@
  * WSL until a future fallback path lands.
  */
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -47,6 +47,18 @@ const TMUX_POLL_INTERVAL_MS = 5_000
  * server can surface it on Discord.
  */
 export const TUI_FAILURE_EXIT_CODE = 99
+
+/**
+ * Hard cap on how big a transcript can grow before we refuse to
+ * `--resume` it. The .jsonl is replayed on every resume; once it gets
+ * fat enough (~1 MB ≈ 150K tokens in this corpus) claude either auto-
+ * compacts on every spawn or hangs replaying tool calls. Past the cap
+ * we rotate the .session-id aside and start fresh. Conversation
+ * continuity is lost for that one channel, but a stuck pool is worse —
+ * and the prior `.session-id.rotated-<ts>` is preserved on disk for
+ * post-mortem.
+ */
+export const RESUME_TRANSCRIPT_MAX_BYTES = 1_000_000
 
 /**
  * Shell-escape a single argv entry for use inside a `tmux new-session ... '<cmd>'`
@@ -761,11 +773,44 @@ export class ClaudeProjectProcess implements ProjectProcess {
   private readSessionId(): string | undefined {
     const path = projectSessionFile(this.slug)
     if (!existsSync(path)) return undefined
+    let id: string
     try {
-      const id = readFileSync(path, 'utf8').trim()
-      return id.length > 0 ? id : undefined
+      id = readFileSync(path, 'utf8').trim()
     } catch {
       return undefined
     }
+    if (id.length === 0) return undefined
+
+    // Refuse resumes onto bloated transcripts. The replay is what hangs
+    // claude — a 1.7MB jsonl in academy-videos was looping the entire
+    // pool through the stuck-watchdog before this gate existed.
+    const transcriptPath = join(
+      homedir(),
+      '.claude',
+      'projects',
+      encodeProjectCwd(projectDir(this.slug)),
+      `${id}.jsonl`,
+    )
+    let size: number
+    try {
+      size = statSync(transcriptPath).size
+    } catch {
+      // Transcript not found — the resume id is stale (e.g. ~/.claude
+      // wiped). Honor it anyway; if claude rejects it the spawn falls
+      // through to the existing TUI-failure handling.
+      return id
+    }
+    if (size > RESUME_TRANSCRIPT_MAX_BYTES) {
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+      const rotated = `${path}.rotated-${stamp}`
+      try {
+        renameSync(path, rotated)
+        this.log(`resume refused: transcript ${size} bytes > ${RESUME_TRANSCRIPT_MAX_BYTES}; rotated .session-id → ${rotated}`)
+      } catch (err) {
+        this.log(`resume refused but rotate failed: ${(err as Error).message}`)
+      }
+      return undefined
+    }
+    return id
   }
 }
