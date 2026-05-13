@@ -415,6 +415,39 @@ export class ClaudeProjectProcess implements ProjectProcess {
     return this._pendingDeliverAt
   }
 
+  /**
+   * Wall-clock ms of the most recent write to the session transcript .jsonl.
+   * Returns null when the session id has not yet been captured (pre-first-turn),
+   * the transcript file does not exist, or stat throws. Cheap — one statSync.
+   * Used by the pool's stuck-watchdog as a veto signal: a healthy agent doing
+   * long internal work (parallel subagents, big bash) still appends tool_use /
+   * tool_result entries every few hundred ms, so a fresh mtime overrides the
+   * "no reply tool fired in 5 min" kill.
+   */
+  transcriptMtimeMs(): number | null {
+    if (!this.projectCwd) return null
+    const sessionFile = projectSessionFile(this.slug)
+    let sessionId: string
+    try {
+      sessionId = readFileSync(sessionFile, 'utf8').trim()
+    } catch {
+      return null
+    }
+    if (!sessionId) return null
+    const transcriptPath = join(
+      homedir(),
+      '.claude',
+      'projects',
+      encodeProjectCwd(this.projectCwd),
+      `${sessionId}.jsonl`,
+    )
+    try {
+      return statSync(transcriptPath).mtimeMs
+    } catch {
+      return null
+    }
+  }
+
   isAlive(): boolean {
     return this._alive
   }

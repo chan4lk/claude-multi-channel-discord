@@ -53,6 +53,16 @@ export interface ProjectProcess {
    * don't track this are skipped by the watchdog.
    */
   pendingDeliverAtMs?(): number | null
+  /**
+   * Wall-clock ms of the most recent write to the session transcript .jsonl.
+   * Returns null when unknown — session id not yet captured, file missing,
+   * stat throws. Used by the pool's stuck-watchdog as a secondary "is the
+   * agent doing anything?" signal: a long internal turn (parallel subagents,
+   * big bash) still writes to the transcript, so a fresh mtime vetoes the
+   * kill even if no `reply` tool fired. Optional — backends that don't
+   * implement it leave the watchdog in pendingDeliver-only mode.
+   */
+  transcriptMtimeMs?(): number | null
   /** Whether the process is still alive. False after kill() resolves. */
   isAlive(): boolean
   /**
@@ -97,6 +107,7 @@ export class MockProjectProcess implements ProjectProcess {
   private _alive = true
   private _lastActivity: number
   private _pendingDeliverAt: number | null = null
+  private _transcriptMtime: number | null = null
   private now: () => number
   private hangs: boolean
   private replyHandlers = new Set<(reply: OutboundReply) => void>()
@@ -118,6 +129,15 @@ export class MockProjectProcess implements ProjectProcess {
 
   pendingDeliverAtMs(): number | null {
     return this._pendingDeliverAt
+  }
+
+  transcriptMtimeMs(): number | null {
+    return this._transcriptMtime
+  }
+
+  /** Test-only hook for the stuck-watchdog gate. */
+  setTranscriptMtimeMs(ms: number | null): void {
+    this._transcriptMtime = ms
   }
 
   isAlive(): boolean {

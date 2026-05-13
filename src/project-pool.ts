@@ -7,6 +7,7 @@ export type PoolEvent =
   | { kind: 'rejected'; chatId: string; reason: 'unknown-project' | 'pool-full-no-evict-candidate' }
   | { kind: 'crashed'; chatId: string; slug: string; code: number | null; signal: NodeJS.Signals | null }
   | { kind: 'stuck'; chatId: string; slug: string; sinceLastReplyMs: number }
+  | { kind: 'progress-skip'; chatId: string; slug: string; sinceLastReplyMs: number; sinceTranscriptMs: number }
 
 export interface ProjectPoolOptions {
   /**
@@ -174,10 +175,33 @@ export class ProjectPool {
       // so the next inbound message respawns clean. Skip when the
       // backend doesn't expose pendingDeliverAtMs — the watchdog is
       // best-effort.
+      //
+      // Two-signal AND-gate (subagent-aware): even when no reply tool
+      // fired, the agent may be doing long internal work — parallel
+      // subagents, big bash, multi-file edits — that still appends to
+      // the session transcript every few hundred ms. If transcriptMtimeMs()
+      // is fresh, veto the kill so we don't false-positive a healthy
+      // long turn. Transcript-stale OR method-absent ⇒ kill as before.
       const pendingAt = typeof proc.pendingDeliverAtMs === 'function' ? proc.pendingDeliverAtMs() : null
       if (pendingAt !== null) {
         const sincePending = now - pendingAt
         if (sincePending > ProjectPool.STUCK_THRESHOLD_MS) {
+          let transcriptMtime: number | null = null
+          try {
+            transcriptMtime = typeof proc.transcriptMtimeMs === 'function' ? proc.transcriptMtimeMs() : null
+          } catch {
+            transcriptMtime = null
+          }
+          if (transcriptMtime !== null && now - transcriptMtime < ProjectPool.STUCK_THRESHOLD_MS) {
+            this.fireEvent({
+              kind: 'progress-skip',
+              chatId,
+              slug: proc.slug,
+              sinceLastReplyMs: sincePending,
+              sinceTranscriptMs: now - transcriptMtime,
+            })
+            continue
+          }
           this.fireEvent({ kind: 'stuck', chatId, slug: proc.slug, sinceLastReplyMs: sincePending })
           void proc.kill('requested')
           continue

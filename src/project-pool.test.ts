@@ -265,6 +265,104 @@ function envelope(content: string): InboundEnvelope {
   await pool.shutdown()
 }
 
+// --- 9. Stuck-watchdog: VETO when transcript mtime is fresh -----------------
+{
+  const config = makeConfig({ idleEvictMinutes: 60 })
+  let now = 1_000_000
+  const events: PoolEvent[] = []
+  const created: MockProjectProcess[] = []
+  const pool = new ProjectPool({
+    factory: ({ chatId, project }) => {
+      const p = new MockProjectProcess({ chatId, slug: project.slug, now: () => now, hangs: true })
+      created.push(p)
+      return p
+    },
+    getConfig: () => config,
+    onReply: () => {},
+    onEvent: (e) => events.push(e),
+    now: () => now,
+  })
+
+  await pool.deliver('111111111111111111', envelope('hang-but-busy'))
+  // Push past stuck threshold AND simulate ongoing transcript activity (subagents).
+  now += 6 * 60_000
+  created[0]!.setTranscriptMtimeMs(now - 30_000) // 30s ago — fresh
+  pool.evictIdle()
+  await sleep(5)
+  check('9: not killed when transcript fresh', pool.has('111111111111111111'))
+  check('9: no stuck event when transcript fresh', !events.some((e) => e.kind === 'stuck'))
+  check(
+    '9: progress-skip event fired',
+    events.some(
+      (e) =>
+        e.kind === 'progress-skip' &&
+        e.chatId === '111111111111111111' &&
+        e.sinceTranscriptMs === 30_000,
+    ),
+  )
+
+  await pool.shutdown()
+}
+
+// --- 10. Stuck-watchdog: kills when transcript mtime is null (parity) -------
+{
+  const config = makeConfig({ idleEvictMinutes: 60 })
+  let now = 1_000_000
+  const events: PoolEvent[] = []
+  const created: MockProjectProcess[] = []
+  const pool = new ProjectPool({
+    factory: ({ chatId, project }) => {
+      const p = new MockProjectProcess({ chatId, slug: project.slug, now: () => now, hangs: true })
+      created.push(p)
+      return p
+    },
+    getConfig: () => config,
+    onReply: () => {},
+    onEvent: (e) => events.push(e),
+    now: () => now,
+  })
+
+  await pool.deliver('111111111111111111', envelope('hang-no-transcript'))
+  now += 6 * 60_000
+  // Mock defaults to transcriptMtimeMs() === null — no need to set.
+  pool.evictIdle()
+  await sleep(5)
+  check('10: killed when transcript unknown', !pool.has('111111111111111111'))
+  check('10: stuck event fired when transcript unknown', events.some((e) => e.kind === 'stuck'))
+
+  await pool.shutdown()
+}
+
+// --- 11. Stuck-watchdog: kills when transcript mtime is stale ---------------
+{
+  const config = makeConfig({ idleEvictMinutes: 60 })
+  let now = 1_000_000
+  const events: PoolEvent[] = []
+  const created: MockProjectProcess[] = []
+  const pool = new ProjectPool({
+    factory: ({ chatId, project }) => {
+      const p = new MockProjectProcess({ chatId, slug: project.slug, now: () => now, hangs: true })
+      created.push(p)
+      return p
+    },
+    getConfig: () => config,
+    onReply: () => {},
+    onEvent: (e) => events.push(e),
+    now: () => now,
+  })
+
+  await pool.deliver('111111111111111111', envelope('hang-stale-transcript'))
+  now += 6 * 60_000
+  // Transcript hasn't been written in 7 minutes — past threshold.
+  created[0]!.setTranscriptMtimeMs(now - 7 * 60_000)
+  pool.evictIdle()
+  await sleep(5)
+  check('11: killed when transcript stale', !pool.has('111111111111111111'))
+  check('11: stuck event fired when transcript stale', events.some((e) => e.kind === 'stuck'))
+
+  await pool.shutdown()
+}
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)
   process.exit(1)
