@@ -84,14 +84,41 @@ function encodeProjectCwd(cwd: string): string {
   return cwd.replace(/[^a-zA-Z0-9]/g, '-')
 }
 
-/**
- * Find the session UUID Claude Code wrote when it started in `cwd`.
- * Claude maintains `~/.claude/projects/<encoded-cwd>/<uuid>.jsonl` for
- * every session it has touched in that directory; the newest one is the
- * session we just spawned. Returns null if the directory is missing or
- * empty (caller falls back to "no resume id yet").
+/** List the set of `<uuid>.jsonl` basenames (without extension) in cwd's
+ * transcript dir. Used to snapshot existing sessions before spawn so we
+ * can identify the newly-created one after the TUI comes up.
  */
-function findNewestSessionId(cwd: string): string | null {
+function listSessionIds(cwd: string): Set<string> {
+  const dir = join(homedir(), '.claude', 'projects', encodeProjectCwd(cwd))
+  if (!existsSync(dir)) return new Set()
+  try {
+    return new Set(
+      readdirSync(dir)
+        .filter((f) => f.endsWith('.jsonl'))
+        .map((f) => f.replace(/\.jsonl$/, '')),
+    )
+  } catch {
+    return new Set()
+  }
+}
+
+/**
+ * Find the session UUID for the `claude` process we just spawned.
+ *
+ * We can't trust "newest .jsonl mtime" — Claude writes its first
+ * append several seconds after the TUI is interactive, so at capture
+ * time a stale session from a previous run is often the newest file
+ * on disk. We'd then write a stranger's UUID into .session-id and the
+ * next resume would attach the channel to someone else's conversation.
+ *
+ * Instead: snapshot the set of `<uuid>.jsonl` files BEFORE spawn (the
+ * `preSpawn` set), then after TUI ready scan the dir and return any
+ * entry that wasn't there before. If multiple new entries exist (race),
+ * pick the newest by mtime. If none, return null — caller treats it as
+ * "session-id capture deferred; retry next deliver" rather than
+ * picking a wrong file.
+ */
+function findNewSessionId(cwd: string, preSpawn: Set<string>): string | null {
   const dir = join(homedir(), '.claude', 'projects', encodeProjectCwd(cwd))
   if (!existsSync(dir)) return null
   let entries: string[]
@@ -100,19 +127,21 @@ function findNewestSessionId(cwd: string): string | null {
   } catch {
     return null
   }
-  const jsonl = entries.filter((f) => f.endsWith('.jsonl'))
-  if (jsonl.length === 0) return null
-  let newest: { name: string; mtime: number } | null = null
-  for (const f of jsonl) {
+  const candidates: Array<{ id: string; mtime: number }> = []
+  for (const f of entries) {
+    if (!f.endsWith('.jsonl')) continue
+    const id = f.replace(/\.jsonl$/, '')
+    if (preSpawn.has(id)) continue
     try {
       const m = statSync(join(dir, f)).mtimeMs
-      if (!newest || m > newest.mtime) newest = { name: f, mtime: m }
+      candidates.push({ id, mtime: m })
     } catch {
       // Race: file deleted between readdir and stat. Skip.
     }
   }
-  if (!newest) return null
-  return newest.name.replace(/\.jsonl$/, '')
+  if (candidates.length === 0) return null
+  candidates.sort((a, b) => b.mtime - a.mtime)
+  return candidates[0]!.id
 }
 
 function findClaudeChild(rootPid: number): number | null {
@@ -239,6 +268,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
   private resumedSession = false
   private projectCwd: string | null = null
   private sessionIdPersisted = false
+  private preSpawnSessionIds: Set<string> = new Set()
   private replyHandlers = new Set<(reply: OutboundReply) => void>()
   private exitHandlers = new Set<(info: { code: number | null; signal: NodeJS.Signals | null }) => void>()
 
@@ -297,6 +327,12 @@ export class ClaudeProjectProcess implements ProjectProcess {
     // Remember whether we're resuming for first-turn bookkeeping below.
     this.resumedSession = !!sessionId
     this.projectCwd = cwd
+    // Snapshot the current set of session jsonl files BEFORE we hand
+    // control to tmux. After waitForTuiReady we use this to identify
+    // which UUID belongs to *this* spawn rather than picking whatever
+    // happens to be newest by mtime (which can be a stale session from
+    // a prior run — see #5).
+    this.preSpawnSessionIds = listSessionIds(cwd)
     if (claudeArgs.extraArgs?.length) argv.push(...claudeArgs.extraArgs)
 
     const cmd = argv.map(shellEscape).join(' ')
@@ -529,9 +565,9 @@ export class ClaudeProjectProcess implements ProjectProcess {
       return
     }
 
-    const sid = findNewestSessionId(this.projectCwd)
+    const sid = findNewSessionId(this.projectCwd, this.preSpawnSessionIds)
     if (!sid) {
-      this.log(`session-id capture: no transcript file found yet for cwd=${this.projectCwd}`)
+      this.log(`session-id capture: no new transcript file yet for cwd=${this.projectCwd} (pre-spawn snapshot had ${this.preSpawnSessionIds.size} entries)`)
       // Don't mark persisted — try again next deliver in case the
       // transcript was just slow to land.
       return
