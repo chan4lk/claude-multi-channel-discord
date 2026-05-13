@@ -1,0 +1,33 @@
+# SpecClaw Configuration
+# Generated: 2026-05-13
+version: 1
+
+project:
+  name: "multi-channel-discord"
+  description: "Project-aware Discord bot for Claude Code — one tmux/claude subprocess per project channel"
+  repo: "https://github.com/chan4lk/claude-multi-channel-discord"
+
+models:
+  planning: "anthropic/claude-opus-4-7"
+  coding: "anthropic/claude-sonnet-4-6"
+  review: "anthropic/claude-sonnet-4-6"
+
+git:
+  strategy: "branch-per-change"
+  auto_commit: true
+  commit_prefix: "fix"
+  branch_prefix: "fix/"
+
+build:
+  test_command: "bun test"
+  lint_command: ""
+  build_command: ""
+  parallel_tasks: 2
+  timeout_seconds: 600
+
+notifications:
+  enabled: true
+  channel: "discord"
+
+github:
+  sync: false
