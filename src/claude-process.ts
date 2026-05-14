@@ -22,7 +22,7 @@
  * WSL until a future fallback path lands.
  */
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -79,9 +79,24 @@ function shellEscape(arg: string): string {
  * non-alphanumeric char becomes `-`. So
  *   /home/openclaw/.claude/channels/discord-multi/projects/academy-videos
  *   → -home-openclaw--claude-channels-discord-multi-projects-academy-videos
+ *
+ * Claude itself resolves the cwd through any symlinks before encoding —
+ * a project dir like `projects/agent-nexus` that's a symlink to
+ * `/home/openclaw/dev/agent-nexus` has its transcripts land under
+ * `-home-openclaw-dev-agent-nexus`, not the symlink path. realpathSync
+ * the cwd here so our snapshot/diff/stat logic targets the same dir.
+ * realpathSync is a no-op on non-symlink paths, so existing channels are
+ * unaffected. Falls back to the literal path if realpath throws
+ * (broken symlink, ENOENT) — best-effort.
  */
 function encodeProjectCwd(cwd: string): string {
-  return cwd.replace(/[^a-zA-Z0-9]/g, '-')
+  let real = cwd
+  try {
+    real = realpathSync(cwd)
+  } catch {
+    // Path doesn't exist yet or symlink target missing — best-effort.
+  }
+  return real.replace(/[^a-zA-Z0-9]/g, '-')
 }
 
 /** List the set of `<uuid>.jsonl` basenames (without extension) in cwd's
