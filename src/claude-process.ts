@@ -269,6 +269,14 @@ export class ClaudeProjectProcess implements ProjectProcess {
   private projectCwd: string | null = null
   private sessionIdPersisted = false
   private preSpawnSessionIds: Set<string> = new Set()
+  /**
+   * Cached session UUID for this spawn, populated lazily on first
+   * successful `findNewSessionId` resolution. Read by `transcriptMtimeMs()`
+   * so the watchdog veto works even when `.session-id` is not (yet) on
+   * disk — `persistSessionAndRename` is one-shot at TUI-ready and can
+   * lose the race with claude's first transcript write.
+   */
+  private observedSessionId: string | null = null
   private replyHandlers = new Set<(reply: OutboundReply) => void>()
   private exitHandlers = new Set<(info: { code: number | null; signal: NodeJS.Signals | null }) => void>()
 
@@ -426,13 +434,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
    */
   transcriptMtimeMs(): number | null {
     if (!this.projectCwd) return null
-    const sessionFile = projectSessionFile(this.slug)
-    let sessionId: string
-    try {
-      sessionId = readFileSync(sessionFile, 'utf8').trim()
-    } catch {
-      return null
-    }
+    const sessionId = this.resolveSessionId()
     if (!sessionId) return null
     const transcriptPath = join(
       homedir(),
@@ -446,6 +448,37 @@ export class ClaudeProjectProcess implements ProjectProcess {
     } catch {
       return null
     }
+  }
+
+  /**
+   * Resolve the session UUID for *this* spawn, in priority order:
+   *   1. In-memory cache (populated once we've observed it).
+   *   2. `.session-id` on disk (set by `persistSessionAndRename` for fresh
+   *      spawns, or pre-existing for resumed spawns).
+   *   3. Diff `<transcript-dir>` against `preSpawnSessionIds` — the same
+   *      logic `findNewSessionId` uses. Catches the case where
+   *      `persistSessionAndRename` lost the race with claude's first
+   *      transcript write and never re-ran.
+   *
+   * Returns null when the spawn has not yet produced any transcript file
+   * (very early after spawn, before claude's first append).
+   */
+  private resolveSessionId(): string | null {
+    if (this.observedSessionId) return this.observedSessionId
+    const sessionFile = projectSessionFile(this.slug)
+    try {
+      const persisted = readFileSync(sessionFile, 'utf8').trim()
+      if (persisted) {
+        this.observedSessionId = persisted
+        return persisted
+      }
+    } catch {
+      // .session-id missing — fall through to snapshot diff.
+    }
+    if (!this.projectCwd) return null
+    const id = findNewSessionId(this.projectCwd, this.preSpawnSessionIds)
+    if (id) this.observedSessionId = id
+    return id
   }
 
   isAlive(): boolean {
