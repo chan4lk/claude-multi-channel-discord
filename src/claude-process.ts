@@ -431,6 +431,10 @@ export class ClaudeProjectProcess implements ProjectProcess {
       const err = result.stderr.toString().trim() || result.stdout.toString().trim() || `exit ${result.status}`
       throw new Error(`tmux new-session failed: ${err}`)
     }
+    // Keep the pane around after claude exits so a post-mortem capture-pane
+    // can show what claude printed before dying. Without remain-on-exit the
+    // session disappears and we lose all diagnostic output.
+    spawnSync('tmux', ['set-option', '-t', sessionName, 'remain-on-exit', 'on'], { stdio: 'ignore' })
 
     this._alive = true
     this._lastActivity = Date.now()
@@ -850,6 +854,23 @@ export class ClaudeProjectProcess implements ProjectProcess {
       const r = spawnSync('tmux', ['has-session', '-t', this.tmuxSessionName], { stdio: 'ignore' })
       if (r.status !== 0) {
         this.log(`tmux session ${this.tmuxSessionName} gone — marking dead`)
+        this.markDead(null, null)
+        return
+      }
+      // Detect "pane dead, session still here" via remain-on-exit. Capture
+      // the pane scrollback so the operator can see what claude printed
+      // before crashing — this is the most useful diagnostic when claude
+      // exits during startup (auth dialog, malformed settings, etc.).
+      const dead = spawnSync('tmux', ['display-message', '-p', '-t', this.tmuxSessionName, '#{pane_dead}'], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      if (dead.stdout?.toString().trim() === '1') {
+        const cap = spawnSync('tmux', ['capture-pane', '-p', '-S', '-200', '-t', this.tmuxSessionName], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+        })
+        const pane = cap.stdout?.toString().trim() ?? '(empty)'
+        this.log(`claude pane died — last output:\n${pane}`)
+        spawnSync('tmux', ['kill-session', '-t', this.tmuxSessionName], { stdio: 'ignore' })
         this.markDead(null, null)
       }
     }, TMUX_POLL_INTERVAL_MS)

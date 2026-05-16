@@ -31,19 +31,36 @@ elif [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   exit 0
 fi
 
-# Locate bun. The service must point at an absolute path — launchd and
-# systemd user units start with a minimal PATH.
-find_bun() {
-  if [[ -n "${BUN_BIN:-}" && -x "$BUN_BIN" ]]; then echo "$BUN_BIN"; return; fi
-  for p in "$HOME/.bun/bin/bun" "$HOME/.local/bin/bun" "/opt/homebrew/bin/bun" "/usr/local/bin/bun"; do
+# Locate bun and claude. The service must point at absolute paths — launchd
+# and systemd user units start with a minimal PATH. We prefer ~/.local/bin
+# for claude because Anthropic's native installer lands there with the
+# current version; stale `bun install -g @anthropic-ai/claude-code` lives at
+# ~/.bun/bin/claude and may be months out of date.
+find_bin() {
+  local name="$1"; shift
+  local override_var="$1"
+  if [[ -n "${!override_var:-}" && -x "${!override_var}" ]]; then echo "${!override_var}"; return; fi
+  for p in "$@"; do
     [[ -x "$p" ]] && { echo "$p"; return; }
   done
-  command -v bun 2>/dev/null || true
+  command -v "$name" 2>/dev/null || true
 }
-BUN=$(find_bun)
+BUN=$(find_bin bun BUN_BIN \
+  "$HOME/.bun/bin/bun" "$HOME/.local/bin/bun" \
+  "/opt/homebrew/bin/bun" "/usr/local/bin/bun")
+# Claude: prefer ~/.local/bin (Anthropic native installer) over ~/.bun/bin
+# (stale npm/bun-global installs). A mismatch here causes the bot to spawn
+# an old claude that crashes at startup on newer Node.js.
+CLAUDE=$(find_bin claude CLAUDE_BIN \
+  "$HOME/.local/bin/claude" \
+  "/opt/homebrew/bin/claude" "/usr/local/bin/claude" \
+  "$HOME/.bun/bin/claude")
 if [[ "$ACTION" != "uninstall" ]]; then
   [[ -z "$BUN" ]] && { echo "bun not found — set BUN_BIN=/path/to/bun" >&2; exit 1; }
+  [[ -z "$CLAUDE" ]] && { echo "claude not found — set CLAUDE_BIN=/path/to/claude" >&2; exit 1; }
   [[ -d "$STATE_DIR" ]] || { echo "state dir missing: $STATE_DIR — run bin/setup-new-instance.sh first" >&2; exit 1; }
+  echo "using bun:    $BUN"
+  echo "using claude: $CLAUDE ($($CLAUDE --version 2>/dev/null | head -1))"
 fi
 
 case "$(uname -s)" in
@@ -93,7 +110,7 @@ install_launchd() {
         <key>MCD_CHANNELS_DIR</key>
         <string>${STATE_DIR}</string>
         <key>PATH</key>
-        <string>$(dirname "$BUN"):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <string>$(dirname "$CLAUDE"):$(dirname "$BUN"):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>HOME</key>
         <string>${HOME}</string>
         <!-- claude CLI checks isTTY via TERM. Without it claude bails to
@@ -183,7 +200,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=${REPO_DIR}
 Environment=MCD_CHANNELS_DIR=${STATE_DIR}
-Environment=PATH=$(dirname "$BUN"):%h/.bun/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=$(dirname "$CLAUDE"):$(dirname "$BUN"):%h/.local/bin:%h/.bun/bin:/usr/local/bin:/usr/bin:/bin
 # claude CLI checks isTTY via TERM. Without it claude bails to non-interactive
 # --print mode inside the tmux PTY and exits immediately.
 Environment=TERM=xterm-256color
