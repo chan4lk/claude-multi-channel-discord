@@ -59,20 +59,48 @@ done
 
 # ─── 3. bot process ──────────────────────────────────────────────────────
 section "Bot process"
+# Portable PID lookup: pgrep exists on both Linux and macOS. /proc-based cwd
+# detection doesn't work on macOS, so use `lsof -d cwd` (Linux + macOS) for
+# the working-directory match and `ps -o command=` for the command line.
+get_pid_cwd() {
+  # Linux fast path
+  if [[ -L "/proc/$1/cwd" ]]; then
+    readlink "/proc/$1/cwd" 2>/dev/null
+    return
+  fi
+  # macOS / BSD fallback
+  lsof -a -p "$1" -d cwd -Fn 2>/dev/null | awk '/^n/ {print substr($0,2); exit}'
+}
+get_pid_cmd() {
+  ps -p "$1" -o command= 2>/dev/null
+}
 BOT_PID=""
-for pid in $(pgrep -f 'bun' 2>/dev/null); do
-  cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null || true)
-  cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)
-  if [[ "$cwd" == "$REPO_DIR" ]] && [[ "$cmd" == *server.ts* ]]; then
+# Match the bot's exact invocation ("bun server.ts" — relative). Other bun
+# processes (Lucid: `bun run /path/server.ts`, MCP shims, etc.) don't have
+# that substring, so this is a tight enough filter on its own. The cwd
+# check stays as a tiebreaker for multi-repo installs.
+for pid in $(pgrep -f 'bun server.ts' 2>/dev/null); do
+  cwd=$(get_pid_cwd "$pid")
+  cmd=$(get_pid_cmd "$pid")
+  if [[ "$cwd" == "$REPO_DIR" ]] && [[ "$cmd" == *"bun server.ts"* ]]; then
     BOT_PID="$pid"
     break
   fi
 done
 if [[ -n "$BOT_PID" ]]; then
   uptime=$(ps -o etime= -p "$BOT_PID" 2>/dev/null | tr -d ' ' || echo "?")
-  rss=$(awk '/VmRSS/ {print $2}' "/proc/$BOT_PID/status" 2>/dev/null || echo "?")
+  # RSS via `ps -o rss=` is portable (kB on both Linux and macOS).
+  rss=$(ps -o rss= -p "$BOT_PID" 2>/dev/null | tr -d ' ' || echo "?")
   ok "running (pid=$BOT_PID, uptime=$uptime, RSS=${rss}kB)"
-  port=$(ss -tlnp 2>/dev/null | awk -v pid="$BOT_PID" '$0 ~ "pid="pid {gsub(/.*:/, "", $4); print $4; exit}')
+  # Portable listening-port lookup. `ss` is Linux-only; lsof works everywhere.
+  port=""
+  if command -v lsof >/dev/null 2>&1; then
+    port=$(lsof -nP -iTCP -sTCP:LISTEN -a -p "$BOT_PID" 2>/dev/null \
+      | awk 'NR>1 {n=split($9,a,":"); print a[n]; exit}')
+  fi
+  if [[ -z "$port" ]] && command -v ss >/dev/null 2>&1; then
+    port=$(ss -tlnp 2>/dev/null | awk -v pid="$BOT_PID" '$0 ~ "pid="pid {gsub(/.*:/, "", $4); print $4; exit}')
+  fi
   if [[ -n "$port" ]]; then
     ok "MCP master listening on 127.0.0.1:$port"
     code=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
@@ -98,7 +126,11 @@ section "Bot process environment"
 # fall back to scanning .env when the var isn't in the spawn env.
 read_bot_env() {
   local var="$1"
-  if [[ -n "$BOT_PID" ]]; then
+  # Linux: read the live spawn env from /proc. macOS doesn't expose /proc;
+  # `ps eww` shows env but only for the calling user's processes and is
+  # truncated, so we don't rely on it. Fall back to scanning .env (which
+  # server.ts loads into its in-process env at boot) — same source of truth.
+  if [[ -n "$BOT_PID" ]] && [[ -r "/proc/$BOT_PID/environ" ]]; then
     if tr '\0' '\n' < "/proc/$BOT_PID/environ" 2>/dev/null | grep -q "^${var}="; then
       return 0
     fi

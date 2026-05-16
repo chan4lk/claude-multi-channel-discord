@@ -9,11 +9,24 @@
 set -u
 
 SESSION="${MCD_TMUX_SESSION:-mcd}"
-REPO_DIR="${MCD_REPO_DIR:-$HOME/dev/multi-channel-discord}"
-BUN="${BUN_BIN:-$HOME/.bun/bin/bun}"
+# Default to the repo this script lives in, not a fixed path.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="${MCD_REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+# Find bun: explicit override, then common install locations, then PATH.
+if [[ -n "${BUN_BIN:-}" ]]; then
+  BUN="$BUN_BIN"
+elif [[ -x "$HOME/.bun/bin/bun" ]]; then
+  BUN="$HOME/.bun/bin/bun"
+elif [[ -x "$HOME/.local/bin/bun" ]]; then
+  BUN="$HOME/.local/bin/bun"
+else
+  BUN="$(command -v bun || true)"
+fi
+[[ -z "$BUN" ]] && { echo "bun not found — set BUN_BIN" >&2; exit 1; }
 
-# Honor /tmp resets after reboot.
-rm -rf /tmp/tmux-* 2>/dev/null || true
+# Stale tmux sockets after reboot. macOS uses /var/folders, Linux uses /tmp.
+# Only clean what tmux owns under /tmp; leave anything else alone.
+rm -rf /tmp/tmux-"$(id -u)" 2>/dev/null || true
 
 while true; do
   if ! tmux has-session -t "$SESSION" 2>/dev/null; then

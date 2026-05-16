@@ -62,10 +62,13 @@ IFS= read -r TOKEN
 [[ -z "$TOKEN" ]] && { echo "empty token on stdin" >&2; exit 1; }
 
 # Resolve to absolute path. macOS doesn't ship realpath by default; fall back.
-if command -v realpath >/dev/null 2>&1; then
+if realpath -m / >/dev/null 2>&1; then
   STATE_DIR=$(realpath -m "$STATE_DIR")
 else
-  STATE_DIR="$(cd "$(dirname "$STATE_DIR")" 2>/dev/null && pwd)/$(basename "$STATE_DIR")"
+  # macOS realpath lacks -m (requires path to exist). Resolve parent only.
+  parent_dir="$(dirname "$STATE_DIR")"
+  mkdir -p "$parent_dir"
+  STATE_DIR="$(cd "$parent_dir" && pwd)/$(basename "$STATE_DIR")"
 fi
 
 if [[ -d "$STATE_DIR" ]] && [[ -n "$(ls -A "$STATE_DIR" 2>/dev/null)" ]]; then
@@ -130,11 +133,26 @@ Run the new bot with:
 
   cd $REPO_DIR
   MCD_CHANNELS_DIR=$STATE_DIR bun server.ts
+DONE
 
-Or as a user systemd service:
+case "$(uname -s)" in
+  Darwin)
+    cat <<DONE
+
+Or install as a launchd user agent (macOS):
+
+  bin/install-service.sh
+DONE
+    ;;
+  Linux)
+    cat <<DONE
+
+Or as a user systemd service (Linux):
 
   cp systemd/multi-channel-discord.service ~/.config/systemd/user/
   # edit to add: Environment=MCD_CHANNELS_DIR=$STATE_DIR
   systemctl --user daemon-reload
   systemctl --user enable --now multi-channel-discord
 DONE
+    ;;
+esac
