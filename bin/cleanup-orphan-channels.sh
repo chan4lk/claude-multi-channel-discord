@@ -84,8 +84,9 @@ while IFS=$'\t' read -r GUILD_ID GUILD_NAME; do
     # registered to a different chat_id — that's the duplicate-from-retry
     # signature. Channels with names not matching any registered slug
     # (#general, #claude-code, your real channels) are left alone.
-    # `set -e` would abort on grep no-match; tolerate it.
-    REGISTERED_ID_FOR_NAME=$(grep -P "^${CH_NAME}\t" <<< "$REGISTERED_SLUG_TO_ID" 2>/dev/null | cut -f2 | head -1 || true)
+    # Look up a registered chat_id for this channel name. Use awk for tab
+    # parsing — `grep -P` is GNU-only and missing on macOS BSD grep.
+    REGISTERED_ID_FOR_NAME=$(awk -F'\t' -v n="$CH_NAME" '$1==n {print $2; exit}' <<< "$REGISTERED_SLUG_TO_ID")
     [[ -z "$REGISTERED_ID_FOR_NAME" ]] && continue
     [[ "$REGISTERED_ID_FOR_NAME" == "$CH_ID" ]] && continue
     ORPHANS+=("$CH_ID")
