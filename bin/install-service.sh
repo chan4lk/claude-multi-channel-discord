@@ -95,7 +95,12 @@ install_launchd() {
         <key>PATH</key>
         <string>$(dirname "$BUN"):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>HOME</key>
-        <string>${HOME}</string>${extra_env}
+        <string>${HOME}</string>
+        <!-- claude CLI checks isTTY via TERM. Without it claude bails to
+             non-interactive --print mode inside the tmux PTY and exits
+             immediately. launchd and systemd both omit TERM by default. -->
+        <key>TERM</key>
+        <string>xterm-256color</string>${extra_env}
     </dict>
 
     <key>RunAtLoad</key>
@@ -125,9 +130,20 @@ install_launchd() {
 PLIST
   chmod 0644 "$plist"
 
-  # Replace any existing instance.
-  launchctl bootout "gui/$(id -u)/${LABEL}" 2>/dev/null || true
-  launchctl bootstrap "gui/$(id -u)" "$plist"
+  # Replace any existing instance. Wait for bootout to release the label
+  # before bootstrap; otherwise launchd returns I/O error 5 on a tight loop.
+  if launchctl print "gui/$(id -u)/${LABEL}" >/dev/null 2>&1; then
+    launchctl bootout "gui/$(id -u)/${LABEL}" 2>/dev/null || true
+    for _ in 1 2 3 4 5; do
+      launchctl print "gui/$(id -u)/${LABEL}" >/dev/null 2>&1 || break
+      sleep 1
+    done
+  fi
+  launchctl bootstrap "gui/$(id -u)" "$plist" || {
+    # Sometimes bootstrap races even after print returns no service; one more retry.
+    sleep 2
+    launchctl bootstrap "gui/$(id -u)" "$plist"
+  }
   sleep 2
   if launchctl print "gui/$(id -u)/${LABEL}" 2>/dev/null | grep -q 'state = running'; then
     echo "installed and running: ${LABEL}"
@@ -168,6 +184,9 @@ Type=simple
 WorkingDirectory=${REPO_DIR}
 Environment=MCD_CHANNELS_DIR=${STATE_DIR}
 Environment=PATH=$(dirname "$BUN"):%h/.bun/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# claude CLI checks isTTY via TERM. Without it claude bails to non-interactive
+# --print mode inside the tmux PTY and exits immediately.
+Environment=TERM=xterm-256color
 # Optional pass-through for tokens git-credentials.json may reference. Place
 # any KEY=value lines you want exposed to the service in this file (mode 0600).
 EnvironmentFile=-%h/.config/multi-channel-discord/env
