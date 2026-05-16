@@ -375,6 +375,13 @@ export class ClaudeProjectProcess implements ProjectProcess {
       tmuxEnvFlags.push('-e', `${key}=${val}`)
     }
 
+    // claude probes isTTY via TERM. When the bot runs under launchd or
+    // systemd, TERM isn't set in the service env, and once the tmux
+    // daemon has been started without TERM it persists (often for hours,
+    // owned by PID 1 after the bot exits). Passing -e per session is the
+    // only way to guarantee claude sees a TTY regardless of daemon state.
+    addEnv('TERM', process.env.TERM || 'xterm-256color')
+
     // Provider routing: when set, point claude's API client at a third
     // party Anthropic-compatible endpoint (e.g. MiniMax). Without this,
     // claude uses the operator's stored Claude Code OAuth.
