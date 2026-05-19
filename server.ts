@@ -701,6 +701,13 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
       case 'edit_message': {
         const ch = await fetchAllowedChannel(args.chat_id as string)
         const msg = await ch.messages.fetch(args.message_id as string)
+        // If newer messages exist the channel has moved on — send new instead of editing buried history
+        const newer = await ch.messages.fetch({ after: args.message_id as string, limit: 1 })
+        if (newer.size > 0 && 'send' in ch) {
+          const sent = await ch.send({ content: args.text as string })
+          noteSent(sent.id)
+          return { content: [{ type: 'text', text: `sent new (id: ${sent.id})` }] }
+        }
         const edited = await msg.edit(args.text as string)
         return { content: [{ type: 'text', text: `edited (id: ${edited.id})` }] }
       }
