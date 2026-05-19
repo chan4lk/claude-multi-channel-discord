@@ -100,11 +100,16 @@ export class Scheduler {
 
   private envelopeFor(s: Schedule, now: Date): InboundEnvelope {
     const ts = now.toISOString()
+    const footer =
+      '\n\n[Scheduled task fired by mcd-scheduler. When your work is complete, ' +
+      'call mcp__mcd__reply with a brief summary so the operator knows what happened. ' +
+      'If your prompt already specifies a reply condition, follow that — this is just a reminder ' +
+      'that mcp__mcd__reply is the only channel back to Discord.]'
     return {
       messageId: `sched-${s.id}-${now.getTime()}`,
       userId: '__mcd_scheduler__',
       username: 'scheduler',
-      content: s.prompt,
+      content: s.prompt + footer,
       ts,
     }
   }
