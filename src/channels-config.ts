@@ -75,6 +75,11 @@ const ProjectSchema = z.object({
    * 'edit': one Discord message per turn, edited in-place with growing chain.
    */
   progressMode: ProgressModeSchema.optional(),
+  /**
+   * Override the watchdog base threshold for this project. Default is 5 min.
+   * Set higher for channels that run long pipelines (TTS, video rendering).
+   */
+  stuckThresholdMinutes: z.number().int().positive().optional(),
 })
 
 const DefaultsGitSchema = z.object({

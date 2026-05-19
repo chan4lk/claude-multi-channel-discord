@@ -186,9 +186,13 @@ export class ProjectPool {
       const pendingAt = typeof proc.pendingDeliverAtMs === 'function' ? proc.pendingDeliverAtMs() : null
       if (pendingAt !== null) {
         const sincePending = now - pendingAt
-        const effectiveThreshold = proc.adaptiveThresholdMs
-          ? proc.adaptiveThresholdMs(ProjectPool.STUCK_THRESHOLD_MS)
+        const projectCfg = this.opts.getConfig().projects[chatId]
+        const baseThresholdMs = projectCfg?.stuckThresholdMinutes
+          ? projectCfg.stuckThresholdMinutes * 60_000
           : ProjectPool.STUCK_THRESHOLD_MS
+        const effectiveThreshold = proc.adaptiveThresholdMs
+          ? proc.adaptiveThresholdMs(baseThresholdMs)
+          : baseThresholdMs
         if (sincePending > effectiveThreshold) {
           let transcriptMtime: number | null = null
           try {
