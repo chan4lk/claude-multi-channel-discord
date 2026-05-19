@@ -1158,6 +1158,7 @@ async function handleToolProgressEvent(
   slug: string,
   ev: ToolProgressEvent,
 ): Promise<void> {
+  if (ev.toolName === 'mcp__mcd__reply') return
   const config = loadChannelsConfig()
   const project = config.projects[chatId]
   const mode = project?.progressMode ?? config.defaults.progressMode ?? 'off'
