@@ -799,6 +799,14 @@ client.on('error', err => {
   process.stderr.write(`discord channel: client error: ${err}\n`)
 })
 
+process.on('unhandledRejection', (reason) => {
+  process.stderr.write(`discord: unhandled rejection: ${reason}\n`)
+})
+
+process.on('uncaughtException', (err) => {
+  process.stderr.write(`discord: uncaught exception: ${err}\n${err.stack}\n`)
+})
+
 // Button-click handler for permission requests. customId is
 // `perm:allow:<id>`, `perm:deny:<id>`, or `perm:more:<id>`.
 // Security mirrors the text-reply path: allowFrom must contain the sender.
@@ -1073,6 +1081,17 @@ async function maybeInitProjectsBackend(): Promise<void> {
           process.stderr.write(`discord: stuck notify failed: ${err}\n`)
         })
       }
+      if (evt.kind === 'progress-skip') {
+        const minutes = Math.round(evt.sinceLastReplyMs / 60_000)
+        const reply: OutboundReply = {
+          kind: 'text',
+          chatId: evt.chatId,
+          text: `⏳ \`${evt.slug}\`: still working (transcript active, ${minutes} min since last reply)`,
+        }
+        void dispatchProjectReply(reply).catch((err) => {
+          process.stderr.write(`discord: progress-skip notify failed: ${err}\n`)
+        })
+      }
       if (evt.kind === 'tool-progress') {
         void handleToolProgressEvent(evt.chatId, evt.slug, evt.event).catch((err) => {
           process.stderr.write(`discord: tool-progress dispatch failed: ${err}\n`)
@@ -1109,6 +1128,8 @@ async function dispatchProjectReply(reply: OutboundReply): Promise<void> {
 
   const chunks = chunkText(reply.text, limit, mode)
   process.stderr.write(`discord: dispatch chat=${reply.chatId} chunks=${chunks.length} text=${JSON.stringify(reply.text).slice(0, 60)}\n`)
+  // Real reply marks end of turn — clear progress state so the next turn starts fresh.
+  editProgressState.delete(reply.chatId)
   for (let i = 0; i < chunks.length; i++) {
     const isFirst = i === 0
     const threadThis =
@@ -1148,6 +1169,7 @@ async function handleToolProgressEvent(
   slug: string,
   ev: ToolProgressEvent,
 ): Promise<void> {
+  if (ev.toolName.startsWith('mcp__mcd__')) return
   const config = loadChannelsConfig()
   const project = config.projects[chatId]
   const mode = project?.progressMode ?? config.defaults.progressMode ?? 'off'
@@ -1207,7 +1229,14 @@ async function handleToolProgressEvent(
     }
     const content = state.lines.slice(-20).join('\n').slice(0, 1900)
     const fetched = await channel.messages.fetch(state.msgId).catch(() => null)
-    if (fetched) await fetched.edit(content).catch(() => {})
+    if (fetched) {
+      await fetched.edit(content).catch(() => {})
+    } else {
+      // Message was buried or deleted — post a fresh one and update state.
+      const sent = await (channel as { send: (o: { content: string }) => Promise<{ id: string }> })
+        .send({ content }).catch(() => null)
+      if (sent) state.msgId = sent.id
+    }
     // Clear state after all tools resolved (heuristic: last line is a done/error)
     const allDone = state.lines.every((l) => l.startsWith('✅') || l.startsWith('❌'))
     if (allDone) editProgressState.delete(chatId)
