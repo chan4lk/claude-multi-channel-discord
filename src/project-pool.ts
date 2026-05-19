@@ -1,13 +1,14 @@
 import type { ChannelsConfig, Project } from './channels-config.ts'
-import type { InboundEnvelope, OutboundReply, ProjectProcess } from './project-process.ts'
+import type { InboundEnvelope, OutboundReply, ProjectProcess, ToolProgressEvent } from './project-process.ts'
 
 export type PoolEvent =
   | { kind: 'spawn'; chatId: string; slug: string }
   | { kind: 'evict'; chatId: string; slug: string; reason: 'idle-evict' | 'pool-full' }
   | { kind: 'rejected'; chatId: string; reason: 'unknown-project' | 'pool-full-no-evict-candidate' }
   | { kind: 'crashed'; chatId: string; slug: string; code: number | null; signal: NodeJS.Signals | null }
-  | { kind: 'stuck'; chatId: string; slug: string; sinceLastReplyMs: number }
-  | { kind: 'progress-skip'; chatId: string; slug: string; sinceLastReplyMs: number; sinceTranscriptMs: number }
+  | { kind: 'stuck'; chatId: string; slug: string; sinceLastReplyMs: number; effectiveThresholdMs: number }
+  | { kind: 'progress-skip'; chatId: string; slug: string; sinceLastReplyMs: number; sinceTranscriptMs: number; effectiveThresholdMs: number }
+  | { kind: 'tool-progress'; chatId: string; slug: string; event: ToolProgressEvent }
 
 export interface ProjectPoolOptions {
   /**
@@ -185,24 +186,28 @@ export class ProjectPool {
       const pendingAt = typeof proc.pendingDeliverAtMs === 'function' ? proc.pendingDeliverAtMs() : null
       if (pendingAt !== null) {
         const sincePending = now - pendingAt
-        if (sincePending > ProjectPool.STUCK_THRESHOLD_MS) {
+        const effectiveThreshold = proc.adaptiveThresholdMs
+          ? proc.adaptiveThresholdMs(ProjectPool.STUCK_THRESHOLD_MS)
+          : ProjectPool.STUCK_THRESHOLD_MS
+        if (sincePending > effectiveThreshold) {
           let transcriptMtime: number | null = null
           try {
             transcriptMtime = typeof proc.transcriptMtimeMs === 'function' ? proc.transcriptMtimeMs() : null
           } catch {
             transcriptMtime = null
           }
-          if (transcriptMtime !== null && now - transcriptMtime < ProjectPool.STUCK_THRESHOLD_MS) {
+          if (transcriptMtime !== null && now - transcriptMtime < effectiveThreshold) {
             this.fireEvent({
               kind: 'progress-skip',
               chatId,
               slug: proc.slug,
               sinceLastReplyMs: sincePending,
               sinceTranscriptMs: now - transcriptMtime,
+              effectiveThresholdMs: effectiveThreshold,
             })
             continue
           }
-          this.fireEvent({ kind: 'stuck', chatId, slug: proc.slug, sinceLastReplyMs: sincePending })
+          this.fireEvent({ kind: 'stuck', chatId, slug: proc.slug, sinceLastReplyMs: sincePending, effectiveThresholdMs: effectiveThreshold })
           void proc.kill('requested')
           continue
         }
@@ -309,9 +314,13 @@ export class ProjectPool {
       this.cleanups.get(chatId)?.()
       this.cleanups.delete(chatId)
     })
+    const offToolProgress = proc.onToolProgress?.((ev) => {
+      this.fireEvent({ kind: 'tool-progress', chatId, slug: project.slug, event: ev })
+    })
     this.cleanups.set(chatId, () => {
       offReply()
       offExit()
+      offToolProgress?.()
     })
 
     this.fireEvent({ kind: 'spawn', chatId, slug: project.slug })

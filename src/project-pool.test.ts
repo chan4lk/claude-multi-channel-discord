@@ -363,6 +363,50 @@ function envelope(content: string): InboundEnvelope {
   await pool.shutdown()
 }
 
+// --- 12. Adaptive threshold: long turn history extends kill window -----------
+{
+  const config = makeConfig({ idleEvictMinutes: 60 })
+  let now = 1_000_000
+  const events: PoolEvent[] = []
+  const created: MockProjectProcess[] = []
+  const pool = new ProjectPool({
+    factory: ({ chatId, project }) => {
+      const p = new MockProjectProcess({ chatId, slug: project.slug, now: () => now, hangs: true })
+      created.push(p)
+      return p
+    },
+    getConfig: () => config,
+    onReply: () => {},
+    onEvent: (e) => events.push(e),
+    now: () => now,
+  })
+
+  await pool.deliver('111111111111111111', envelope('long-work'))
+  // Last turn took 8 min → adaptive = max(5, ceil(8*1.5)) = 12 min
+  created[0]!.setTurnHistory([8 * 60_000])
+
+  // 6 min in — past 5-min base but under 12-min adaptive threshold.
+  now += 6 * 60_000
+  pool.evictIdle()
+  await sleep(5)
+  check('12: not killed within adaptive threshold', pool.has('111111111111111111'))
+  check('12: no stuck event before adaptive threshold', !events.some((e) => e.kind === 'stuck'))
+
+  // 13 min in — past 12-min adaptive threshold.
+  now += 7 * 60_000
+  pool.evictIdle()
+  await sleep(5)
+  check('12: killed after adaptive threshold', !pool.has('111111111111111111'))
+  check(
+    '12: stuck event carries effectiveThresholdMs',
+    events.some(
+      (e) => e.kind === 'stuck' && e.chatId === '111111111111111111' && e.effectiveThresholdMs === 12 * 60_000,
+    ),
+  )
+
+  await pool.shutdown()
+}
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)
   process.exit(1)

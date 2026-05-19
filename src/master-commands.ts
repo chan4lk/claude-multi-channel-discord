@@ -11,6 +11,7 @@ import {
   saveConfig,
   SLUG_PATTERN,
   type ChannelsConfig,
+  type ProgressMode,
   type Project,
 } from './channels-config.ts'
 import { buildGitEnv, gitClone, gitPullFastForward, gitSetRemote, gitStatusSummary } from './git-ops.ts'
@@ -139,6 +140,8 @@ export async function handleMasterCommand(
       return { kind: 'reply', text: await handleProvider(rest, ctx) }
     case 'model':
       return { kind: 'reply', text: await handleModel(rest, ctx) }
+    case 'progress':
+      return { kind: 'reply', text: await handleProgress(rest, ctx) }
     default:
       return {
         kind: 'reply',
@@ -167,6 +170,7 @@ function helpText(prefix: string): string {
     `${prefix} schedule pause/resume/rm <id>          — toggle or delete a schedule`,
     `${prefix} provider <chat_id-or-slug> [--set ALIAS | --clear]    — switch a project to a different provider (or back to Claude subscription)`,
     `${prefix} model    <chat_id-or-slug> [--set NAME | --clear]    — set or clear the project's --model arg`,
+    `${prefix} progress <chat_id-or-slug> [--set off|edit|post | --clear]    — show/set live tool-call progress mode`,
     `${prefix} rm     <chat_id-or-slug> --yes                         — archive + remove`,
     `${prefix} help                          — this message`,
     '```',
@@ -1194,4 +1198,34 @@ function readClaudeMdPreview(slug: string, max = 500): string {
   } catch (err) {
     return `(read failed: ${(err as Error).message})`
   }
+}
+
+async function handleProgress(rest: string[], ctx: MasterContext): Promise<string> {
+  const { positional, flags } = parseFlags(rest)
+  if (positional.length === 0) return '`progress` needs a chat_id or slug'
+  const target = positional[0]!
+  const setMode = typeof flags.set === 'string' ? (flags.set as ProgressMode) : null
+  const clear = flags.clear === true
+  if (setMode && clear) return 'pass either `--set <mode>` or `--clear`, not both'
+  if (setMode && !['off', 'edit', 'post'].includes(setMode)) {
+    return '`--set` must be one of: `off`, `edit`, `post`'
+  }
+
+  const config = loadConfig()
+  const entry = resolveTarget(config, target)
+  if (!entry) return `no project found for "${target}"`
+
+  if (!setMode && !clear) {
+    const mode = entry.project.progressMode ?? config.defaults.progressMode ?? 'off'
+    const inherited = entry.project.progressMode == null ? ' (inherited from defaults)' : ''
+    return `**${entry.project.slug}**: progressMode = \`${mode}\`${inherited}`
+  }
+
+  const updated = { ...entry.project }
+  if (setMode) updated.progressMode = setMode
+  else delete updated.progressMode
+  saveConfig({ ...config, projects: { ...config.projects, [entry.chatId]: updated } })
+
+  const mode = setMode ?? config.defaults.progressMode ?? 'off'
+  return `✅ **${entry.project.slug}**: progressMode = \`${mode}\`\n_takes effect immediately (no restart needed)._`
 }
