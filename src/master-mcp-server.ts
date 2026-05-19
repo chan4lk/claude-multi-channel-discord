@@ -352,8 +352,16 @@ export class MasterMcpServer {
     const text = String(args.text ?? '')
     if (!messageId || !text) return errorResult('edit_message requires message_id + text')
     const channel = await this.fetchTextChannel(chatId)
-    const msg = await (channel as TextBasedChannel & { messages: { fetch: (id: string) => Promise<Message> } }).messages.fetch(messageId)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const messages = (channel as any).messages
+    const msg = (await messages.fetch(messageId)) as Message
     if (msg.author.id !== this.client.user?.id) return errorResult('can only edit messages this bot sent')
+    // If newer messages exist the channel has moved on — send new instead of editing buried history
+    const newer = await messages.fetch({ after: messageId, limit: 1 })
+    if (newer.size > 0) {
+      const sent = await (channel as any).send({ content: text }) as Message
+      return okResult(`sent new (id: ${sent.id})`)
+    }
     await msg.edit(text)
     return okResult('edited')
   }
