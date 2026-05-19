@@ -1081,6 +1081,17 @@ async function maybeInitProjectsBackend(): Promise<void> {
           process.stderr.write(`discord: stuck notify failed: ${err}\n`)
         })
       }
+      if (evt.kind === 'progress-skip') {
+        const minutes = Math.round(evt.sinceLastReplyMs / 60_000)
+        const reply: OutboundReply = {
+          kind: 'text',
+          chatId: evt.chatId,
+          text: `⏳ \`${evt.slug}\`: still working (transcript active, ${minutes} min since last reply)`,
+        }
+        void dispatchProjectReply(reply).catch((err) => {
+          process.stderr.write(`discord: progress-skip notify failed: ${err}\n`)
+        })
+      }
       if (evt.kind === 'tool-progress') {
         void handleToolProgressEvent(evt.chatId, evt.slug, evt.event).catch((err) => {
           process.stderr.write(`discord: tool-progress dispatch failed: ${err}\n`)
@@ -1158,7 +1169,7 @@ async function handleToolProgressEvent(
   slug: string,
   ev: ToolProgressEvent,
 ): Promise<void> {
-  if (ev.toolName === 'mcp__mcd__reply') return
+  if (ev.toolName.startsWith('mcp__mcd__')) return
   const config = loadChannelsConfig()
   const project = config.projects[chatId]
   const mode = project?.progressMode ?? config.defaults.progressMode ?? 'off'
