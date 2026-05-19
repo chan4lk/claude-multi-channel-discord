@@ -877,8 +877,8 @@ export class ClaudeProjectProcess implements ProjectProcess {
       let chunk: string
       try {
         let size: number
-        try { size = statSync(path).size } catch { closeSync(fd); return }
-        if (size <= this.transcriptWatcherOffset) { closeSync(fd); return }
+        try { size = statSync(path).size } catch { return }
+        if (size <= this.transcriptWatcherOffset) { return }
         const toRead = size - this.transcriptWatcherOffset
         const buf = Buffer.allocUnsafe(toRead)
         const bytesRead = readSync(fd, buf, 0, toRead, this.transcriptWatcherOffset)
