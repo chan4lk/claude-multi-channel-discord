@@ -53,6 +53,9 @@ const ClaudeArgsSchema = z.object({
 })
 export type ClaudeArgs = z.infer<typeof ClaudeArgsSchema>
 
+const ProgressModeSchema = z.enum(['off', 'edit', 'post'])
+export type ProgressMode = z.infer<typeof ProgressModeSchema>
+
 const ProjectSchema = z.object({
   slug: SlugSchema,
   model: z.string().optional(),
@@ -65,6 +68,13 @@ const ProjectSchema = z.object({
    * use the operator's Claude Code subscription auth.
    */
   provider: z.string().optional(),
+  /**
+   * Controls live tool-call progress posts to Discord during Claude turns.
+   * 'off' (default): silent until reply tool fires.
+   * 'post': one Discord message per tool_use start, edited on completion.
+   * 'edit': one Discord message per turn, edited in-place with growing chain.
+   */
+  progressMode: ProgressModeSchema.optional(),
 })
 
 const DefaultsGitSchema = z.object({
@@ -98,6 +108,8 @@ const DefaultsSchema = z.object({
    * means "use Claude subscription" (no env override at spawn).
    */
   provider: z.string().optional(),
+  /** Global default for progressMode. Projects can override per-channel. */
+  progressMode: ProgressModeSchema.default('off'),
 })
 
 const MasterSchema = z.object({

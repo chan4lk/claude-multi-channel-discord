@@ -26,6 +26,10 @@ export type OutboundReply =
   | { kind: 'text'; chatId: string; text: string; replyTo?: string }
   | { kind: 'react'; chatId: string; messageId: string; emoji: string }
 
+export type ToolProgressEvent =
+  | { phase: 'start'; toolId: string; toolName: string; inputSummary: string }
+  | { phase: 'done'; toolId: string; toolName: string; durationMs: number; isError: boolean }
+
 export interface ProcessStats {
   /** Resolved claude PID. null if we couldn't find one. */
   pid: number | null
@@ -63,6 +67,14 @@ export interface ProjectProcess {
    * implement it leave the watchdog in pendingDeliver-only mode.
    */
   transcriptMtimeMs?(): number | null
+  /**
+   * Per-process adaptive stuck threshold. Given the pool's base threshold,
+   * returns a dynamically extended value derived from observed turn durations —
+   * channels that routinely run long agent turns (parallel subagents, big
+   * edits) won't be killed by a fixed 5-min window. Optional; pool falls back
+   * to the base threshold when not implemented.
+   */
+  adaptiveThresholdMs?(baseMs: number): number
   /** Whether the process is still alive. False after kill() resolves. */
   isAlive(): boolean
   /**
@@ -87,6 +99,8 @@ export interface ProjectProcess {
   onReply(handler: (reply: OutboundReply) => void): () => void
   /** Subscribe to lifecycle exit (clean exit, crash, or kill). */
   onExit(handler: (info: { code: number | null; signal: NodeJS.Signals | null }) => void): () => void
+  /** Subscribe to tool-call progress events (optional — not all backends emit these). */
+  onToolProgress?(handler: (ev: ToolProgressEvent) => void): () => void
   /**
    * Tear down the process. Idempotent. Returns once exit handlers have fired.
    */
@@ -114,6 +128,7 @@ export class MockProjectProcess implements ProjectProcess {
   private exitHandlers = new Set<(info: { code: number | null; signal: NodeJS.Signals | null }) => void>()
   /** Test hook: track every kill() reason. */
   killReasons: string[] = []
+  private turnHistory: number[] = []
 
   constructor(args: { chatId: string; slug: string; now?: () => number; hangs?: boolean }) {
     this.chatId = args.chatId
@@ -140,6 +155,17 @@ export class MockProjectProcess implements ProjectProcess {
     this._transcriptMtime = ms
   }
 
+  /** Test-only hook: inject pre-built turn durations to exercise adaptive threshold. */
+  setTurnHistory(durations: number[]): void {
+    this.turnHistory = [...durations]
+  }
+
+  adaptiveThresholdMs(baseMs: number): number {
+    if (this.turnHistory.length === 0) return baseMs
+    const maxTurn = Math.max(...this.turnHistory)
+    return Math.min(30 * 60_000, Math.max(baseMs, Math.ceil(maxTurn * 1.5)))
+  }
+
   isAlive(): boolean {
     return this._alive
   }
@@ -153,6 +179,11 @@ export class MockProjectProcess implements ProjectProcess {
     queueMicrotask(() => {
       if (!this._alive) return
       const replyAt = this.now()
+      if (this._pendingDeliverAt !== null) {
+        const duration = replyAt - this._pendingDeliverAt
+        this.turnHistory.push(duration)
+        if (this.turnHistory.length > 5) this.turnHistory.shift()
+      }
       this._lastActivity = replyAt
       this._pendingDeliverAt = null
       const reply: OutboundReply = {
@@ -173,6 +204,10 @@ export class MockProjectProcess implements ProjectProcess {
   onExit(handler: (info: { code: number | null; signal: NodeJS.Signals | null }) => void): () => void {
     this.exitHandlers.add(handler)
     return () => this.exitHandlers.delete(handler)
+  }
+
+  onToolProgress(_handler: (ev: ToolProgressEvent) => void): () => void {
+    return () => {}
   }
 
   async kill(reason: 'idle-evict' | 'pool-full' | 'shutdown' | 'requested'): Promise<void> {

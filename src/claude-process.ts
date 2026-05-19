@@ -22,7 +22,7 @@
  * WSL until a future fallback path lands.
  */
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, openSync, readFileSync, readSync, closeSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -36,9 +36,13 @@ import type {
   InboundEnvelope,
   OutboundReply,
   ProjectProcess,
+  ToolProgressEvent,
 } from './project-process.ts'
 
 const TMUX_POLL_INTERVAL_MS = 5_000
+const MAX_TURN_HISTORY = 5
+const ADAPTIVE_MULTIPLIER = 1.5
+const MAX_ADAPTIVE_THRESHOLD_MS = 30 * 60_000
 
 /**
  * Exit code we synthesise when a spawned `claude` subprocess never
@@ -266,6 +270,20 @@ export interface ClaudeProjectProcessOptions {
   log?: (msg: string) => void
 }
 
+function summarizeToolInput(name: string, input: Record<string, unknown>): string {
+  const s = (v: unknown, max = 80) => {
+    const str = String(v ?? '')
+    return str.length > max ? str.slice(0, max - 3) + '...' : str
+  }
+  if (name === 'Bash') return s(input.command ?? input.cmd ?? '')
+  if (['Read', 'Write', 'Edit'].includes(name)) return s(input.file_path ?? input.path ?? '')
+  if (name === 'WebFetch') return s(input.url ?? '')
+  if (name === 'WebSearch') return s(input.query ?? '')
+  if (name === 'Agent') return s(input.description ?? '', 60)
+  const first = Object.values(input).find((v) => typeof v === 'string')
+  return first ? s(first, 60) : ''
+}
+
 export class ClaudeProjectProcess implements ProjectProcess {
   readonly chatId: string
   readonly slug: string
@@ -276,6 +294,10 @@ export class ClaudeProjectProcess implements ProjectProcess {
   private mcpConfigPath: string | null = null
   private tmuxSessionName: string | null = null
   private aliveCheckTimer: ReturnType<typeof setInterval> | null = null
+  private transcriptWatcherTimer: ReturnType<typeof setInterval> | null = null
+  private transcriptWatcherOffset = 0
+  private transcriptWatcherPath: string | null = null
+  private transcriptPendingTools = new Map<string, { toolName: string; inputSummary: string; startMs: number }>()
   private gitCredentialCleanup: (() => void) | null = null
   private _alive = false
   private _lastActivity = Date.now()
@@ -293,6 +315,8 @@ export class ClaudeProjectProcess implements ProjectProcess {
    */
   private observedSessionId: string | null = null
   private replyHandlers = new Set<(reply: OutboundReply) => void>()
+  private toolProgressHandlers = new Set<(ev: ToolProgressEvent) => void>()
+  private readonly turnHistory: number[] = []
   private exitHandlers = new Set<(info: { code: number | null; signal: NodeJS.Signals | null }) => void>()
 
   constructor(opts: ClaudeProjectProcessOptions) {
@@ -439,6 +463,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
     this._alive = true
     this._lastActivity = Date.now()
     this.startAliveCheck()
+    this.startTranscriptWatcher()
   }
 
   lastActivityMs(): number {
@@ -824,6 +849,80 @@ export class ClaudeProjectProcess implements ProjectProcess {
     return () => this.exitHandlers.delete(handler)
   }
 
+  onToolProgress(handler: (ev: ToolProgressEvent) => void): () => void {
+    this.toolProgressHandlers.add(handler)
+    return () => this.toolProgressHandlers.delete(handler)
+  }
+
+  private fireToolProgress(ev: ToolProgressEvent): void {
+    for (const h of this.toolProgressHandlers) {
+      try { h(ev) } catch {}
+    }
+  }
+
+  private startTranscriptWatcher(): void {
+    if (this.transcriptWatcherTimer) return
+    const poll = () => {
+      if (!this._alive || this.toolProgressHandlers.size === 0) return
+      const sessionId = this.resolveSessionId()
+      if (!sessionId || !this.projectCwd) return
+      const path = join(homedir(), '.claude', 'projects', encodeProjectCwd(this.projectCwd), `${sessionId}.jsonl`)
+      if (path !== this.transcriptWatcherPath) {
+        this.transcriptWatcherOffset = 0
+        this.transcriptWatcherPath = path
+        this.transcriptPendingTools.clear()
+      }
+      let fd: number
+      try { fd = openSync(path, 'r') } catch { return }
+      let chunk: string
+      try {
+        let size: number
+        try { size = statSync(path).size } catch { closeSync(fd); return }
+        if (size <= this.transcriptWatcherOffset) { closeSync(fd); return }
+        const toRead = size - this.transcriptWatcherOffset
+        const buf = Buffer.allocUnsafe(toRead)
+        const bytesRead = readSync(fd, buf, 0, toRead, this.transcriptWatcherOffset)
+        this.transcriptWatcherOffset += bytesRead
+        chunk = buf.slice(0, bytesRead).toString('utf8')
+      } finally {
+        closeSync(fd)
+      }
+      for (const line of chunk.split('\n')) {
+        const trimmed = line.trim()
+        if (!trimmed) continue
+        let obj: Record<string, unknown>
+        try { obj = JSON.parse(trimmed) as Record<string, unknown> } catch { continue }
+        const msg = obj.message as { role?: string; content?: unknown[] } | undefined
+        if (!msg) continue
+        if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+          for (const block of msg.content) {
+            const b = block as { type?: string; id?: string; name?: string; input?: Record<string, unknown> }
+            if (b.type === 'tool_use' && b.id && b.name) {
+              const inputSummary = summarizeToolInput(b.name, b.input ?? {})
+              this.transcriptPendingTools.set(b.id, { toolName: b.name, inputSummary, startMs: Date.now() })
+              this.fireToolProgress({ phase: 'start', toolId: b.id, toolName: b.name, inputSummary })
+            }
+          }
+        }
+        if (msg.role === 'user' && Array.isArray(msg.content)) {
+          for (const block of msg.content) {
+            const b = block as { type?: string; tool_use_id?: string; is_error?: boolean }
+            if (b.type === 'tool_result' && b.tool_use_id) {
+              const info = this.transcriptPendingTools.get(b.tool_use_id)
+              if (info) {
+                const durationMs = Date.now() - info.startMs
+                this.fireToolProgress({ phase: 'done', toolId: b.tool_use_id, toolName: info.toolName, durationMs, isError: b.is_error === true })
+                this.transcriptPendingTools.delete(b.tool_use_id)
+              }
+            }
+          }
+        }
+      }
+    }
+    this.transcriptWatcherTimer = setInterval(poll, 2_000)
+    if (typeof this.transcriptWatcherTimer.unref === 'function') this.transcriptWatcherTimer.unref()
+  }
+
   /**
    * Called by ProjectPool.acceptReply when the master MCP server emits a
    * reply tool call from this chat's session. We bump activity and fan
@@ -831,9 +930,21 @@ export class ClaudeProjectProcess implements ProjectProcess {
    * Discord delivery — this hook is for additional observers).
    */
   acceptReply(reply: OutboundReply): void {
-    this._lastActivity = Date.now()
+    const now = Date.now()
+    if (this._pendingDeliverAt !== null) {
+      const duration = now - this._pendingDeliverAt
+      this.turnHistory.push(duration)
+      if (this.turnHistory.length > MAX_TURN_HISTORY) this.turnHistory.shift()
+    }
+    this._lastActivity = now
     this._pendingDeliverAt = null
     for (const h of this.replyHandlers) h(reply)
+  }
+
+  adaptiveThresholdMs(baseMs: number): number {
+    if (this.turnHistory.length === 0) return baseMs
+    const maxTurn = Math.max(...this.turnHistory)
+    return Math.min(MAX_ADAPTIVE_THRESHOLD_MS, Math.max(baseMs, Math.ceil(maxTurn * ADAPTIVE_MULTIPLIER)))
   }
 
   async kill(reason: 'idle-evict' | 'pool-full' | 'shutdown' | 'requested'): Promise<void> {
@@ -883,6 +994,10 @@ export class ClaudeProjectProcess implements ProjectProcess {
     if (this.aliveCheckTimer) {
       clearInterval(this.aliveCheckTimer)
       this.aliveCheckTimer = null
+    }
+    if (this.transcriptWatcherTimer) {
+      clearInterval(this.transcriptWatcherTimer)
+      this.transcriptWatcherTimer = null
     }
     if (this.gitCredentialCleanup) {
       try {

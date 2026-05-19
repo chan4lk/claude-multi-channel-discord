@@ -40,7 +40,7 @@ import { chunk as chunkText, DISCORD_HARD_CHUNK_LIMIT } from './src/discord-chun
 import { handleMasterCommand } from './src/master-commands.ts'
 import { MasterMcpServer } from './src/master-mcp-server.ts'
 import { ProjectPool } from './src/project-pool.ts'
-import type { OutboundReply } from './src/project-process.ts'
+import type { OutboundReply, ToolProgressEvent } from './src/project-process.ts'
 import { Scheduler } from './src/scheduler.ts'
 
 // Single-source state dir. MCD_CHANNELS_DIR is the multi-channel-discord
@@ -1046,7 +1046,9 @@ async function maybeInitProjectsBackend(): Promise<void> {
       })
     },
     onEvent: (evt) => {
-      process.stderr.write(`pool: ${JSON.stringify(evt)}\n`)
+      if (evt.kind !== 'tool-progress') {
+        process.stderr.write(`pool: ${JSON.stringify(evt)}\n`)
+      }
       // Surface stuck-watchdog kills to Discord. The user otherwise sees
       // their channel go silent for hours after the first hung turn —
       // tell them the agent was torn down so the next message respawns.
@@ -1062,6 +1064,11 @@ async function maybeInitProjectsBackend(): Promise<void> {
         }
         void dispatchProjectReply(reply).catch((err) => {
           process.stderr.write(`discord: stuck notify failed: ${err}\n`)
+        })
+      }
+      if (evt.kind === 'tool-progress') {
+        void handleToolProgressEvent(evt.chatId, evt.slug, evt.event).catch((err) => {
+          process.stderr.write(`discord: tool-progress dispatch failed: ${err}\n`)
         })
       }
     },
@@ -1110,6 +1117,95 @@ async function dispatchProjectReply(reply: OutboundReply): Promise<void> {
       process.stderr.write(`discord: chunk send failed for ${reply.chatId}: ${err}\n`)
     })
   }
+}
+
+// --- Tool-call progress notifications ---
+
+/** 'edit' mode: one message per turn, grown in-place. */
+const editProgressState = new Map<string, { msgId: string; lines: string[] }>()
+/** 'post' mode: one message per tool_use, tracked by toolId. */
+const postProgressMsgIds = new Map<string, string>()
+
+function formatProgressLine(ev: ToolProgressEvent): string {
+  if (ev.phase === 'start') {
+    const label = ev.inputSummary ? `${ev.toolName}: ${ev.inputSummary}` : ev.toolName
+    return `🔧 ${label}`
+  }
+  const label = ev.toolName
+  const dur = `${ev.durationMs}ms`
+  return ev.isError ? `❌ ${label} (failed, ${dur})` : `✅ ${label} (${dur})`
+}
+
+async function handleToolProgressEvent(
+  chatId: string,
+  slug: string,
+  ev: ToolProgressEvent,
+): Promise<void> {
+  const config = loadChannelsConfig()
+  const project = config.projects[chatId]
+  const mode = project?.progressMode ?? config.defaults.progressMode ?? 'off'
+  if (mode === 'off') return
+
+  const channel = await fetchTextChannel(chatId).catch(() => null)
+  if (!channel) return
+
+  if (mode === 'post') {
+    if (ev.phase === 'start') {
+      const sent = await (channel as { send: (o: { content: string }) => Promise<{ id: string }> })
+        .send({ content: formatProgressLine(ev) }).catch(() => null)
+      if (sent) postProgressMsgIds.set(`${chatId}:${ev.toolId}`, sent.id)
+    } else {
+      const key = `${chatId}:${ev.toolId}`
+      const msgId = postProgressMsgIds.get(key)
+      if (msgId) {
+        postProgressMsgIds.delete(key)
+        const fetched = await channel.messages.fetch(msgId).catch(() => null)
+        if (fetched) await fetched.edit(formatProgressLine(ev)).catch(() => {})
+      }
+    }
+    return
+  }
+
+  // edit mode
+  if (ev.phase === 'start') {
+    const state = editProgressState.get(chatId)
+    const newLine = formatProgressLine(ev)
+    if (state) {
+      state.lines.push(newLine)
+      const content = state.lines.slice(-20).join('\n').slice(0, 1900)
+      const fetched = await channel.messages.fetch(state.msgId).catch(() => null)
+      if (fetched) {
+        await fetched.edit(content).catch(() => {})
+      } else {
+        const sent = await (channel as { send: (o: { content: string }) => Promise<{ id: string }> })
+          .send({ content }).catch(() => null)
+        if (sent) state.msgId = sent.id
+      }
+    } else {
+      const sent = await (channel as { send: (o: { content: string }) => Promise<{ id: string }> })
+        .send({ content: newLine }).catch(() => null)
+      if (sent) editProgressState.set(chatId, { msgId: sent.id, lines: [newLine] })
+    }
+  } else {
+    const state = editProgressState.get(chatId)
+    if (!state) return
+    // Replace matching start line with done line
+    const startPrefix = `🔧 ${ev.toolName}`
+    const idx = [...state.lines].reverse().findIndex((l) => l.startsWith(startPrefix))
+    if (idx !== -1) {
+      const realIdx = state.lines.length - 1 - idx
+      state.lines[realIdx] = formatProgressLine(ev)
+    } else {
+      state.lines.push(formatProgressLine(ev))
+    }
+    const content = state.lines.slice(-20).join('\n').slice(0, 1900)
+    const fetched = await channel.messages.fetch(state.msgId).catch(() => null)
+    if (fetched) await fetched.edit(content).catch(() => {})
+    // Clear state after all tools resolved (heuristic: last line is a done/error)
+    const allDone = state.lines.every((l) => l.startsWith('✅') || l.startsWith('❌'))
+    if (allDone) editProgressState.delete(chatId)
+  }
+  void slug // suppress unused warning
 }
 
 /**
