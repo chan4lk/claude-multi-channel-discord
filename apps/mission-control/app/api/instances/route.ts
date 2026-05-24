@@ -1,9 +1,8 @@
-import { NextRequest } from 'next/server'
+import { getInstances } from '../../../src/db'
 
-const HUB_URL = process.env.HUB_URL ?? 'http://localhost:4001'
+export const dynamic = 'force-dynamic'
 
-export async function GET(_req: NextRequest) {
-  const res = await fetch(`${HUB_URL}/api/instances`)
-  const data = await res.json()
-  return Response.json(data)
+export async function GET(): Promise<Response> {
+  const rows = getInstances()
+  return Response.json(rows)
 }

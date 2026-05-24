@@ -1,4 +1,6 @@
-const clients = new Set<ReadableStreamDefaultController>();
+// Use globalThis to survive Next.js hot module replacement
+const g = globalThis as { __mcdClients?: Set<ReadableStreamDefaultController> };
+const clients = (g.__mcdClients ??= new Set<ReadableStreamDefaultController>());
 
 export function addClient(controller: ReadableStreamDefaultController): void {
   clients.add(controller);
