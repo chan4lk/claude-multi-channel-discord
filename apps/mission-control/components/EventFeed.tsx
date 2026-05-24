@@ -1,6 +1,8 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import GlassCard from './ui/GlassCard'
 
 interface EventEntry {
   id: string
@@ -11,17 +13,23 @@ interface EventEntry {
 }
 
 const TYPE_COLORS: Record<string, string> = {
-  message: 'bg-blue-700 text-blue-100',
-  reply: 'bg-green-700 text-green-100',
-  error: 'bg-red-700 text-red-100',
-  spawn: 'bg-purple-700 text-purple-100',
-  stop: 'bg-orange-700 text-orange-100',
-  progress: 'bg-yellow-700 text-yellow-100',
-  watchdog: 'bg-pink-700 text-pink-100',
+  spawn:                  'text-cyber-cyan   bg-cyber-cyan/10',
+  reply:                  'text-green-400    bg-green-400/10',
+  stop:                   'text-orange-400   bg-orange-400/10',
+  progress:               'text-cyber-amber  bg-cyber-amber/10',
+  error:                  'text-cyber-crimson bg-cyber-crimson/10',
+  error_event:            'text-cyber-crimson bg-cyber-crimson/10',
+  watchdog:               'text-cyber-crimson bg-cyber-crimson/10',
+  specclaw_status_changed:'text-purple-400   bg-purple-400/10',
+  scheduler_fired:        'text-yellow-300   bg-yellow-300/10',
 }
 
 function badgeClass(type: string): string {
-  return TYPE_COLORS[type] ?? 'bg-gray-700 text-gray-100'
+  return TYPE_COLORS[type] ?? 'text-slate-300 bg-slate-700/50'
+}
+
+function isUrgent(type: string): boolean {
+  return type === 'error' || type === 'error_event' || type === 'watchdog'
 }
 
 function formatTime(ts: number): string {
@@ -50,13 +58,14 @@ export default function EventFeed() {
   const [events, setEvents] = useState<EventEntry[]>([])
   const [filter, setFilter] = useState<string>('all')
   const [types, setTypes] = useState<string[]>([])
+  const [compact, setCompact] = useState(false)
   const esRef = useRef<EventSource | null>(null)
 
   useEffect(() => {
-    const es = new EventSource('/api/events')
+    const es = new EventSource('/api/events/stream')
     esRef.current = es
 
-    es.onmessage = (e) => {
+    function handleMsg(e: MessageEvent) {
       let parsed: Record<string, unknown>
       try {
         parsed = JSON.parse(e.data)
@@ -73,74 +82,81 @@ export default function EventFeed() {
       }
 
       setEvents((prev) => {
-        const next = [entry, ...prev].slice(0, 100)
-        return next
+        const urgent = prev.filter((ev) => isUrgent(ev.type))
+        const normal = prev.filter((ev) => !isUrgent(ev.type))
+        const next = isUrgent(entry.type)
+          ? [entry, ...urgent, ...normal]
+          : [...urgent, entry, ...normal]
+        return next.slice(0, 200)
       })
 
-      setTypes((prev) => {
-        if (!prev.includes(entry.type)) return [...prev, entry.type].sort()
-        return prev
-      })
+      setTypes((prev) => prev.includes(entry.type) ? prev : [...prev, entry.type].sort())
     }
 
-    es.addEventListener('spawn', (e) => es.onmessage?.(e as MessageEvent))
-    es.addEventListener('stop', (e) => es.onmessage?.(e as MessageEvent))
-    es.addEventListener('reply', (e) => es.onmessage?.(e as MessageEvent))
-    es.addEventListener('error_event', (e) => es.onmessage?.(e as MessageEvent))
-    es.addEventListener('progress', (e) => es.onmessage?.(e as MessageEvent))
-    es.addEventListener('watchdog', (e) => es.onmessage?.(e as MessageEvent))
-
-    return () => {
-      es.close()
+    es.onmessage = handleMsg
+    for (const t of ['spawn','stop','reply','error_event','progress','watchdog','specclaw_status_changed','scheduler_fired']) {
+      es.addEventListener(t, (e) => handleMsg(e as MessageEvent))
     }
+
+    return () => es.close()
   }, [])
 
   const visible = filter === 'all' ? events : events.filter((ev) => ev.type === filter)
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-3">
-        <label htmlFor="type-filter" className="text-sm text-gray-400 shrink-0">
-          Filter by type:
-        </label>
+    <GlassCard className="flex flex-col gap-3 p-4 h-full">
+      {/* Controls */}
+      <div className="flex items-center gap-3 flex-wrap">
         <select
-          id="type-filter"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="bg-cyber-panel border border-cyber-cyan/20 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-cyber-cyan/50"
         >
-          <option value="all">all</option>
-          {types.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
+          <option value="all">all types</option>
+          {types.map((t) => <option key={t} value={t}>{t}</option>)}
         </select>
-        <span className="ml-auto text-xs text-gray-500">{visible.length} event(s)</span>
+        <button
+          onClick={() => setCompact((c) => !c)}
+          className="text-xs px-2 py-1 rounded border border-cyber-cyan/20 text-slate-400 hover:text-cyber-cyan hover:border-cyber-cyan/50 transition-colors"
+        >
+          {compact ? 'expanded' : 'compact'}
+        </button>
+        <span className="ml-auto text-xs text-slate-600">{visible.length} events</span>
       </div>
 
-      <div className="flex flex-col gap-1 font-mono text-xs">
+      {/* Event list */}
+      <div className="flex flex-col gap-1 font-mono text-xs overflow-y-auto max-h-[600px]">
         {visible.length === 0 && (
-          <div className="text-gray-500 py-4 text-center">Waiting for events…</div>
+          <div className="text-slate-500 py-8 text-center">Waiting for events…</div>
         )}
-        {visible.map((ev) => (
-          <div
-            key={ev.id}
-            className="flex items-baseline gap-2 rounded bg-gray-900 px-3 py-1.5 hover:bg-gray-800 transition-colors"
-          >
-            <span className="text-gray-400 shrink-0 w-20">{formatTime(ev.ts)}</span>
-            <span
-              className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-semibold ${badgeClass(ev.type)}`}
+        <AnimatePresence initial={false}>
+          {visible.map((ev) => (
+            <motion.div
+              key={ev.id}
+              initial={{ x: -16, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              className={`flex items-baseline gap-2 rounded px-3 py-1.5 hover:bg-white/5 transition-colors ${
+                isUrgent(ev.type) ? 'border-l-2 border-cyber-crimson' : ''
+              }`}
             >
-              {ev.type}
-            </span>
-            <span className="text-gray-400 shrink-0 w-20 truncate" title={ev.instance_id}>
-              {ev.instance_id ? ev.instance_id.slice(0, 8) : '—'}
-            </span>
-            <span className="text-gray-300 truncate">{summarize(ev.payload)}</span>
-          </div>
-        ))}
+              <span className="text-slate-500 shrink-0 w-20">{formatTime(ev.ts)}</span>
+              <span className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-semibold ${badgeClass(ev.type)}`}>
+                {ev.type}
+              </span>
+              {!compact && (
+                <>
+                  <span className="text-slate-600 shrink-0 w-20 truncate font-mono" title={ev.instance_id}>
+                    {ev.instance_id ? ev.instance_id.slice(0, 8) : '—'}
+                  </span>
+                  <span className="text-slate-400 truncate">{summarize(ev.payload)}</span>
+                </>
+              )}
+            </motion.div>
+          ))}
+        </AnimatePresence>
       </div>
-    </div>
+    </GlassCard>
   )
 }
