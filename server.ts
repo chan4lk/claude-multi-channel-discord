@@ -29,10 +29,12 @@ import {
   type Attachment,
   type Interaction,
 } from 'discord.js'
-import { randomBytes } from 'crypto'
+import { randomBytes, createHash } from 'crypto'
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, renameSync, realpathSync, chmodSync } from 'fs'
-import { homedir } from 'os'
+import { homedir, hostname, userInfo } from 'os'
 import { join, sep } from 'path'
+
+import { buildEmitter } from './src/mission-control-emitter.ts'
 
 import { loadConfig as loadChannelsConfig, resolveClaudeArgs, resolveProvider } from './src/channels-config.ts'
 import { ClaudeProjectProcess } from './src/claude-process.ts'
@@ -51,6 +53,9 @@ import { Scheduler } from './src/scheduler.ts'
 // the upstream bot.
 const STATE_DIR = process.env.MCD_CHANNELS_DIR ?? process.env.DISCORD_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'discord')
 const ACCESS_FILE = join(STATE_DIR, 'access.json')
+
+const MC_INSTANCE_ID = createHash('sha1').update(realpathSync(STATE_DIR)).digest('hex')
+const mcEmit = buildEmitter(MC_INSTANCE_ID, hostname(), userInfo().username)
 const APPROVED_DIR = join(STATE_DIR, 'approved')
 const ENV_FILE = join(STATE_DIR, '.env')
 
