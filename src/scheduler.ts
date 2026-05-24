@@ -27,6 +27,8 @@ export interface SchedulerDeps {
   deliver: (chatId: string, envelope: InboundEnvelope) => Promise<void>
   /** Diagnostics. Defaults to stderr with a `[scheduler]` prefix. */
   log?: (msg: string) => void
+  /** Optional hook called after each successful fire. */
+  onFire?: (chatId: string, jobId: string, scheduledTime: string) => void
 }
 
 export class Scheduler {
@@ -77,6 +79,7 @@ export class Scheduler {
       this.log(`firing schedule ${s.id} → chat ${s.chatId}`)
       try {
         await this.deps.deliver(s.chatId, this.envelopeFor(s, now))
+        this.deps.onFire?.(s.chatId, s.id, now.toISOString())
         s.lastRunAt = now.toISOString()
         s.runCount = s.runCount + 1
         if (s.maxRuns !== null && s.runCount >= s.maxRuns) {
@@ -101,10 +104,11 @@ export class Scheduler {
   private envelopeFor(s: Schedule, now: Date): InboundEnvelope {
     const ts = now.toISOString()
     const footer =
-      '\n\n[Scheduled task fired by mcd-scheduler. When your work is complete, ' +
-      'call mcp__mcd__reply with a brief summary so the operator knows what happened. ' +
-      'If your prompt already specifies a reply condition, follow that — this is just a reminder ' +
-      'that mcp__mcd__reply is the only channel back to Discord.]'
+      '\n\n[Scheduled task — REQUIRED: you MUST call mcp__mcd__reply when done. ' +
+      'mcp__mcd__reply is the ONLY way your output reaches Discord. ' +
+      'Include all key results: PR URLs, branch names, error messages, or "no changes needed". ' +
+      'If you created or updated a PR, post the full URL. ' +
+      'Finishing without calling mcp__mcd__reply means the operator sees nothing.]'
     return {
       messageId: `sched-${s.id}-${now.getTime()}`,
       userId: '__mcd_scheduler__',
