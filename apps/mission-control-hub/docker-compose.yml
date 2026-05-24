@@ -1,0 +1,15 @@
+services:
+  hub:
+    build: .
+    ports:
+      - "${MC_PORT:-4001}:4001"
+    volumes:
+      - hub-data:/app/data
+    environment:
+      MC_DB_PATH: /app/data/mc.db
+      MC_PORT: "4001"
+      MC_RETENTION_DAYS: "${MC_RETENTION_DAYS:-30}"
+    restart: unless-stopped
+
+volumes:
+  hub-data:
