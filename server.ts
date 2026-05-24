@@ -1114,6 +1114,11 @@ async function maybeInitProjectsBackend(): Promise<void> {
   // knowing the prompt was machine-generated.
   scheduler = new Scheduler({
     deliver: (chatId, envelope) => projectPool!.deliver(chatId, envelope),
+    onFire: (chatId, jobId, scheduledTime) => {
+      const cfg = loadChannelsConfig()
+      const slug = cfg.projects[chatId]?.slug ?? chatId
+      mcEmit('scheduler_fired', { chatId, slug, jobId, scheduledTime })
+    },
   })
   scheduler.start()
 }
@@ -1150,6 +1155,7 @@ async function dispatchProjectReply(reply: OutboundReply): Promise<void> {
       process.stderr.write(`discord: chunk send failed for ${reply.chatId}: ${err}\n`)
     })
   }
+  mcEmit('reply_sent', { chatId: reply.chatId, chunks: chunks.length, ...(reply.replyTo ? { replyTo: reply.replyTo } : {}) })
 }
 
 // --- Tool-call progress notifications ---
@@ -1362,6 +1368,7 @@ async function handleInbound(msg: Message): Promise<void> {
       }
 
       process.stderr.write(`discord: route msg=${msg.id} chat=${msg.channelId} user=${msg.author.id} → pool\n`)
+      mcEmit('message_received', { chatId: msg.channelId, userId: msg.author.id, messageId: msg.id })
       void projectPool
         .deliver(msg.channelId, {
           messageId: msg.id,
