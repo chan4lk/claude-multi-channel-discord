@@ -11,7 +11,10 @@ export function middleware(request: NextRequest): NextResponse {
     return NextResponse.next();
   }
 
-  const sessionToken = request.cookies.get("better-auth.session_token");
+  // better-auth prefixes the cookie with __Secure- on HTTPS origins
+  const sessionToken =
+    request.cookies.get("better-auth.session_token") ||
+    request.cookies.get("__Secure-better-auth.session_token");
 
   if (!sessionToken) {
     // API routes → 401 JSON
