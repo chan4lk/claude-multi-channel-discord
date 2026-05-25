@@ -29,10 +29,12 @@ import {
   type Attachment,
   type Interaction,
 } from 'discord.js'
-import { randomBytes } from 'crypto'
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, renameSync, realpathSync, chmodSync } from 'fs'
-import { homedir } from 'os'
+import { randomBytes, createHash } from 'crypto'
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, renameSync, realpathSync, chmodSync, existsSync, watch as fsWatch, type FSWatcher } from 'fs'
+import { homedir, hostname, userInfo } from 'os'
 import { join, sep } from 'path'
+
+import { buildEmitter } from './src/mission-control-emitter.ts'
 
 import { loadConfig as loadChannelsConfig, resolveClaudeArgs, resolveProvider } from './src/channels-config.ts'
 import { ClaudeProjectProcess } from './src/claude-process.ts'
@@ -41,6 +43,7 @@ import { handleMasterCommand } from './src/master-commands.ts'
 import { MasterMcpServer } from './src/master-mcp-server.ts'
 import { ProjectPool } from './src/project-pool.ts'
 import type { OutboundReply, ToolProgressEvent } from './src/project-process.ts'
+import { projectDir } from './src/paths.ts'
 import { Scheduler } from './src/scheduler.ts'
 
 // Single-source state dir. MCD_CHANNELS_DIR is the multi-channel-discord
@@ -51,6 +54,9 @@ import { Scheduler } from './src/scheduler.ts'
 // the upstream bot.
 const STATE_DIR = process.env.MCD_CHANNELS_DIR ?? process.env.DISCORD_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'discord')
 const ACCESS_FILE = join(STATE_DIR, 'access.json')
+
+const MC_INSTANCE_ID = createHash('sha1').update(realpathSync(STATE_DIR)).digest('hex')
+const mcEmit = buildEmitter(MC_INSTANCE_ID, hostname(), userInfo().username)
 const APPROVED_DIR = join(STATE_DIR, 'approved')
 const ENV_FILE = join(STATE_DIR, '.env')
 
@@ -875,6 +881,7 @@ client.on('interactionCreate', async (interaction: Interaction) => {
 let projectPool: ProjectPool | null = null
 let masterMcp: MasterMcpServer | null = null
 let scheduler: Scheduler | null = null
+const specclawWatchers = new Map<string, { watcher: FSWatcher; slug: string; chatId: string; debounce: ReturnType<typeof setTimeout> | null }>()
 
 /**
  * One MasterMutator wired against the live discord.js client + project pool.
@@ -1049,9 +1056,14 @@ async function maybeInitProjectsBackend(): Promise<void> {
       // for the very first message — ClaudeProjectProcess deliver() awaits
       // notifyChat which queues until the MCP transport is up, so the
       // ordering is safe.
-      void proc.start().catch((err) => {
-        process.stderr.write(`discord: claude spawn failed for ${project.slug}: ${err}\n`)
-      })
+      void proc.start()
+        .then(() => {
+          mcEmit('session_start', { slug: project.slug, chatId, model: project.model ?? config.defaults.model })
+          attachSpecclawWatcher(chatId, project.slug)
+        })
+        .catch((err) => {
+          process.stderr.write(`discord: claude spawn failed for ${project.slug}: ${err}\n`)
+        })
       return proc
     },
     getConfig: loadChannelsConfig,
@@ -1069,7 +1081,13 @@ async function maybeInitProjectsBackend(): Promise<void> {
       // tell them the agent was torn down so the next message respawns.
       // `crashed` already gets a Discord post via ClaudeProjectProcess
       // (synthetic reply from handleTuiFailure), so we don't double-post here.
+      if (evt.kind === 'evict') {
+        mcEmit('session_stop', { slug: evt.slug, chatId: evt.chatId, reason: evt.reason })
+        detachSpecclawWatcher(evt.chatId)
+      }
       if (evt.kind === 'stuck') {
+        mcEmit('session_killed_watchdog', { slug: evt.slug, chatId: evt.chatId, stuckMs: evt.sinceLastReplyMs })
+        detachSpecclawWatcher(evt.chatId)
         const minutes = Math.round(evt.sinceLastReplyMs / 60_000)
         const reply: OutboundReply = {
           kind: 'text',
@@ -1092,6 +1110,9 @@ async function maybeInitProjectsBackend(): Promise<void> {
           process.stderr.write(`discord: progress-skip notify failed: ${err}\n`)
         })
       }
+      if (evt.kind === 'crashed') {
+        detachSpecclawWatcher(evt.chatId)
+      }
       if (evt.kind === 'tool-progress') {
         void handleToolProgressEvent(evt.chatId, evt.slug, evt.event).catch((err) => {
           process.stderr.write(`discord: tool-progress dispatch failed: ${err}\n`)
@@ -1109,6 +1130,11 @@ async function maybeInitProjectsBackend(): Promise<void> {
   // knowing the prompt was machine-generated.
   scheduler = new Scheduler({
     deliver: (chatId, envelope) => projectPool!.deliver(chatId, envelope),
+    onFire: (chatId, jobId, scheduledTime) => {
+      const cfg = loadChannelsConfig()
+      const slug = cfg.projects[chatId]?.slug ?? chatId
+      mcEmit('scheduler_fired', { chatId, slug, jobId, scheduledTime })
+    },
   })
   scheduler.start()
 }
@@ -1145,6 +1171,36 @@ async function dispatchProjectReply(reply: OutboundReply): Promise<void> {
       process.stderr.write(`discord: chunk send failed for ${reply.chatId}: ${err}\n`)
     })
   }
+  mcEmit('reply_sent', { chatId: reply.chatId, chunks: chunks.length, ...(reply.replyTo ? { replyTo: reply.replyTo } : {}) })
+}
+
+function attachSpecclawWatcher(chatId: string, slug: string): void {
+  if (specclawWatchers.has(chatId)) return
+  const dir = projectDir(slug)
+  const statusPath = join(dir, '.specclaw', 'STATUS.md')
+  const watchDir = join(dir, '.specclaw')
+  if (!existsSync(statusPath)) return
+  let debounce: ReturnType<typeof setTimeout> | null = null
+  const watcher = fsWatch(watchDir, () => {
+    if (debounce) clearTimeout(debounce)
+    debounce = setTimeout(() => {
+      debounce = null
+      let statusMd = ''
+      try { statusMd = readFileSync(statusPath, 'utf8').slice(0, 2048) } catch { return }
+      mcEmit('specclaw_status_changed', { slug, chatId, statusMd })
+    }, 500)
+    const entry = specclawWatchers.get(chatId)
+    if (entry) entry.debounce = debounce
+  })
+  specclawWatchers.set(chatId, { watcher, slug, chatId, debounce: null })
+}
+
+function detachSpecclawWatcher(chatId: string): void {
+  const entry = specclawWatchers.get(chatId)
+  if (!entry) return
+  if (entry.debounce) clearTimeout(entry.debounce)
+  try { entry.watcher.close() } catch {}
+  specclawWatchers.delete(chatId)
 }
 
 // --- Tool-call progress notifications ---
@@ -1357,6 +1413,7 @@ async function handleInbound(msg: Message): Promise<void> {
       }
 
       process.stderr.write(`discord: route msg=${msg.id} chat=${msg.channelId} user=${msg.author.id} → pool\n`)
+      mcEmit('message_received', { chatId: msg.channelId, userId: msg.author.id, messageId: msg.id })
       void projectPool
         .deliver(msg.channelId, {
           messageId: msg.id,

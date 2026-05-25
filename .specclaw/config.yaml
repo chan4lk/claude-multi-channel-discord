@@ -19,7 +19,7 @@ git:
   branch_prefix: "fix/"
 
 build:
-  test_command: "bun test"
+  test_command: "bun src/master-commands.test.ts && bun src/project-pool.test.ts && bun src/master-mcp-server.test.ts"
   lint_command: ""
   build_command: ""
   parallel_tasks: 2
