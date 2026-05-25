@@ -633,6 +633,14 @@ export class ClaudeProjectProcess implements ProjectProcess {
       this.tuiReady = true
     }
 
+    // Retry session-id capture on every deliver until it lands. The
+    // transcript file may not exist yet at TUI-ready time (race with
+    // claude's first write), so the first attempt in persistSessionAndRename
+    // can return without capturing. Resumed spawns are guarded inside.
+    if (!this.sessionIdPersisted) {
+      await this.persistSessionAndRename(session)
+    }
+
     // Stateless mode now — there's no persistent MCP session to wait on.
     // The TUI prompt being up is our readiness signal; claude eagerly
     // connects --mcp-config servers at startup, so the handshake has
