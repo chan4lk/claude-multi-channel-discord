@@ -11,6 +11,9 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
   },
+  rateLimit: {
+    enabled: process.env.BETTER_AUTH_RATE_LIMIT !== "false",
+  },
 });
 
 export function validateApiKey(key: string): boolean {

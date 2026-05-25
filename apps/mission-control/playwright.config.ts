@@ -17,6 +17,7 @@ export default defineConfig({
       'BETTER_AUTH_SECRET=e2e-test-secret-do-not-use-in-prod',
       'BETTER_AUTH_URL=http://localhost:3002',
       'NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3002',
+      'BETTER_AUTH_RATE_LIMIT=false',
       'next start -p 3002',
     ].join(' '),
     port: 3002,

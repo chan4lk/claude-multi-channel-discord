@@ -1,5 +1,5 @@
 import { createAuthClient } from "better-auth/react";
 
-export const authClient = createAuthClient({
-  baseURL: process.env.NEXT_PUBLIC_BETTER_AUTH_URL ?? "",
-});
+// No baseURL — auth client uses current origin so cookies always land on the
+// right domain regardless of where the app is deployed or tested.
+export const authClient = createAuthClient({});
