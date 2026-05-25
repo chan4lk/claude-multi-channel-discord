@@ -1,0 +1,2 @@
+[test]
+exclude = ["apps/mission-control/e2e/**"]
