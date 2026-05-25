@@ -5,17 +5,23 @@
   "scripts": {
     "dev": "next dev -p 3001",
     "build": "next build",
-    "start": "next start -p 3001"
+    "start": "next start -p 3001",
+    "migrate": "bunx @better-auth/cli migrate",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
     "@fontsource/jetbrains-mono": "^5.2.8",
+    "better-auth": "^1.6.11",
+    "better-sqlite3": "^12.10.0",
     "framer-motion": "^12.40.0",
     "next": "15.3.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.52.0",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
