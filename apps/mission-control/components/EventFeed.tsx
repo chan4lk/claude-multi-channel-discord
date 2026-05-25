@@ -54,12 +54,42 @@ function nextId(): string {
   return String(++counter)
 }
 
-export default function EventFeed() {
+interface Props {
+  onEvent?: (e: EventEntry) => void
+}
+
+export default function EventFeed({ onEvent }: Props = {}) {
   const [events, setEvents] = useState<EventEntry[]>([])
   const [filter, setFilter] = useState<string>('all')
   const [types, setTypes] = useState<string[]>([])
   const [compact, setCompact] = useState(false)
   const esRef = useRef<EventSource | null>(null)
+  const seenIds = useRef<Set<string>>(new Set())
+
+  // Fetch historical events on mount
+  useEffect(() => {
+    fetch('/api/events?limit=200')
+      .then((r) => r.json())
+      .then((rows: Array<Record<string, unknown>>) => {
+        const historical: EventEntry[] = rows.map((row) => {
+          const dbId = String(row['id'] ?? '')
+          seenIds.current.add(dbId)
+          return {
+            id: dbId || nextId(),
+            ts: typeof row['created_at'] === 'number' ? row['created_at'] * 1000 : Date.now(),
+            type: typeof row['type'] === 'string' ? row['type'] : 'unknown',
+            instance_id: typeof row['instance_id'] === 'string' ? row['instance_id'] : '',
+            payload: typeof row['payload'] === 'string' ? JSON.parse(row['payload']) : row,
+          }
+        })
+        setEvents(historical)
+        setTypes((prev) => {
+          const all = new Set([...prev, ...historical.map((e) => e.type)])
+          return [...all].sort()
+        })
+      })
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     const es = new EventSource('/api/events/stream')
@@ -80,6 +110,8 @@ export default function EventFeed() {
         instance_id: typeof parsed['instance_id'] === 'string' ? parsed['instance_id'] : '',
         payload: parsed,
       }
+
+      onEvent?.(entry)
 
       setEvents((prev) => {
         const urgent = prev.filter((ev) => isUrgent(ev.type))

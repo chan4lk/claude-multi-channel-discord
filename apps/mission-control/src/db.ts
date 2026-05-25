@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import Database from "better-sqlite3";
 
 export type McEvent = {
   instance_id: string;
@@ -32,7 +32,7 @@ export type EventRow = {
 const dbPath = process.env.MC_DB_PATH ?? "mc.db";
 const retentionDays = parseInt(process.env.MC_RETENTION_DAYS ?? "30", 10);
 
-const db = new Database(dbPath, { create: true });
+const db = new Database(dbPath);
 
 db.exec("PRAGMA journal_mode=WAL");
 
@@ -89,6 +89,7 @@ export function getEvents(filters: {
   instance_id?: string;
   type?: string;
   since?: string;
+  limit?: number;
 }): EventRow[] {
   const conditions: string[] = [];
   const params: unknown[] = [];
@@ -107,7 +108,8 @@ export function getEvents(filters: {
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-  const sql = `SELECT * FROM events ${where} ORDER BY created_at ASC`;
+  const limitClause = filters.limit != null ? `LIMIT ${filters.limit}` : "";
+  const sql = `SELECT * FROM events ${where} ORDER BY created_at DESC ${limitClause}`;
   return db.prepare(sql).all(...params) as EventRow[];
 }
 

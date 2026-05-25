@@ -7,10 +7,13 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest): Promise<Response> {
   const { searchParams } = req.nextUrl
+  const rawLimit = parseInt(searchParams.get('limit') ?? '', 10)
+  const limit = isNaN(rawLimit) ? 200 : Math.min(rawLimit, 500)
   const filters = {
     instance_id: searchParams.get('instance_id') ?? undefined,
     type: searchParams.get('type') ?? undefined,
     since: searchParams.get('since') ?? undefined,
+    limit,
   }
   const rows = getEvents(filters)
   return Response.json(rows)
