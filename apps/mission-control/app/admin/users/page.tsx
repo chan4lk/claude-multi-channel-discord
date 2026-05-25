@@ -16,6 +16,16 @@ function formatDate(ts: number): string {
   return new Date(ts).toLocaleDateString()
 }
 
+function SectionLabel({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 mb-4">
+      <span className="w-2 h-2 rounded-sm bg-cyber-cyan/60 shrink-0" />
+      <h2 className="section-label">{label}</h2>
+      <div className="flex-1 h-px bg-gradient-to-r from-cyber-cyan/20 to-transparent" />
+    </div>
+  )
+}
+
 export default function AdminUsersPage() {
   const router = useRouter()
   const [users, setUsers] = useState<UserRow[]>([])
@@ -25,6 +35,8 @@ export default function AdminUsersPage() {
   const [password, setPassword] = useState('')
   const [addError, setAddError] = useState<string | null>(null)
   const [addLoading, setAddLoading] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   useEffect(() => {
     fetchUsers()
@@ -38,6 +50,26 @@ export default function AdminUsersPage() {
       if (res.ok) setUsers(await res.json())
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function handleDelete(id: string) {
+    if (!confirm('Delete this user? This cannot be undone.')) return
+    setDeletingId(id)
+    setDeleteError(null)
+    try {
+      const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' })
+      if (res.status === 401) { router.push('/login'); return }
+      const body = await res.json()
+      if (!res.ok) {
+        setDeleteError(body.error ?? 'Failed to delete user')
+      } else {
+        await fetchUsers()
+      }
+    } catch {
+      setDeleteError('Failed to delete user')
+    } finally {
+      setDeletingId(null)
     }
   }
 
@@ -61,18 +93,19 @@ export default function AdminUsersPage() {
   }
 
   return (
-    <div className="min-h-screen bg-cyber-bg px-6 py-6">
-      <header className="mb-6">
+    <div className="min-h-dvh bg-cyber-bg px-4 sm:px-6 py-6">
+      <header className="mb-8">
         <div className="flex items-center gap-4">
           <button
             onClick={() => router.push('/')}
-            className="text-xs text-slate-500 hover:text-cyber-cyan transition-colors"
+            className="text-xs text-slate-500 hover:text-cyber-cyan transition-colors cursor-pointer flex items-center gap-1"
           >
-            ← Dashboard
+            <span className="text-cyber-cyan/40">←</span> Dashboard
           </button>
+          <div className="h-3 w-px bg-cyber-cyan/20" />
           <h1
-            className="text-xl font-bold tracking-tight text-cyber-cyan"
-            style={{ fontFamily: 'JetBrains Mono, monospace' }}
+            className="text-lg font-black tracking-[0.18em] text-cyber-cyan neon-cyan"
+            style={{ fontFamily: 'Orbitron, JetBrains Mono, monospace' }}
           >
             USER MANAGEMENT
           </h1>
@@ -80,28 +113,42 @@ export default function AdminUsersPage() {
       </header>
 
       <div className="grid gap-6 max-w-3xl">
-        {/* User list */}
-        <GlassCard className="p-4">
-          <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Users</h2>
+        <GlassCard className="p-5">
+          <SectionLabel label="Users" />
+          {deleteError && (
+            <p className="text-xs text-cyber-crimson bg-cyber-crimson/8 border border-cyber-crimson/25 rounded px-3 py-2 mb-3">
+              {deleteError}
+            </p>
+          )}
           {loading ? (
-            <div className="text-slate-500 text-sm py-4 text-center">Loading…</div>
+            <div className="text-slate-500 text-sm py-8 text-center font-mono">Loading…</div>
           ) : users.length === 0 ? (
-            <div className="text-slate-500 text-sm py-4 text-center">No users yet.</div>
+            <div className="text-slate-500 text-sm py-8 text-center">No users yet.</div>
           ) : (
             <table className="w-full text-sm border-collapse">
               <thead>
-                <tr className="text-left text-xs text-slate-500 border-b border-cyber-cyan/10">
-                  <th className="pb-2 pr-4 font-medium">Name</th>
-                  <th className="pb-2 pr-4 font-medium">Email</th>
-                  <th className="pb-2 font-medium">Created</th>
+                <tr className="text-left border-b border-cyber-cyan/15">
+                  <th className="pb-2.5 pr-4 text-[0.65rem] font-semibold text-cyber-cyan/50 uppercase tracking-widest">Name</th>
+                  <th className="pb-2.5 pr-4 text-[0.65rem] font-semibold text-cyber-cyan/50 uppercase tracking-widest">Email</th>
+                  <th className="pb-2.5 pr-4 text-[0.65rem] font-semibold text-cyber-cyan/50 uppercase tracking-widest">Created</th>
+                  <th className="pb-2.5 text-[0.65rem] font-semibold text-cyber-cyan/50 uppercase tracking-widest" />
                 </tr>
               </thead>
               <tbody>
                 {users.map((u) => (
-                  <tr key={u.id} className="border-b border-cyber-cyan/5">
-                    <td className="py-2 pr-4 text-slate-200">{u.name}</td>
-                    <td className="py-2 pr-4 text-slate-400 font-mono text-xs">{u.email}</td>
-                    <td className="py-2 text-slate-500 text-xs">{formatDate(u.createdAt)}</td>
+                  <tr key={u.id} className="border-b border-cyber-cyan/6 hover:bg-cyber-cyan/3 transition-colors">
+                    <td className="py-2.5 pr-4 text-slate-200">{u.name}</td>
+                    <td className="py-2.5 pr-4 text-slate-400 font-mono text-xs">{u.email}</td>
+                    <td className="py-2.5 pr-4 text-slate-500 text-xs font-mono">{formatDate(u.createdAt)}</td>
+                    <td className="py-2.5 text-right">
+                      <button
+                        onClick={() => handleDelete(u.id)}
+                        disabled={deletingId === u.id}
+                        className="text-[0.65rem] text-cyber-crimson/60 hover:text-cyber-crimson border border-cyber-crimson/20 hover:border-cyber-crimson/50 rounded px-2 py-0.5 transition-colors font-mono uppercase tracking-wider disabled:opacity-40 cursor-pointer"
+                      >
+                        {deletingId === u.id ? '…' : 'Delete'}
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -109,9 +156,8 @@ export default function AdminUsersPage() {
           )}
         </GlassCard>
 
-        {/* Add user form */}
-        <GlassCard className="p-4">
-          <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Add User</h2>
+        <GlassCard className="p-5">
+          <SectionLabel label="Add User" />
           <form onSubmit={handleAdd} className="flex flex-col gap-3">
             <input
               type="text"
@@ -119,7 +165,7 @@ export default function AdminUsersPage() {
               placeholder="Name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="bg-cyber-panel border border-cyber-cyan/20 rounded px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-cyber-cyan/50"
+              className="cyber-input px-3 py-2.5 text-sm w-full"
             />
             <input
               type="email"
@@ -127,7 +173,7 @@ export default function AdminUsersPage() {
               placeholder="Email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="bg-cyber-panel border border-cyber-cyan/20 rounded px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-cyber-cyan/50"
+              className="cyber-input px-3 py-2.5 text-sm w-full"
             />
             <input
               type="password"
@@ -135,19 +181,19 @@ export default function AdminUsersPage() {
               placeholder="Password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="bg-cyber-panel border border-cyber-cyan/20 rounded px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-cyber-cyan/50"
+              className="cyber-input px-3 py-2.5 text-sm w-full"
             />
             {addError && (
-              <p className="text-xs text-cyber-crimson bg-cyber-crimson/10 border border-cyber-crimson/20 rounded px-3 py-2">
+              <p className="text-xs text-cyber-crimson bg-cyber-crimson/8 border border-cyber-crimson/25 rounded px-3 py-2">
                 {addError}
               </p>
             )}
             <button
               type="submit"
               disabled={addLoading}
-              className="bg-cyber-cyan/10 border border-cyber-cyan/40 text-cyber-cyan text-sm font-semibold rounded px-4 py-2 hover:bg-cyber-cyan/20 transition-colors disabled:opacity-50"
+              className="cyber-btn-primary text-sm font-bold tracking-widest rounded px-4 py-2.5 uppercase"
             >
-              {addLoading ? 'Adding…' : 'Add User'}
+              {addLoading ? 'Adding…' : 'Create User'}
             </button>
           </form>
         </GlassCard>
