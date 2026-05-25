@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import EventFeed from '../components/EventFeed'
 import InstanceGrid from '../components/InstanceGrid'
@@ -21,11 +21,6 @@ interface InstanceRow {
   last_seen: string | null
 }
 
-let _counter = 0
-function nextId(): string {
-  return String(++_counter)
-}
-
 function isHealthy(lastSeen: string | null): boolean {
   if (!lastSeen) return false
   return Date.now() - new Date(lastSeen).getTime() < 5 * 60 * 1000
@@ -37,7 +32,6 @@ function DashboardClient() {
   const [eventsPerMin, setEventsPerMin] = useState(0)
   const [uptime, setUptime] = useState(0)
   const mountTime = useRef(Date.now())
-  const esRef = useRef<EventSource | null>(null)
   const recentEvents = useRef<number[]>([])
 
   // Fetch instances for HUD
@@ -71,38 +65,10 @@ function DashboardClient() {
     return () => clearInterval(interval)
   }, [])
 
-  // SSE stream
-  useEffect(() => {
-    const es = new EventSource('/api/events/stream')
-    esRef.current = es
-
-    function handleEvent(e: MessageEvent) {
-      let parsed: Record<string, unknown>
-      try {
-        parsed = JSON.parse(e.data)
-      } catch {
-        parsed = { raw: e.data }
-      }
-
-      recentEvents.current.push(Date.now())
-
-      const entry: McEventEntry = {
-        id: nextId(),
-        ts: typeof parsed['ts'] === 'number' ? parsed['ts'] : Date.now(),
-        type: typeof parsed['type'] === 'string' ? parsed['type'] : e.type || 'unknown',
-        instance_id: typeof parsed['instance_id'] === 'string' ? parsed['instance_id'] : '',
-        payload: parsed,
-      }
-
-      setEvents((prev) => [entry, ...prev].slice(0, 200))
-    }
-
-    es.onmessage = handleEvent
-    for (const t of ['spawn', 'stop', 'reply', 'error_event', 'progress', 'watchdog', 'specclaw_status_changed', 'scheduler_fired']) {
-      es.addEventListener(t, (e) => handleEvent(e as MessageEvent))
-    }
-
-    return () => es.close()
+  // Called by EventFeed for each live SSE event
+  const handleEvent = useCallback((entry: McEventEntry) => {
+    recentEvents.current.push(Date.now())
+    setEvents((prev) => [entry, ...prev].slice(0, 200))
   }, [])
 
   const healthy = instances.filter((i) => isHealthy(i.last_seen)).length
@@ -172,7 +138,7 @@ function DashboardClient() {
 
           <section style={{ gridArea: 'feed' }}>
             <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Event Feed</h2>
-            <EventFeed />
+            <EventFeed onEvent={handleEvent} />
           </section>
 
           <section style={{ gridArea: 'scheduler' }}>

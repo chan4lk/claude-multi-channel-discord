@@ -9,7 +9,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className="dark">
       <body
-        className="min-h-screen"
+        className="min-h-screen bg-cyber-bg"
         style={{ fontFamily: 'Inter, system-ui, sans-serif' }}
       >
         {children}
