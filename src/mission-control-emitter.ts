@@ -1,10 +1,9 @@
 import type { McEvent } from './mission-control-types';
 
-const MC_URL = process.env.MISSION_CONTROL_URL;
-const MC_SECRET = process.env.MISSION_CONTROL_SECRET;
-
 export function emitEvent(e: McEvent): void {
+  const MC_URL = process.env.MISSION_CONTROL_URL;
   if (!MC_URL) return;
+  const MC_SECRET = process.env.MISSION_CONTROL_SECRET;
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 2000);
