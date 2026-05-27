@@ -13,6 +13,8 @@ interface InstanceEntry {
   api_key: string
   last_seen: string | null
   created_at: string
+  activeSlugs: string[]
+  lastActivity: string | null
 }
 
 interface EventEntry {
@@ -125,9 +127,26 @@ export default function InstanceGrid({ events = [] }: Props) {
                           : 'bg-slate-700 text-slate-400'
                       }`}
                     >
-                      {status}
+                      {inst.lastActivity ? inst.lastActivity.replace(/_/g, ' ') : status}
                     </span>
                   </div>
+                  {inst.activeSlugs && inst.activeSlugs.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-0.5">
+                      {inst.activeSlugs.slice(0, 3).map((slug) => (
+                        <span
+                          key={slug}
+                          className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyber-cyan/10 text-cyber-cyan/70 border border-cyber-cyan/20"
+                        >
+                          {slug}
+                        </span>
+                      ))}
+                      {inst.activeSlugs.length > 3 && (
+                        <span className="text-[10px] text-slate-600">
+                          +{inst.activeSlugs.length - 3}
+                        </span>
+                      )}
+                    </div>
+                  )}
                   <span className="text-xs text-slate-400 truncate" title={inst.user}>
                     {inst.user || '—'}
                   </span>

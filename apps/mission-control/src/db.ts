@@ -73,12 +73,15 @@ export function insertEvent(e: McEvent): void {
   ).run(e.instance_id, e.host, e.user, e.ts, e.type, JSON.stringify(e.payload));
 }
 
-export function updateLastSeen(instanceId: string, ts: string): void {
+export function updateLastSeen(e: McEvent): void {
   db.prepare(
     `INSERT INTO instances (instance_id, host, user, api_key, last_seen)
-       VALUES (?, '', '', '', ?)
-       ON CONFLICT(instance_id) DO UPDATE SET last_seen = excluded.last_seen`
-  ).run(instanceId, ts);
+       VALUES (?, ?, ?, '', ?)
+       ON CONFLICT(instance_id) DO UPDATE SET
+         last_seen = excluded.last_seen,
+         host      = excluded.host,
+         user      = excluded.user`
+  ).run(e.instance_id, e.host, e.user, e.ts);
 }
 
 export function getInstances(): InstanceRow[] {
@@ -111,6 +114,39 @@ export function getEvents(filters: {
   const limitClause = filters.limit != null ? `LIMIT ${filters.limit}` : "";
   const sql = `SELECT * FROM events ${where} ORDER BY created_at DESC ${limitClause}`;
   return db.prepare(sql).all(...params) as EventRow[];
+}
+
+export type InstanceActivity = {
+  activeSlugs: string[];
+  lastActivity: string | null;
+};
+
+export function getInstanceActivity(instanceId: string): InstanceActivity {
+  // Get distinct slugs from events in last 5 min for this instance
+  const slugRows = db.prepare(`
+    SELECT DISTINCT json_extract(payload, '$.slug') AS slug
+    FROM events
+    WHERE instance_id = ?
+      AND created_at > unixepoch() - 300
+      AND json_extract(payload, '$.slug') IS NOT NULL
+    ORDER BY created_at DESC
+    LIMIT 50
+  `).all(instanceId) as Array<{ slug: string }>;
+
+  // Get most recent event type
+  const lastRow = db.prepare(`
+    SELECT type
+    FROM events
+    WHERE instance_id = ?
+      AND created_at > unixepoch() - 300
+    ORDER BY created_at DESC
+    LIMIT 1
+  `).get(instanceId) as { type: string } | undefined;
+
+  return {
+    activeSlugs: slugRows.map((r) => r.slug).filter(Boolean),
+    lastActivity: lastRow?.type ?? null,
+  };
 }
 
 export default db;

@@ -26,6 +26,16 @@ function isHealthy(lastSeen: string | null): boolean {
   return Date.now() - new Date(lastSeen).getTime() < 5 * 60 * 1000
 }
 
+function SectionLabel({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 mb-3">
+      <span className="w-2 h-2 rounded-sm bg-cyber-cyan/60 shrink-0" style={{ clipPath: 'polygon(0 0,100% 0,100% 100%,0 100%)' }} />
+      <h2 className="section-label">{label}</h2>
+      <div className="flex-1 h-px bg-gradient-to-r from-cyber-cyan/20 to-transparent" />
+    </div>
+  )
+}
+
 function DashboardClient() {
   const [events, setEvents] = useState<McEventEntry[]>([])
   const [instances, setInstances] = useState<InstanceRow[]>([])
@@ -34,7 +44,6 @@ function DashboardClient() {
   const mountTime = useRef(Date.now())
   const recentEvents = useRef<number[]>([])
 
-  // Fetch instances for HUD
   useEffect(() => {
     async function fetchInstances() {
       try {
@@ -47,7 +56,6 @@ function DashboardClient() {
     return () => clearInterval(interval)
   }, [])
 
-  // Uptime ticker
   useEffect(() => {
     const interval = setInterval(() => {
       setUptime(Math.floor((Date.now() - mountTime.current) / 1000))
@@ -55,7 +63,6 @@ function DashboardClient() {
     return () => clearInterval(interval)
   }, [])
 
-  // Events/min calculator
   useEffect(() => {
     const interval = setInterval(() => {
       const cutoff = Date.now() - 60_000
@@ -65,7 +72,6 @@ function DashboardClient() {
     return () => clearInterval(interval)
   }, [])
 
-  // Called by EventFeed for each live SSE event
   const handleEvent = useCallback((entry: McEventEntry) => {
     recentEvents.current.push(Date.now())
     setEvents((prev) => [entry, ...prev].slice(0, 200))
@@ -84,66 +90,69 @@ function DashboardClient() {
   }
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-dvh">
       {/* HUD Header */}
-      <header className="border-b border-cyber-cyan/10 bg-cyber-surface/60 backdrop-blur-sm px-6 py-4">
+      <header className="relative border-b border-cyber-cyan/12 bg-cyber-surface/70 backdrop-blur-md px-6 py-4">
+        {/* Bottom-edge glow line */}
+        <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-cyber-cyan/40 to-transparent" />
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-xl font-bold tracking-tight text-cyber-cyan" style={{ fontFamily: 'JetBrains Mono, monospace' }}>
+            <h1
+              className="text-2xl font-black tracking-[0.18em] text-cyber-cyan neon-cyan"
+              style={{ fontFamily: 'Orbitron, JetBrains Mono, monospace' }}
+            >
               MISSION CONTROL
             </h1>
-            <p className="text-xs text-slate-400 mt-0.5 uppercase tracking-widest">MCD Observability Dashboard</p>
+            <p className="text-[0.6rem] text-slate-500 mt-0.5 uppercase tracking-[0.25em]">
+              MCD Observability Dashboard
+            </p>
           </div>
-          <div className="flex items-center gap-8">
+
+          <div className="flex items-center gap-6 sm:gap-8">
             <CountBadge value={instances.length} label="Instances" color="#00F5FF" />
             <CountBadge value={eventsPerMin} label="Events/min" color="#00F5FF" />
             <CountBadge value={healthy} label="Healthy" color="#4ADE80" />
             <CountBadge value={degraded} label="Degraded" color="#EF4444" />
             <div className="flex flex-col items-center gap-0.5">
-              <span className="text-xl font-bold font-mono text-slate-400">{formatUptime(uptime)}</span>
-              <span className="text-xs text-slate-500 uppercase tracking-wider">Uptime</span>
+              <span className="text-xl font-bold font-mono text-slate-400 tabular-nums">
+                {formatUptime(uptime)}
+              </span>
+              <span className="text-[0.6rem] text-slate-500 uppercase tracking-widest">Uptime</span>
             </div>
           </div>
         </div>
       </header>
 
       <motion.main
-        className="px-6 py-6"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.4 }}
+        className="px-4 sm:px-6 py-6"
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, ease: 'easeOut' }}
       >
-        {/* CSS Grid layout */}
-        <div
-          className="grid gap-6"
-          style={{
-            gridTemplateAreas: `
-              "instances feed"
-              "pipeline  feed"
-              "scheduler scheduler"
-            `,
-            gridTemplateColumns: '1fr 1fr',
-            gridTemplateRows: 'auto auto auto',
-          }}
-        >
-          <section style={{ gridArea: 'instances' }}>
-            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Instances</h2>
-            <InstanceGrid events={events} />
-          </section>
+        {/* Responsive grid — stacks on mobile */}
+        <div className="grid gap-5 grid-cols-1 lg:grid-cols-2 xl:grid-cols-[1fr_1fr_360px]">
+          {/* Left column */}
+          <div className="flex flex-col gap-5">
+            <section>
+              <SectionLabel label="Instances" />
+              <InstanceGrid events={events} />
+            </section>
+            <section>
+              <SectionLabel label="Specclaw Pipeline" />
+              <SpecclawPipeline events={events} />
+            </section>
+          </div>
 
-          <section style={{ gridArea: 'pipeline' }}>
-            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Specclaw Pipeline</h2>
-            <SpecclawPipeline events={events} />
-          </section>
-
-          <section style={{ gridArea: 'feed' }}>
-            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Event Feed</h2>
-            <EventFeed onEvent={handleEvent} />
-          </section>
-
-          <section style={{ gridArea: 'scheduler' }}>
-            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Scheduler</h2>
+          {/* Middle column */}
+          <section className="lg:col-span-1">
+            <SectionLabel label="Scheduler" />
             <SchedulerTable events={events} />
+          </section>
+
+          {/* Right column — event feed */}
+          <section className="xl:col-span-1 lg:col-span-2">
+            <SectionLabel label="Event Feed" />
+            <EventFeed onEvent={handleEvent} />
           </section>
         </div>
       </motion.main>
