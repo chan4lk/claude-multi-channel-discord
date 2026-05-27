@@ -72,6 +72,7 @@ export default function EventFeed({ onEvent }: Props = {}) {
   const [filter, setFilter] = useState<string>('all')
   const [types, setTypes] = useState<string[]>([])
   const [compact, setCompact] = useState(false)
+  const [connStatus, setConnStatus] = useState<'connected' | 'reconnecting' | 'disconnected'>('disconnected')
   const esRef = useRef<EventSource | null>(null)
   const seenIds = useRef<Set<string>>(new Set())
 
@@ -100,45 +101,65 @@ export default function EventFeed({ onEvent }: Props = {}) {
   }, [])
 
   useEffect(() => {
-    const es = new EventSource('/api/events/stream')
-    esRef.current = es
+    let cancelled = false
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
 
-    function handleMsg(e: MessageEvent) {
-      let parsed: Record<string, unknown>
-      try {
-        parsed = JSON.parse(e.data)
-      } catch {
-        parsed = { raw: e.data }
+    function connectSSE() {
+      if (cancelled) return
+      const es = new EventSource('/api/events/stream')
+      esRef.current = es
+
+      function handleMsg(e: MessageEvent) {
+        let parsed: Record<string, unknown>
+        try {
+          parsed = JSON.parse(e.data)
+        } catch {
+          parsed = { raw: e.data }
+        }
+
+        const entry: EventEntry = {
+          id: nextId(),
+          ts: typeof parsed['ts'] === 'number' ? parsed['ts'] : Date.now(),
+          type: typeof parsed['type'] === 'string' ? parsed['type'] : (e.type || 'unknown'),
+          instance_id: typeof parsed['instance_id'] === 'string' ? parsed['instance_id'] : '',
+          payload: parsed,
+        }
+
+        onEvent?.(entry)
+
+        setEvents((prev) => {
+          const urgent = prev.filter((ev) => isUrgent(ev.type))
+          const normal = prev.filter((ev) => !isUrgent(ev.type))
+          const next = isUrgent(entry.type)
+            ? [entry, ...urgent, ...normal]
+            : [...urgent, entry, ...normal]
+          return next.slice(0, 200)
+        })
+
+        setTypes((prev) => prev.includes(entry.type) ? prev : [...prev, entry.type].sort())
       }
 
-      const entry: EventEntry = {
-        id: nextId(),
-        ts: typeof parsed['ts'] === 'number' ? parsed['ts'] : Date.now(),
-        type: typeof parsed['type'] === 'string' ? parsed['type'] : (e.type || 'unknown'),
-        instance_id: typeof parsed['instance_id'] === 'string' ? parsed['instance_id'] : '',
-        payload: parsed,
+      es.onopen = () => setConnStatus('connected')
+      es.onerror = () => {
+        setConnStatus('reconnecting')
+        es.close()
+        if (!cancelled) {
+          timeoutId = setTimeout(connectSSE, 3000)
+        }
       }
-
-      onEvent?.(entry)
-
-      setEvents((prev) => {
-        const urgent = prev.filter((ev) => isUrgent(ev.type))
-        const normal = prev.filter((ev) => !isUrgent(ev.type))
-        const next = isUrgent(entry.type)
-          ? [entry, ...urgent, ...normal]
-          : [...urgent, entry, ...normal]
-        return next.slice(0, 200)
-      })
-
-      setTypes((prev) => prev.includes(entry.type) ? prev : [...prev, entry.type].sort())
+      es.onmessage = handleMsg
+      for (const t of ['spawn','stop','reply','error_event','progress','watchdog','specclaw_status_changed','scheduler_fired']) {
+        es.addEventListener(t, (e) => handleMsg(e as MessageEvent))
+      }
     }
 
-    es.onmessage = handleMsg
-    for (const t of ['spawn','stop','reply','error_event','progress','watchdog','specclaw_status_changed','scheduler_fired']) {
-      es.addEventListener(t, (e) => handleMsg(e as MessageEvent))
-    }
+    connectSSE()
 
-    return () => es.close()
+    return () => {
+      cancelled = true
+      if (timeoutId) clearTimeout(timeoutId)
+      esRef.current?.close()
+    }
   }, [])
 
   const visible = filter === 'all' ? events : events.filter((ev) => ev.type === filter)
@@ -147,6 +168,19 @@ export default function EventFeed({ onEvent }: Props = {}) {
     <GlassCard className="flex flex-col gap-3 p-4 h-full">
       {/* Controls row */}
       <div className="flex items-center gap-2 flex-wrap">
+        <span
+          className={`shrink-0 w-2 h-2 rounded-full ${
+            connStatus === 'connected'
+              ? 'bg-cyber-cyan'
+              : connStatus === 'reconnecting'
+              ? 'bg-cyber-amber animate-pulse'
+              : 'bg-slate-600'
+          }`}
+          title={connStatus}
+        />
+        {connStatus === 'reconnecting' && (
+          <span className="text-xs text-cyber-amber">reconnecting…</span>
+        )}
         <select
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
