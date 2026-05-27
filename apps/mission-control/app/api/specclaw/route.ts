@@ -71,7 +71,7 @@ export async function GET(): Promise<Response> {
   let slugs: string[]
   try {
     slugs = fs.readdirSync(projectsDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
+      .filter((d) => d.isDirectory() || d.isSymbolicLink())
       .map((d) => d.name)
   } catch {
     return Response.json([])
