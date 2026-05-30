@@ -1,20 +1,39 @@
 import {
   joinVoiceChannel,
   VoiceConnectionStatus,
+  AudioPlayerStatus,
   entersState,
   EndBehaviorType,
   createAudioPlayer,
+  createAudioResource,
   type VoiceConnection,
   type AudioPlayer,
 } from '@discordjs/voice'
 import { OpusEncoder } from '@discordjs/opus'
-import { writeFileSync, readFileSync, unlinkSync } from 'node:fs'
+import { writeFileSync, readFileSync, unlinkSync, createReadStream } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import Anthropic from '@anthropic-ai/sdk'
+import { KokoroTTS } from 'kokoro-js'
 import type { VoiceProjectConfig } from './channels-config.ts'
 
 const anthropic = new Anthropic()
+
+let kokoroInstance: KokoroTTS | null = null
+async function getKokoro(): Promise<KokoroTTS> {
+  if (!kokoroInstance) {
+    kokoroInstance = await KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0', { dtype: 'q8' })
+  }
+  return kokoroInstance
+}
+
+function float32ToPcm16(data: Float32Array): Buffer {
+  const out = Buffer.alloc(data.length * 2)
+  for (let i = 0; i < data.length; i++) {
+    out.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(data[i] * 32767))), i * 2)
+  }
+  return out
+}
 
 function decodeOpusFramesToPcm16Mono(frames: Buffer[]): Buffer {
   const encoder = new OpusEncoder(48000, 2)
@@ -267,6 +286,23 @@ export class VoicePipeline {
     return botText
   }
 
-  // Filled in by T5
-  protected async ttsTurn(_session: VoiceSession, _botText: string): Promise<void> {}
+  protected async ttsTurn(session: VoiceSession, botText: string): Promise<void> {
+    const wavPath = `/tmp/mcd-tts-${randomBytes(6).toString('hex')}.wav`
+    try {
+      const kokoro = await getKokoro()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const audio = await kokoro.generate(botText, { voice: session.voiceConfig.kokoroVoice as any })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const pcm = float32ToPcm16((audio as any).data as Float32Array)
+      writeWav(wavPath, pcm, 24000)
+
+      const resource = createAudioResource(createReadStream(wavPath))
+      session.audioPlayer.play(resource)
+      await entersState(session.audioPlayer, AudioPlayerStatus.Idle, session.voiceConfig.maxTurnSeconds * 1000)
+    } catch (err) {
+      process.stderr.write(`voice: TTS error in guild ${session.guildId}: ${(err as Error).message}\n`)
+    } finally {
+      try { unlinkSync(wavPath) } catch {}
+    }
+  }
 }
