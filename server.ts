@@ -28,6 +28,7 @@ import {
   type Message,
   type Attachment,
   type Interaction,
+  type Guild,
 } from 'discord.js'
 import { randomBytes, createHash } from 'crypto'
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, renameSync, realpathSync, chmodSync, existsSync, watch as fsWatch, type FSWatcher } from 'fs'
@@ -45,6 +46,9 @@ import { ProjectPool } from './src/project-pool.ts'
 import type { OutboundReply, ToolProgressEvent } from './src/project-process.ts'
 import { projectDir } from './src/paths.ts'
 import { Scheduler } from './src/scheduler.ts'
+import { VoicePipeline } from './src/voice-pipeline.ts'
+import { voiceSlashCommands, handleVoiceInteraction } from './src/voice-commands.ts'
+import { insertVoiceTurn } from './src/voice-db.ts'
 
 // Single-source state dir. MCD_CHANNELS_DIR is the multi-channel-discord
 // override and wins; falls back to upstream's DISCORD_STATE_DIR for in-place
@@ -105,6 +109,7 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildVoiceStates,
   ],
   // DMs arrive as partial channels — messageCreate never fires without this.
   partials: [Partials.Channel],
@@ -817,6 +822,16 @@ process.on('uncaughtException', (err) => {
 // `perm:allow:<id>`, `perm:deny:<id>`, or `perm:more:<id>`.
 // Security mirrors the text-reply path: allowFrom must contain the sender.
 client.on('interactionCreate', async (interaction: Interaction) => {
+  if (interaction.isChatInputCommand() && interaction.commandName === 'voice') {
+    if (voicePipeline) {
+      await handleVoiceInteraction(interaction, voicePipeline).catch(err => {
+        process.stderr.write(`voice: interaction error: ${err}\n`)
+      })
+    } else {
+      await interaction.reply({ content: 'Voice pipeline not initialized.', ephemeral: true }).catch(() => {})
+    }
+    return
+  }
   if (!interaction.isButton()) return
   const m = /^perm:(allow|deny|more):([a-km-z]{5})$/.exec(interaction.customId)
   if (!m) return
@@ -881,6 +896,7 @@ client.on('interactionCreate', async (interaction: Interaction) => {
 let projectPool: ProjectPool | null = null
 let masterMcp: MasterMcpServer | null = null
 let scheduler: Scheduler | null = null
+let voicePipeline: VoicePipeline | null = null
 const specclawWatchers = new Map<string, { watcher: FSWatcher; slug: string; chatId: string; debounce: ReturnType<typeof setTimeout> | null }>()
 
 /**
@@ -1137,6 +1153,34 @@ async function maybeInitProjectsBackend(): Promise<void> {
     },
   })
   scheduler.start()
+
+  voicePipeline = new VoicePipeline({
+    onTurnComplete: async (result) => {
+      try {
+        insertVoiceTurn({
+          chat_id: result.chatId,
+          guild_id: result.guildId,
+          user_id: result.userId,
+          ts: result.ts,
+          user_text: result.userText,
+          bot_text: result.botText,
+          duration_ms: result.durationMs,
+        })
+      } catch (err) {
+        process.stderr.write(`voice: db insert failed: ${err}\n`)
+      }
+      try {
+        const ch = await client.channels.fetch(result.chatId)
+        if (ch && ch.isTextBased() && 'send' in ch) {
+          const msg = `🎙️ <@${result.userId}>: ${result.userText}\n🤖 Claude: ${result.botText}`
+          await (ch as import('discord.js').TextChannel).send(msg)
+        }
+      } catch (err) {
+        process.stderr.write(`voice: transcript post failed: ${err}\n`)
+      }
+    },
+  })
+  process.stderr.write('discord: voice pipeline initialized\n')
 }
 
 async function dispatchProjectReply(reply: OutboundReply): Promise<void> {
@@ -1257,7 +1301,7 @@ async function handleToolProgressEvent(
     const newLine = formatProgressLine(ev)
     if (state) {
       state.lines.push(newLine)
-      const content = state.lines.slice(-20).join('\n').slice(0, 1900)
+      const content = state.lines.slice(-8).join('\n').slice(0, 1900)
       const fetched = await channel.messages.fetch(state.msgId).catch(() => null)
       if (fetched) {
         await fetched.edit(content).catch(() => {})
@@ -1283,7 +1327,7 @@ async function handleToolProgressEvent(
     } else {
       state.lines.push(formatProgressLine(ev))
     }
-    const content = state.lines.slice(-20).join('\n').slice(0, 1900)
+    const content = state.lines.slice(-8).join('\n').slice(0, 1900)
     const fetched = await channel.messages.fetch(state.msgId).catch(() => null)
     if (fetched) {
       await fetched.edit(content).catch(() => {})
@@ -1505,9 +1549,22 @@ async function handleInbound(msg: Message): Promise<void> {
   })
 }
 
-client.once('ready', c => {
+function registerVoiceCommands(guild: Guild) {
+  guild.commands.set(voiceSlashCommands).catch(err => {
+    process.stderr.write(`discord: failed to register voice slash commands in guild ${guild.id}: ${err}\n`)
+  })
+}
+
+// clientReady fires after all GUILD_CREATE events — guilds.cache is fully populated here
+// (the deprecated 'ready' alias fires on the gateway READY packet, before guilds are cached)
+client.once('clientReady', c => {
   process.stderr.write(`discord channel: gateway connected as ${c.user.tag}\n`)
+  process.stderr.write(`discord: registering voice commands in ${c.guilds.cache.size} guild(s)\n`)
+  c.guilds.cache.forEach(guild => registerVoiceCommands(guild))
 })
+
+// Also register when bot joins a new guild
+client.on('guildCreate', guild => registerVoiceCommands(guild))
 
 void maybeInitProjectsBackend().catch(err => {
   process.stderr.write(`discord: project backend init failed: ${err}\n`)

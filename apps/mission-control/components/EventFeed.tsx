@@ -9,23 +9,32 @@ interface EventEntry {
   ts: number
   type: string
   instance_id: string
-  payload: unknown
+  payload: Record<string, unknown>
 }
 
-const TYPE_COLORS: Record<string, string> = {
-  spawn:                  'text-cyber-cyan   bg-cyber-cyan/10',
-  reply:                  'text-green-400    bg-green-400/10',
-  stop:                   'text-orange-400   bg-orange-400/10',
-  progress:               'text-cyber-amber  bg-cyber-amber/10',
-  error:                  'text-cyber-crimson bg-cyber-crimson/10',
-  error_event:            'text-cyber-crimson bg-cyber-crimson/10',
-  watchdog:               'text-cyber-crimson bg-cyber-crimson/10',
-  specclaw_status_changed:'text-purple-400   bg-purple-400/10',
-  scheduler_fired:        'text-yellow-300   bg-yellow-300/10',
+const TYPE_BADGE: Record<string, string> = {
+  spawn:                   'text-cyber-cyan   bg-cyber-cyan/12   border-cyber-cyan/25',
+  reply:                   'text-green-400    bg-green-400/10    border-green-400/20',
+  stop:                    'text-orange-400   bg-orange-400/10   border-orange-400/20',
+  progress:                'text-cyber-amber  bg-cyber-amber/10  border-cyber-amber/20',
+  error:                   'text-cyber-crimson bg-cyber-crimson/12 border-cyber-crimson/30',
+  error_event:             'text-cyber-crimson bg-cyber-crimson/12 border-cyber-crimson/30',
+  watchdog:                'text-cyber-crimson bg-cyber-crimson/12 border-cyber-crimson/30',
+  specclaw_status_changed: 'text-purple-400   bg-purple-400/10   border-purple-400/20',
+  scheduler_fired:         'text-yellow-300   bg-yellow-300/10   border-yellow-300/20',
+}
+
+const TYPE_LEFT_BORDER: Record<string, string> = {
+  error:       'border-l-cyber-crimson',
+  error_event: 'border-l-cyber-crimson',
+  watchdog:    'border-l-cyber-crimson',
+  spawn:       'border-l-cyber-cyan',
+  reply:       'border-l-green-400',
+  progress:    'border-l-cyber-amber',
 }
 
 function badgeClass(type: string): string {
-  return TYPE_COLORS[type] ?? 'text-slate-300 bg-slate-700/50'
+  return TYPE_BADGE[type] ?? 'text-slate-300 bg-slate-700/40 border-slate-600/30'
 }
 
 function isUrgent(type: string): boolean {
@@ -63,10 +72,10 @@ export default function EventFeed({ onEvent }: Props = {}) {
   const [filter, setFilter] = useState<string>('all')
   const [types, setTypes] = useState<string[]>([])
   const [compact, setCompact] = useState(false)
+  const [connStatus, setConnStatus] = useState<'connected' | 'reconnecting' | 'disconnected'>('disconnected')
   const esRef = useRef<EventSource | null>(null)
   const seenIds = useRef<Set<string>>(new Set())
 
-  // Fetch historical events on mount
   useEffect(() => {
     fetch('/api/events?limit=200')
       .then((r) => r.json())
@@ -92,101 +101,147 @@ export default function EventFeed({ onEvent }: Props = {}) {
   }, [])
 
   useEffect(() => {
-    const es = new EventSource('/api/events/stream')
-    esRef.current = es
+    let cancelled = false
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
 
-    function handleMsg(e: MessageEvent) {
-      let parsed: Record<string, unknown>
-      try {
-        parsed = JSON.parse(e.data)
-      } catch {
-        parsed = { raw: e.data }
+    function connectSSE() {
+      if (cancelled) return
+      const es = new EventSource('/api/events/stream')
+      esRef.current = es
+
+      function handleMsg(e: MessageEvent) {
+        let parsed: Record<string, unknown>
+        try {
+          parsed = JSON.parse(e.data)
+        } catch {
+          parsed = { raw: e.data }
+        }
+
+        const entry: EventEntry = {
+          id: nextId(),
+          ts: typeof parsed['ts'] === 'number' ? parsed['ts'] : Date.now(),
+          type: typeof parsed['type'] === 'string' ? parsed['type'] : (e.type || 'unknown'),
+          instance_id: typeof parsed['instance_id'] === 'string' ? parsed['instance_id'] : '',
+          payload: parsed,
+        }
+
+        onEvent?.(entry)
+
+        setEvents((prev) => {
+          const urgent = prev.filter((ev) => isUrgent(ev.type))
+          const normal = prev.filter((ev) => !isUrgent(ev.type))
+          const next = isUrgent(entry.type)
+            ? [entry, ...urgent, ...normal]
+            : [...urgent, entry, ...normal]
+          return next.slice(0, 200)
+        })
+
+        setTypes((prev) => prev.includes(entry.type) ? prev : [...prev, entry.type].sort())
       }
 
-      const entry: EventEntry = {
-        id: nextId(),
-        ts: typeof parsed['ts'] === 'number' ? parsed['ts'] : Date.now(),
-        type: typeof parsed['type'] === 'string' ? parsed['type'] : (e.type || 'unknown'),
-        instance_id: typeof parsed['instance_id'] === 'string' ? parsed['instance_id'] : '',
-        payload: parsed,
+      es.onopen = () => setConnStatus('connected')
+      es.onerror = () => {
+        setConnStatus('reconnecting')
+        es.close()
+        if (!cancelled) {
+          timeoutId = setTimeout(connectSSE, 3000)
+        }
       }
-
-      onEvent?.(entry)
-
-      setEvents((prev) => {
-        const urgent = prev.filter((ev) => isUrgent(ev.type))
-        const normal = prev.filter((ev) => !isUrgent(ev.type))
-        const next = isUrgent(entry.type)
-          ? [entry, ...urgent, ...normal]
-          : [...urgent, entry, ...normal]
-        return next.slice(0, 200)
-      })
-
-      setTypes((prev) => prev.includes(entry.type) ? prev : [...prev, entry.type].sort())
+      es.onmessage = handleMsg
+      for (const t of ['spawn','stop','reply','error_event','progress','watchdog','specclaw_status_changed','scheduler_fired']) {
+        es.addEventListener(t, (e) => handleMsg(e as MessageEvent))
+      }
     }
 
-    es.onmessage = handleMsg
-    for (const t of ['spawn','stop','reply','error_event','progress','watchdog','specclaw_status_changed','scheduler_fired']) {
-      es.addEventListener(t, (e) => handleMsg(e as MessageEvent))
-    }
+    connectSSE()
 
-    return () => es.close()
+    return () => {
+      cancelled = true
+      if (timeoutId) clearTimeout(timeoutId)
+      esRef.current?.close()
+    }
   }, [])
 
   const visible = filter === 'all' ? events : events.filter((ev) => ev.type === filter)
 
   return (
     <GlassCard className="flex flex-col gap-3 p-4 h-full">
-      {/* Controls */}
-      <div className="flex items-center gap-3 flex-wrap">
+      {/* Controls row */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span
+          className={`shrink-0 w-2 h-2 rounded-full ${
+            connStatus === 'connected'
+              ? 'bg-cyber-cyan'
+              : connStatus === 'reconnecting'
+              ? 'bg-cyber-amber animate-pulse'
+              : 'bg-slate-600'
+          }`}
+          title={connStatus}
+        />
+        {connStatus === 'reconnecting' && (
+          <span className="text-xs text-cyber-amber">reconnecting…</span>
+        )}
         <select
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="bg-cyber-panel border border-cyber-cyan/20 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-cyber-cyan/50"
+          className="cyber-input px-2 py-1 text-xs cursor-pointer"
+          aria-label="Filter by event type"
         >
-          <option value="all">all types</option>
+          <option value="all">All types</option>
           {types.map((t) => <option key={t} value={t}>{t}</option>)}
         </select>
         <button
           onClick={() => setCompact((c) => !c)}
-          className="text-xs px-2 py-1 rounded border border-cyber-cyan/20 text-slate-400 hover:text-cyber-cyan hover:border-cyber-cyan/50 transition-colors"
+          className="text-xs px-2.5 py-1 rounded border border-cyber-cyan/20 text-slate-400 hover:text-cyber-cyan hover:border-cyber-cyan/45 transition-colors cursor-pointer"
+          aria-pressed={compact}
         >
-          {compact ? 'expanded' : 'compact'}
+          {compact ? 'Expanded' : 'Compact'}
         </button>
-        <span className="ml-auto text-xs text-slate-600">{visible.length} events</span>
+        <span className="ml-auto text-xs text-slate-600 tabular-nums font-mono">
+          {visible.length} events
+        </span>
       </div>
 
       {/* Event list */}
-      <div className="flex flex-col gap-1 font-mono text-xs overflow-y-auto max-h-[600px]">
+      <div className="flex flex-col gap-0.5 font-mono text-xs overflow-y-auto max-h-[580px] pr-1">
         {visible.length === 0 && (
-          <div className="text-slate-500 py-8 text-center">Waiting for events…</div>
+          <div className="text-slate-600 py-12 text-center">
+            <div className="text-2xl mb-2 opacity-20">◈</div>
+            <span>Awaiting events…</span>
+          </div>
         )}
         <AnimatePresence initial={false}>
-          {visible.map((ev) => (
-            <motion.div
-              key={ev.id}
-              initial={{ x: -16, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.15 }}
-              className={`flex items-baseline gap-2 rounded px-3 py-1.5 hover:bg-white/5 transition-colors ${
-                isUrgent(ev.type) ? 'border-l-2 border-cyber-crimson' : ''
-              }`}
-            >
-              <span className="text-slate-500 shrink-0 w-20">{formatTime(ev.ts)}</span>
-              <span className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-semibold ${badgeClass(ev.type)}`}>
-                {ev.type}
-              </span>
-              {!compact && (
-                <>
-                  <span className="text-slate-600 shrink-0 w-20 truncate font-mono" title={ev.instance_id}>
-                    {ev.instance_id ? ev.instance_id.slice(0, 8) : '—'}
-                  </span>
-                  <span className="text-slate-400 truncate">{summarize(ev.payload)}</span>
-                </>
-              )}
-            </motion.div>
-          ))}
+          {visible.map((ev) => {
+            const leftBorder = TYPE_LEFT_BORDER[ev.type]
+            return (
+              <motion.div
+                key={ev.id}
+                initial={{ x: -12, opacity: 0 }}
+                animate={{ x: 0, opacity: 1 }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.12, ease: 'easeOut' }}
+                className={`
+                  flex items-baseline gap-2 rounded px-2.5 py-1.5
+                  hover:bg-white/4 transition-colors
+                  border-l-2
+                  ${leftBorder ?? 'border-l-transparent'}
+                `}
+              >
+                <span className="text-slate-600 shrink-0 w-[52px] tabular-nums">{formatTime(ev.ts)}</span>
+                <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[0.6rem] font-bold tracking-wide uppercase ${badgeClass(ev.type)}`}>
+                  {ev.type.replace(/_/g, ' ')}
+                </span>
+                {!compact && (
+                  <>
+                    <span className="text-slate-700 shrink-0 w-16 truncate" title={ev.instance_id}>
+                      {ev.instance_id ? ev.instance_id.slice(0, 8) : '—'}
+                    </span>
+                    <span className="text-slate-400 truncate">{summarize(ev.payload)}</span>
+                  </>
+                )}
+              </motion.div>
+            )
+          })}
         </AnimatePresence>
       </div>
     </GlassCard>

@@ -19,10 +19,18 @@ const config: Config = {
           slate:   '#1E293B',
         },
       },
+      fontFamily: {
+        orbitron: ['Orbitron', 'JetBrains Mono', 'monospace'],
+        mono: ['JetBrains Mono', 'ui-monospace', 'monospace'],
+      },
       boxShadow: {
-        'glow-cyan':   '0 0 8px 2px rgba(0,245,255,0.35)',
-        'glow-amber':  '0 0 8px 2px rgba(245,158,11,0.35)',
-        'glow-red':    '0 0 8px 2px rgba(239,68,68,0.35)',
+        'glow-cyan':   '0 0 12px 2px rgba(0,245,255,0.4), 0 0 4px rgba(0,245,255,0.6)',
+        'glow-amber':  '0 0 12px 2px rgba(245,158,11,0.4)',
+        'glow-red':    '0 0 12px 2px rgba(239,68,68,0.4)',
+      },
+      borderColor: {
+        'cyber-cyan/6':  'rgba(0,245,255,0.06)',
+        'cyber-cyan/12': 'rgba(0,245,255,0.12)',
       },
       keyframes: {
         pulse_ring: { '0%,100%': { opacity: '1' }, '50%': { opacity: '0.3' } },

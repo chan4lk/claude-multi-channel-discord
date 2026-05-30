@@ -6,7 +6,8 @@ export function middleware(request: NextRequest): NextResponse {
   // Public paths — no auth required
   if (
     pathname.startsWith("/login") ||
-    pathname.startsWith("/api/auth")
+    pathname.startsWith("/api/auth") ||
+    pathname === "/api/events"  // Bot authenticates via Bearer API key, validated in route
   ) {
     return NextResponse.next();
   }
