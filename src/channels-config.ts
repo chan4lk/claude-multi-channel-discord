@@ -56,6 +56,13 @@ export type ClaudeArgs = z.infer<typeof ClaudeArgsSchema>
 const ProgressModeSchema = z.enum(['off', 'edit', 'post'])
 export type ProgressMode = z.infer<typeof ProgressModeSchema>
 
+const VoiceProjectConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  kokoroVoice: z.string().default('af_bella'),
+  maxTurnSeconds: z.number().int().positive().default(30),
+})
+export type VoiceProjectConfig = z.infer<typeof VoiceProjectConfigSchema>
+
 const ProjectSchema = z.object({
   slug: SlugSchema,
   model: z.string().optional(),
@@ -80,6 +87,7 @@ const ProjectSchema = z.object({
    * Set higher for channels that run long pipelines (TTS, video rendering).
    */
   stuckThresholdMinutes: z.number().int().positive().optional(),
+  voice: VoiceProjectConfigSchema.optional(),
 })
 
 const DefaultsGitSchema = z.object({
