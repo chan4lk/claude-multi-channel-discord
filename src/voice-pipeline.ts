@@ -301,7 +301,7 @@ export class VoicePipeline {
     try {
       botText = await new Promise<string>((resolve, reject) => {
         const claudeBin = process.env.MCD_CLAUDE_BIN ?? 'claude'
-        const args = ['-p', historyLines, '--system', session.systemPrompt, '--model', 'claude-sonnet-4-6']
+        const args = ['-p', historyLines, '--system-prompt', session.systemPrompt, '--model', 'claude-sonnet-4-6']
         const proc = spawn(claudeBin, args, { env: process.env })
         let out = ''
         let err = ''
