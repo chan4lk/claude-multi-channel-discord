@@ -176,6 +176,7 @@ export class VoicePipeline {
     })
 
     await entersState(connection, VoiceConnectionStatus.Ready, 5_000)
+    process.stderr.write(`voice: joined guild ${opts.guildId} channel ${opts.voiceChannelId}\n`)
 
     const audioPlayer = createAudioPlayer()
     connection.subscribe(audioPlayer)
@@ -228,6 +229,7 @@ export class VoicePipeline {
     const { connection } = session
 
     connection.receiver.speaking.on('start', (userId: string) => {
+      process.stderr.write(`voice: speaking start from ${userId} in guild ${session.guildId}\n`)
       const stream = connection.receiver.subscribe(userId, {
         end: {
           behavior: EndBehaviorType.AfterSilence,
@@ -238,6 +240,7 @@ export class VoicePipeline {
       const frames: Buffer[] = []
       stream.on('data', (chunk: Buffer) => frames.push(chunk))
       stream.on('end', () => {
+        process.stderr.write(`voice: utterance end from ${userId}, frames=${frames.length}\n`)
         if (frames.length === 0) return
         const framesCopy = frames.slice()
         session.turnQueue = session.turnQueue
@@ -269,6 +272,7 @@ export class VoicePipeline {
       try { unlinkSync(wavPath) } catch {}
     }
 
+    process.stderr.write(`voice: STT result="${userText}" guild=${session.guildId}\n`)
     if (!userText) return // AC9: empty transcript → skip
 
     // T4: Claude API call (filled in next)
