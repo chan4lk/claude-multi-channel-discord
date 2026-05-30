@@ -12,7 +12,8 @@ set -euo pipefail
 
 SESSION="${MCD_TMUX_SESSION:-mcd}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="${MCD_REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+# REPO_DIR is the multi-channel-discord repo where bun server.ts lives
+REPO_DIR="${MCD_REPO_DIR:-/home/openclaw/dev/multi-channel-discord}"
 STATE_DIR="${MCD_CHANNELS_DIR:-$HOME/.claude/channels/discord-multi}"
 
 # Locate bun
@@ -22,6 +23,8 @@ elif [[ -x "$HOME/.bun/bin/bun" ]]; then
   BUN="$HOME/.bun/bin/bun"
 elif [[ -x "$HOME/.local/bin/bun" ]]; then
   BUN="$HOME/.local/bin/bun"
+elif [[ -x "/home/openclaw/.bun/bin/bun" ]]; then
+  BUN="/home/openclaw/.bun/bin/bun"
 else
   BUN="$(command -v bun || true)"
 fi
@@ -29,20 +32,21 @@ fi
 
 echo "[mcd] killing tmux session '${SESSION}'…"
 tmux kill-session -t "$SESSION" 2>/dev/null || true
-
-# Wait for session to fully die
-for _ in 1 2 3 4 5; do
+for _ in 1 2 3 4 5 6 7 8; do
   tmux has-session -t "$SESSION" 2>/dev/null || break
   sleep 1
 done
 
 echo "[mcd] starting new tmux session '${SESSION}'…"
+# --bun flag is REQUIRED: @discordjs/opus ships a node-v127 NAPI addon but Bun
+# v1.3+ uses NAPI v137 (node-v137). Without --bun, Bun looks for node-v137 and
+# the opus module crashes at import time, killing the entire server.
 tmux new-session -d -s "$SESSION" \
   -c "$REPO_DIR" \
   -e "MCD_CHANNELS_DIR=${STATE_DIR}" \
-  "$BUN server.ts"
+  "$BUN" --bun server.ts
 
-sleep 2
+sleep 4
 if tmux has-session -t "$SESSION" 2>/dev/null; then
   echo "[mcd] server started in tmux session '${SESSION}'"
   echo "      attach: tmux attach -t ${SESSION}"
