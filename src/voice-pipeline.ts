@@ -11,7 +11,10 @@ import { OpusEncoder } from '@discordjs/opus'
 import { writeFileSync, readFileSync, unlinkSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
+import Anthropic from '@anthropic-ai/sdk'
 import type { VoiceProjectConfig } from './channels-config.ts'
+
+const anthropic = new Anthropic()
 
 function decodeOpusFramesToPcm16Mono(frames: Buffer[]): Buffer {
   const encoder = new OpusEncoder(48000, 2)
@@ -242,9 +245,26 @@ export class VoicePipeline {
     })
   }
 
-  // Filled in by T4
-  protected async claudeTurn(_session: VoiceSession, _userId: string, _userText: string): Promise<string> {
-    return ''
+  protected async claudeTurn(session: VoiceSession, _userId: string, userText: string): Promise<string> {
+    session.history.push({ role: 'user', content: userText })
+
+    let botText = ''
+    try {
+      const stream = anthropic.messages.stream({
+        model: 'claude-sonnet-4-6',
+        system: session.systemPrompt,
+        messages: session.history,
+        max_tokens: 1024,
+      })
+      const msg = await stream.finalMessage()
+      botText = msg.content[0]?.type === 'text' ? msg.content[0].text : ''
+    } catch (err) {
+      process.stderr.write(`voice: Claude API error in guild ${session.guildId}: ${(err as Error).message}\n`)
+      return ''
+    }
+
+    if (botText) session.history.push({ role: 'assistant', content: botText })
+    return botText
   }
 
   // Filled in by T5
