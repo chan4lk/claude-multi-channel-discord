@@ -13,11 +13,8 @@ import { OpusEncoder } from '@discordjs/opus'
 import { writeFileSync, unlinkSync, createReadStream } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import Anthropic from '@anthropic-ai/sdk'
 import { homedir } from 'node:os'
 import type { VoiceProjectConfig } from './channels-config.ts'
-
-const anthropic = new Anthropic()
 
 function voicePython(): string {
   return process.env.MCD_VOICE_PYTHON ?? `${homedir()}/.openclaw/voice-venv/bin/python`
@@ -295,18 +292,28 @@ export class VoicePipeline {
   protected async claudeTurn(session: VoiceSession, _userId: string, userText: string): Promise<string> {
     session.history.push({ role: 'user', content: userText })
 
+    // Build prompt from history for claude -p (no API key needed — uses OAuth)
+    const historyLines = session.history.map(m =>
+      `${m.role === 'user' ? 'Human' : 'Assistant'}: ${m.content}`
+    ).join('\n')
+
     let botText = ''
     try {
-      const stream = anthropic.messages.stream({
-        model: 'claude-sonnet-4-6',
-        system: session.systemPrompt,
-        messages: session.history,
-        max_tokens: 1024,
+      botText = await new Promise<string>((resolve, reject) => {
+        const claudeBin = process.env.MCD_CLAUDE_BIN ?? 'claude'
+        const args = ['-p', historyLines, '--system', session.systemPrompt, '--model', 'claude-sonnet-4-6']
+        const proc = spawn(claudeBin, args, { env: process.env })
+        let out = ''
+        let err = ''
+        proc.stdout.on('data', (d: Buffer) => { out += d.toString() })
+        proc.stderr.on('data', (d: Buffer) => { err += d.toString() })
+        proc.on('close', code => {
+          if (code !== 0) reject(new Error(err || `claude exited ${code}`))
+          else resolve(out.trim())
+        })
       })
-      const msg = await stream.finalMessage()
-      botText = msg.content[0]?.type === 'text' ? msg.content[0].text : ''
     } catch (err) {
-      process.stderr.write(`voice: Claude API error in guild ${session.guildId}: ${(err as Error).message}\n`)
+      process.stderr.write(`voice: Claude error in guild ${session.guildId}: ${(err as Error).message}\n`)
       return ''
     }
 
