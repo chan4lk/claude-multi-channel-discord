@@ -28,6 +28,7 @@ import {
   type Message,
   type Attachment,
   type Interaction,
+  type Guild,
 } from 'discord.js'
 import { randomBytes, createHash } from 'crypto'
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, renameSync, realpathSync, chmodSync, existsSync, watch as fsWatch, type FSWatcher } from 'fs'
@@ -1548,15 +1549,22 @@ async function handleInbound(msg: Message): Promise<void> {
   })
 }
 
-client.once('ready', c => {
-  process.stderr.write(`discord channel: gateway connected as ${c.user.tag}\n`)
-  // Register per-guild (instant) instead of globally (up to 1hr propagation delay)
-  c.guilds.cache.forEach(guild => {
-    guild.commands.set(voiceSlashCommands).catch(err => {
-      process.stderr.write(`discord: failed to register voice slash commands in guild ${guild.id}: ${err}\n`)
-    })
+function registerVoiceCommands(guild: Guild) {
+  guild.commands.set(voiceSlashCommands).catch(err => {
+    process.stderr.write(`discord: failed to register voice slash commands in guild ${guild.id}: ${err}\n`)
   })
+}
+
+// clientReady fires after all GUILD_CREATE events — guilds.cache is fully populated here
+// (the deprecated 'ready' alias fires on the gateway READY packet, before guilds are cached)
+client.once('clientReady', c => {
+  process.stderr.write(`discord channel: gateway connected as ${c.user.tag}\n`)
+  process.stderr.write(`discord: registering voice commands in ${c.guilds.cache.size} guild(s)\n`)
+  c.guilds.cache.forEach(guild => registerVoiceCommands(guild))
 })
+
+// Also register when bot joins a new guild
+client.on('guildCreate', guild => registerVoiceCommands(guild))
 
 void maybeInitProjectsBackend().catch(err => {
   process.stderr.write(`discord: project backend init failed: ${err}\n`)
