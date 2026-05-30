@@ -71,7 +71,7 @@ print("".join(s.text for s in segs).strip(), end="")
 `
 
 async function runFasterWhisper(wavPath: string, maxTurnSeconds: number): Promise<string> {
-  const model = process.env.MCD_WHISPER_MODEL ?? 'base.en'
+  const model = process.env.MCD_WHISPER_MODEL ?? 'small.en'
 
   return new Promise((resolve) => {
     let out = ''
