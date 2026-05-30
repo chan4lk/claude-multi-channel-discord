@@ -103,13 +103,6 @@ export async function handleVoiceInteraction(
     return
   }
 
-  // Check whisper binary exists
-  const whisperBin = process.env.MCD_WHISPER_BIN ?? 'whisper'
-  const whisperModel = process.env.MCD_WHISPER_MODEL ?? 'ggml-tiny.en.bin'
-  if (!existsSync(whisperModel) && !process.env.MCD_WHISPER_MODEL) {
-    process.stderr.write(`voice: whisper model not found at default path "${whisperModel}" — set MCD_WHISPER_MODEL\n`)
-  }
-
   // Load system prompt from project CLAUDE.md
   let systemPrompt = `You are a voice assistant named Claude in a Discord voice channel for the project "${project.slug}". Keep responses concise for voice.`
   try {
@@ -136,5 +129,4 @@ export async function handleVoiceInteraction(
     await interaction.editReply(`Failed to join voice channel: ${(err as Error).message}`)
   }
 
-  void whisperBin // suppress unused warning
 }
