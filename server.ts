@@ -1550,8 +1550,11 @@ async function handleInbound(msg: Message): Promise<void> {
 
 client.once('ready', c => {
   process.stderr.write(`discord channel: gateway connected as ${c.user.tag}\n`)
-  c.application.commands.set(voiceSlashCommands).catch(err => {
-    process.stderr.write(`discord: failed to register voice slash commands: ${err}\n`)
+  // Register per-guild (instant) instead of globally (up to 1hr propagation delay)
+  c.guilds.cache.forEach(guild => {
+    guild.commands.set(voiceSlashCommands).catch(err => {
+      process.stderr.write(`discord: failed to register voice slash commands in guild ${guild.id}: ${err}\n`)
+    })
   })
 })
 
