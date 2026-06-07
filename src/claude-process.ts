@@ -756,6 +756,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
   private tuiReady = false
   private dismissedMcpDialog = false
   private dismissedApiKeyDialog = false
+  private dismissedSettingsDialog = false
 
   /**
    * Poll the tmux pane for claude's prompt-ready marker (the `❯` cursor
@@ -816,6 +817,27 @@ export class ClaudeProjectProcess implements ProjectProcess {
       if (pane.match(/Do you trust the files in this folder\?|Trust this workspace/i)) {
         this.log('detected workspace-trust dialog — pressing Enter to accept')
         spawnSync('tmux', ['send-keys', '-t', session, 'C-m'], { stdio: 'ignore' })
+        await sleep(800)
+        continue
+      }
+
+      // Auto-dismiss the "Settings Warning" dialog that Claude shows when
+      // ~/.claude/settings.json contains malformed rules (e.g. a wildcard
+      // permission without a `Bash(` prefix). Claude still loads the rest
+      // of the file, but the dialog blocks the prompt from rendering,
+      // which makes the TUI-readiness check time out. Pick "1. Continue"
+      // to unblock — operator should fix the rule in settings.json when
+      // convenient, but we don't want a typo to brick every channel.
+      if (
+        !this.dismissedSettingsDialog &&
+        (pane.includes('Settings Warning') || pane.includes('Invalid permission rule')) &&
+        pane.match(/1\.\s*Continue/)
+      ) {
+        this.log('detected settings warning dialog — sending 1 + Enter to continue')
+        spawnSync('tmux', ['send-keys', '-t', session, '1'], { stdio: 'ignore' })
+        await sleep(120)
+        spawnSync('tmux', ['send-keys', '-t', session, 'C-m'], { stdio: 'ignore' })
+        this.dismissedSettingsDialog = true
         await sleep(800)
         continue
       }
