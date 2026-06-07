@@ -12,8 +12,7 @@ set -euo pipefail
 
 SESSION="${MCD_TMUX_SESSION:-mcd}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# REPO_DIR is the multi-channel-discord repo where bun server.ts lives
-REPO_DIR="${MCD_REPO_DIR:-/home/openclaw/dev/multi-channel-discord}"
+REPO_DIR="${MCD_REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 STATE_DIR="${MCD_CHANNELS_DIR:-$HOME/.claude/channels/discord-multi}"
 
 # Locate bun
@@ -23,8 +22,6 @@ elif [[ -x "$HOME/.bun/bin/bun" ]]; then
   BUN="$HOME/.bun/bin/bun"
 elif [[ -x "$HOME/.local/bin/bun" ]]; then
   BUN="$HOME/.local/bin/bun"
-elif [[ -x "/home/openclaw/.bun/bin/bun" ]]; then
-  BUN="/home/openclaw/.bun/bin/bun"
 else
   BUN="$(command -v bun || true)"
 fi
