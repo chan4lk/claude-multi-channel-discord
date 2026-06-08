@@ -81,11 +81,13 @@ const STATIC = process.env.DISCORD_ACCESS_MODE === 'static'
 
 const teamsAppId = process.env.TEAMS_APP_ID
 const teamsAppSecret = process.env.TEAMS_APP_SECRET
+const teamsTenantId = process.env.TEAMS_TENANT_ID
 let teamsAdapter: TeamsAdapter | null = null
 if (teamsAppId && teamsAppSecret) {
   teamsAdapter = new TeamsAdapter({
     appId: teamsAppId,
     appSecret: teamsAppSecret,
+    ...(teamsTenantId ? { tenantId: teamsTenantId } : {}),
     onInbound: (chatId, env, _serviceUrl) => {
       handleTeamsInbound(chatId, env)
     },

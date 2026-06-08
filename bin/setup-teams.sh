@@ -83,9 +83,10 @@ echo "[teams-setup] Writing credentials to $ENV_FILE..."
 # Remove existing lines, append fresh ones
 touch "$ENV_FILE"
 chmod 0600 "$ENV_FILE"
-grep -v "^TEAMS_APP_ID=\|^TEAMS_APP_SECRET=" "$ENV_FILE" > "$ENV_FILE.tmp" || true
+grep -v "^TEAMS_APP_ID=\|^TEAMS_APP_SECRET=\|^TEAMS_TENANT_ID=" "$ENV_FILE" > "$ENV_FILE.tmp" || true
 echo "TEAMS_APP_ID=$APP_ID" >> "$ENV_FILE.tmp"
 echo "TEAMS_APP_SECRET=$APP_SECRET" >> "$ENV_FILE.tmp"
+echo "TEAMS_TENANT_ID=$TENANT_ID" >> "$ENV_FILE.tmp"
 mv "$ENV_FILE.tmp" "$ENV_FILE"
 chmod 0600 "$ENV_FILE"
 

@@ -59,6 +59,8 @@ interface TeamsActivity {
 export interface TeamsAdapterOpts {
   appId: string
   appSecret: string
+  /** Tenant ID for SingleTenant app registrations. Omit for MultiTenant (botframework.com). */
+  tenantId?: string
   onInbound: (chatId: string, env: InboundEnvelope, serviceUrl: string) => void
 }
 
@@ -75,8 +77,6 @@ const CACHE_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
 // TeamsAdapter
 // ---------------------------------------------------------------------------
 
-const TOKEN_ENDPOINT =
-  'https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token'
 const BOT_FRAMEWORK_SCOPE = 'https://api.botframework.com/.default'
 const CHUNK_SIZE = 4000
 
@@ -86,8 +86,12 @@ export class TeamsAdapter {
   private serviceUrlMap = new Map<string, string>() // chatId → serviceUrl
   private conversationIdMap = new Map<string, string>() // chatId → conversationId
   private tokenCache: { token: string; expiresAt: number } | null = null
+  private readonly tokenEndpoint: string
 
-  constructor(private opts: TeamsAdapterOpts) {}
+  constructor(private opts: TeamsAdapterOpts) {
+    const tenant = opts.tenantId ?? 'botframework.com'
+    this.tokenEndpoint = `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`
+  }
 
   // -------------------------------------------------------------------------
   // Public API
@@ -246,7 +250,7 @@ export class TeamsAdapter {
       scope: BOT_FRAMEWORK_SCOPE,
     })
 
-    const resp = await fetch(TOKEN_ENDPOINT, {
+    const resp = await fetch(this.tokenEndpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: params.toString(),
