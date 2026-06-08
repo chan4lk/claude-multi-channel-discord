@@ -264,16 +264,31 @@ async function handleCreate(rest: string[], ctx: MasterContext): Promise<string>
   const model = typeof flags.model === 'string' ? flags.model : undefined
   if (!prompt) return '`create` requires `--prompt "..."` (use --prompt "" if you really want an empty CLAUDE.md)'
 
+  // --platform flag: 'discord' (default) or 'teams'
+  const platformRaw = typeof flags.platform === 'string' ? flags.platform : 'discord'
+  if (platformRaw !== 'discord' && platformRaw !== 'teams') {
+    return '`--platform` must be `discord` or `teams`'
+  }
+  const platform = platformRaw as 'discord' | 'teams'
+
   // Channel id can come from a positional argument OR `--new-channel <name>`
   // which auto-creates a fresh guild text channel using the bot's
   // Manage Channels permission. (Idempotent — reuses an existing channel
   // with the same name if one's there.)
+  // When --platform teams, the positional arg is the Teams conversation ID;
+  // Discord channel creation is skipped entirely.
   const newChannelName = typeof flags['new-channel'] === 'string' ? flags['new-channel'] : null
   let chatId: string
   let createdChannelNote: string | null = null
   let weCreatedChannel = false
 
-  if (newChannelName !== null) {
+  if (platform === 'teams') {
+    // Teams: positional arg is the conversation ID. --new-channel is not applicable.
+    if (positional.length === 0) {
+      return '`create --platform teams` requires the Teams conversation ID as the first positional argument'
+    }
+    chatId = positional[0]!
+  } else if (newChannelName !== null) {
     if (!ctx.mutator?.createDiscordChannel) {
       return 'auto-create channel unavailable — bot client not wired into the mutator'
     }
@@ -369,6 +384,7 @@ async function handleCreate(rest: string[], ctx: MasterContext): Promise<string>
       ...config.projects,
       [chatId]: {
         slug,
+        ...(platform === 'teams' ? { platform } : {}),
         ...(model ? { model } : {}),
         ...(provider ? { provider } : {}),
       },

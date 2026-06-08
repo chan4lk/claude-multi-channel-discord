@@ -7,7 +7,7 @@ import { channelsFile } from './paths.ts'
 export const SLUG_PATTERN = /^[a-z][a-z0-9_-]{0,30}$/
 
 const SlugSchema = z.string().regex(SLUG_PATTERN, 'slug must be lowercase, 1-31 chars, [a-z0-9_-], start with a letter')
-const ChatIdSchema = z.string().regex(/^\d{15,25}$/, 'chat_id must be a Discord snowflake (15-25 digits)')
+const ChatIdSchema = z.string().regex(/^\d{15,25}$|^[a-zA-Z0-9_:@.!-]{15,}$/, 'chat_id must be a Discord snowflake (15-25 digits) or a Teams conversation ID')
 
 const ProjectGitSchema = z.object({
   // Accept both URL forms and SSH-style `git@host:path` — zod's .url()
@@ -65,6 +65,12 @@ export type VoiceProjectConfig = z.infer<typeof VoiceProjectConfigSchema>
 
 const ProjectSchema = z.object({
   slug: SlugSchema,
+  /**
+   * Messaging platform this project is attached to. Omitted (discord) by default.
+   * Set to 'teams' when the chatId is a Microsoft Teams conversation ID
+   * rather than a Discord channel snowflake.
+   */
+  platform: z.enum(['discord', 'teams']).optional(),
   model: z.string().optional(),
   git: ProjectGitSchema.optional(),
   claude: ClaudeArgsSchema.optional(),
