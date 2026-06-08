@@ -122,6 +122,7 @@ export async function handleVoiceInteraction(
       chatId,
       voiceConfig,
       systemPrompt,
+      projectDir: projectDir(project.slug),
     })
     await interaction.editReply(`Joined <#${voiceChannel.id}>. Listening...`)
   } catch (err) {
