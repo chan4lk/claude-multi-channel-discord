@@ -123,7 +123,17 @@ cat > "$MANIFEST_DIR/manifest.json" << EOF
     "isNotificationOnly": false,
     "supportsFiles": false
   }],
-  "permissions": ["identity", "messageTeamMembers"]
+  "permissions": ["identity", "messageTeamMembers"],
+  "authorization": {
+    "permissions": {
+      "resourceSpecific": [
+        {
+          "name": "ChannelMessage.Read.Group",
+          "type": "Application"
+        }
+      ]
+    }
+  }
 }
 EOF
 
