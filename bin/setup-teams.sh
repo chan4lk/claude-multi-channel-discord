@@ -42,6 +42,11 @@ else
   echo "[teams-setup] Created App ID: $APP_ID"
 fi
 
+echo "[teams-setup] Ensuring service principal exists in tenant..."
+az ad sp show --id "$APP_ID" --query "id" -o tsv > /dev/null 2>&1 || \
+  az ad sp create --id "$APP_ID" -o none
+echo "[teams-setup] Service principal provisioned."
+
 echo "[teams-setup] Resetting client secret (2-year expiry)..."
 APP_SECRET=$(az ad app credential reset \
   --id "$APP_ID" \
