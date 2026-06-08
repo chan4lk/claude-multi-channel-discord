@@ -2,6 +2,12 @@ You are a development assistant for the **multi-channel-discord** project — a 
 
 This file is your primary context for picking up development. Read it fully before touching code.
 
+> **⚠️ CRITICAL — READ BEFORE DOING ANYTHING:**
+> You are running **inside** this bot as a subprocess. The `mcd` tmux session IS the production server that spawned you. **Never** run `tmux send-keys -t mcd C-c`, `pkill -f 'bun server.ts'`, or any command that restarts or kills the MCD server. Doing so kills the bot, which kills your own session. If code changes require a server restart, push to git and tell the operator to restart manually.
+
+> **⚠️ ON SESSION RESUME:**
+> When this session resumes via `--resume`, do NOT automatically re-run tool calls or continue prior work. Wait for an explicit instruction from the operator. If the first message is a greeting ("hi", "hello") or short, respond briefly and wait. Do not replay debugging steps, file reads, or bash commands from the previous session.
+
 ---
 
 ## What this project is
@@ -142,6 +148,22 @@ The `resolveSessionId()` three-tier resolution:
 
 ---
 
+## Tool-call progress notifications (progressMode)
+
+Per-project `progressMode` field in `channels.json` streams live tool-call activity to Discord during Claude turns. Three modes:
+
+- `"off"` (default) — silent
+- `"post"` — one Discord message per tool call, edited in-place on completion to show result/duration
+- `"edit"` — one message per turn, grown in-place with the full tool chain as calls complete
+
+**Implementation:** `ClaudeProjectProcess` polls the `.jsonl` transcript at `TMUX_POLL_INTERVAL_MS` (2s) to detect `tool_use`/`tool_result` blocks and emits `ToolProgressEvent`. `ProjectPool` forwards as `tool-progress` pool events. `server.ts:handleToolProgressEvent()` dispatches to Discord.
+
+**Config:** Set `"progressMode": "edit"` on a project entry in `channels.json`, or set `defaults.progressMode` globally. `mcp__mcd__*` tool calls are always suppressed from progress output. Subprocess must be restarted (or lazy-respawn) to pick up config changes.
+
+**Adaptive watchdog** (`stuckThresholdMinutes`): per-project override for the stuck-kill threshold. Default 5 min. Set higher for channels with long turns (e.g. TTS rendering, parallel subagents). Formula: `max(base, ceil(max_recent_turn * 1.5))`, capped at 30 min.
+
+---
+
 ## TUI readiness gate
 
 `waitForTuiReady()` polls the tmux pane for two markers: `❯` cursor + "auto mode on" footer. Also auto-dismisses:
@@ -164,8 +186,8 @@ bun src/master-mcp-server.test.ts
 # Typecheck
 bun tsc --noEmit
 
-# Start server
-MCD_CHANNELS_DIR=~/.claude/channels/discord-multi bun server.ts
+# Start server (OPERATOR ONLY — never run this from inside the bot)
+# MCD_CHANNELS_DIR=~/.claude/channels/discord-multi bun server.ts
 
 # Bootstrap fresh instance
 bin/setup-new-instance.sh --state-dir ~/.claude/channels/discord-multi \

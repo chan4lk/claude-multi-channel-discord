@@ -684,8 +684,10 @@ export class ClaudeProjectProcess implements ProjectProcess {
       return
     }
 
-    // Brief settle so Ink re-renders the buffer before we submit.
-    await sleep(120)
+    // Give Ink time to process and re-render the input buffer before
+    // submitting. 120ms caused a race where C-m arrived before characters
+    // landed in Ink's input state, submitting partial/empty turns.
+    await sleep(500)
     const sendEnter = spawnSync('tmux', ['send-keys', '-t', session, 'C-m'], {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
@@ -738,9 +740,9 @@ export class ClaudeProjectProcess implements ProjectProcess {
     // we give Ink a beat to render before sending the real user prompt.
     const renameTo = `mcd-${this.slug}`
     spawnSync('tmux', ['send-keys', '-t', session, '-l', `/rename ${renameTo}`], { stdio: 'ignore' })
-    await sleep(120)
+    await sleep(500)
     spawnSync('tmux', ['send-keys', '-t', session, 'C-m'], { stdio: 'ignore' })
-    await sleep(400)
+    await sleep(500)
     this.log(`renamed session → ${renameTo}`)
   }
 
