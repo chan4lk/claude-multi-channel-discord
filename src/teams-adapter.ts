@@ -184,7 +184,7 @@ export class TeamsAdapter {
    * Post a reply to a Teams conversation, chunked at 4000 chars.
    * Uses OAuth2 client-credentials to obtain a Bearer token (cached).
    */
-  async postReply(chatId: string, text: string, replyTo?: string): Promise<void> {
+  async postReply(chatId: string, text: string, replyTo?: string): Promise<string | null> {
     const serviceUrl = this.serviceUrlMap.get(chatId)
     const conversationId = this.conversationIdMap.get(chatId)
 
@@ -192,7 +192,7 @@ export class TeamsAdapter {
       console.error(
         `[TeamsAdapter] postReply: no serviceUrl or conversationId for chatId=${chatId}`
       )
-      return
+      return null
     }
 
     let token: string
@@ -200,11 +200,12 @@ export class TeamsAdapter {
       token = await this.getAccessToken()
     } catch (err) {
       console.error('[TeamsAdapter] postReply: failed to obtain access token:', err)
-      return
+      return null
     }
 
     const chunks = chunkText(text, CHUNK_SIZE)
     const url = `${serviceUrl.replace(/\/$/, '')}/v3/conversations/${encodeURIComponent(conversationId)}/activities`
+    let lastActivityId: string | null = null
 
     for (const chunk of chunks) {
       const body: Record<string, unknown> = { type: 'message', text: chunk }
@@ -226,11 +227,40 @@ export class TeamsAdapter {
           console.error(
             `[TeamsAdapter] postReply: POST failed status=${resp.status} detail=${detail}`
           )
+        } else {
+          const data = await resp.json().catch(() => null) as { id?: string } | null
+          if (data?.id) lastActivityId = data.id
         }
       } catch (err) {
         console.error('[TeamsAdapter] postReply: fetch error:', err)
       }
     }
+    return lastActivityId
+  }
+
+  async updateActivity(chatId: string, activityId: string, text: string): Promise<void> {
+    const serviceUrl = this.serviceUrlMap.get(chatId)
+    const conversationId = this.conversationIdMap.get(chatId)
+
+    if (!serviceUrl || !conversationId) return
+
+    let token: string
+    try {
+      token = await this.getAccessToken()
+    } catch {
+      return
+    }
+
+    const url = `${serviceUrl.replace(/\/$/, '')}/v3/conversations/${encodeURIComponent(conversationId)}/activities/${encodeURIComponent(activityId)}`
+    const body = { type: 'message', text: text.slice(0, 4000) }
+
+    await fetch(url, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).catch((err) => {
+      console.error('[TeamsAdapter] updateActivity: fetch error:', err)
+    })
   }
 
   // -------------------------------------------------------------------------
