@@ -9,13 +9,13 @@
 
 ## Wave 2 — Teams Adapter Core
 
-- [ ] `T2` — Create `src/teams-adapter.ts` with JWT verifier and activity parser
+- [x] `T2` — Create `src/teams-adapter.ts` with JWT verifier and activity parser
   - Files: `src/teams-adapter.ts` (new)
   - Estimate: large
   - Depends: T1
   - Notes: Inline RS256 verifier using Node `crypto`. Cache JWKS 24h, re-fetch on 401. Only process `activity.type === 'message'` with non-empty text. Store `serviceUrl` in `Map<chatId, string>`.
 
-- [ ] `T3` — Add outbound `postReply` to `TeamsAdapter` (client-credentials token + chunked POST)
+- [x] `T3` — Add outbound `postReply` to `TeamsAdapter` (client-credentials token + chunked POST)
   - Files: `src/teams-adapter.ts`
   - Estimate: medium
   - Depends: T2
@@ -23,13 +23,13 @@
 
 ## Wave 3 — Server Wiring
 
-- [ ] `T4` — Add `/teams` route to `MasterMcpServer`
+- [x] `T4` — Add `/teams` route to `MasterMcpServer`
   - Files: `src/master-mcp-server.ts`
   - Estimate: small
   - Depends: T2
   - Notes: Add `teamsAdapter?: TeamsAdapter` to constructor opts. In `handleRequest`, if `url.pathname === '/teams' && method === 'POST'`, delegate to `teamsAdapter.handleRequest`. Return 503 if adapter is null.
 
-- [ ] `T5` — Instantiate `TeamsAdapter` in `server.ts` and wire platform dispatch
+- [x] `T5` — Instantiate `TeamsAdapter` in `server.ts` and wire platform dispatch
   - Files: `server.ts`
   - Estimate: medium
   - Depends: T3, T4
@@ -37,13 +37,13 @@
 
 ## Wave 4 — Master Commands
 
-- [ ] `T6` — Add `--platform teams` flag to `!project create` in `src/master-commands.ts`
+- [x] `T6` — Add `--platform teams` flag to `!project create` in `src/master-commands.ts`
   - Files: `src/master-commands.ts`
   - Estimate: small
   - Depends: T1
   - Notes: When `--platform teams` is set, skip `mutator.createDiscordChannel`; use the positional chat ID arg directly as the Teams conversation ID. Write `platform: 'teams'` to the new project entry.
 
-- [ ] `T7` — Add `!project teams-setup` wizard verb
+- [x] `T7` — Add `!project teams-setup` wizard verb
   - Files: `src/master-commands.ts`
   - Estimate: medium
   - Depends: T1
@@ -51,7 +51,7 @@
 
 ## Wave 5 — Verification
 
-- [ ] `T8` — Typecheck and test suite
+- [x] `T8` — Typecheck and test suite
   - Files: none (verification only)
   - Estimate: small
   - Depends: T5, T6, T7

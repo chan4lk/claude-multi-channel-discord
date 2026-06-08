@@ -34,7 +34,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   }
 
   insertEvent(event)
-  updateLastSeen(event.instance_id, event.ts)
+  updateLastSeen(event)
   broadcast(event)
 
   return new Response('OK', { status: 200 })
