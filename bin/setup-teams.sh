@@ -77,6 +77,7 @@ echo "[teams-setup] Building Teams app manifest ZIP..."
 MANIFEST_DIR=$(mktemp -d)
 cat > "$MANIFEST_DIR/manifest.json" << EOF
 {
+  "\$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
   "manifestVersion": "1.16",
   "version": "1.0.0",
   "id": "$APP_ID",
