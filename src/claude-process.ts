@@ -32,6 +32,7 @@ import type { MasterMcpServer } from './master-mcp-server.ts'
 import { projectDir, projectSessionFile } from './paths.ts'
 import { buildGitEnv, type GitResult as _GitResultUnused } from './git-ops.ts'
 import { getCredential, loadCredentials, type Credential } from './git-credentials.ts'
+import { loadUserEnv, UserEnvError } from './user-env.ts'
 import type {
   InboundEnvelope,
   OutboundReply,
@@ -429,6 +430,32 @@ export class ClaudeProjectProcess implements ProjectProcess {
         this.gitCredentialCleanup = built.cleanup
       } catch (err) {
         this.log(`gitCredential resolve failed: ${(err as Error).message}`)
+      }
+    }
+
+    // Operator-defined env passthrough from ~/.config/multi-channel-discord/env
+    // (overridable via MCD_USER_ENV_FILE). Injects any KEY=VAL entries
+    // into the pane env so spawned Claude sessions can see them — e.g.
+    // OPENAI_API_KEY, ANTHROPIC_API_KEY for a non-routed provider, etc.
+    // Skipped if the file is missing. If it's present but has bad mode
+    // or parse issues, log and continue — don't fail the spawn.
+    try {
+      const userEnv = loadUserEnv()
+      let injected = 0
+      for (const [k, v] of Object.entries(userEnv)) {
+        // process.env wins. This prevents the file from clobbering
+        // values the bot was launched with (e.g. ANTHROPIC_API_KEY
+        // set on the service for a routed provider).
+        if (process.env[k] !== undefined) continue
+        addEnv(k, v)
+        injected += 1
+      }
+      if (injected > 0) this.log(`user-env: injected ${injected} key(s) from ${process.env.MCD_USER_ENV_FILE ?? '~/.config/multi-channel-discord/env'}`)
+    } catch (err) {
+      if (err instanceof UserEnvError) {
+        this.log(`user-env: ${err.message} (skipping)`)
+      } else {
+        this.log(`user-env: unexpected error: ${(err as Error).message} (skipping)`)
       }
     }
 
