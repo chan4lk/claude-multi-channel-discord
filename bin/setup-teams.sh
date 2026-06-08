@@ -29,14 +29,20 @@ az account show --query "user.name" -o tsv > /dev/null
 TENANT_ID=$(az account show --query "tenantId" -o tsv)
 echo "[teams-setup] Tenant ID: $TENANT_ID"
 
-echo "[teams-setup] Creating App Registration: $BOT_NAME"
-APP_ID=$(az ad app create \
-  --display-name "$BOT_NAME" \
-  --sign-in-audience AzureADMyOrg \
-  --query "appId" -o tsv)
-echo "[teams-setup] App ID: $APP_ID"
+echo "[teams-setup] Finding or creating App Registration: $BOT_NAME"
+EXISTING_APP_ID=$(az ad app list --display-name "$BOT_NAME" --query "[0].appId" -o tsv 2>/dev/null || true)
+if [[ -n "$EXISTING_APP_ID" && "$EXISTING_APP_ID" != "None" ]]; then
+  APP_ID="$EXISTING_APP_ID"
+  echo "[teams-setup] Reusing existing App ID: $APP_ID"
+else
+  APP_ID=$(az ad app create \
+    --display-name "$BOT_NAME" \
+    --sign-in-audience AzureADMyOrg \
+    --query "appId" -o tsv)
+  echo "[teams-setup] Created App ID: $APP_ID"
+fi
 
-echo "[teams-setup] Creating client secret (2-year expiry)..."
+echo "[teams-setup] Resetting client secret (2-year expiry)..."
 APP_SECRET=$(az ad app credential reset \
   --id "$APP_ID" \
   --years 2 \
@@ -45,19 +51,29 @@ APP_SECRET=$(az ad app credential reset \
 echo "[teams-setup] Creating resource group: $RESOURCE_GROUP"
 az group create --name "$RESOURCE_GROUP" --location eastus -o none
 
-echo "[teams-setup] Creating Azure Bot resource..."
-az bot create \
-  --resource-group "$RESOURCE_GROUP" \
-  --name "$BOT_NAME" \
-  --app-type SingleTenant \
-  --appid "$APP_ID" \
-  --tenant-id "$TENANT_ID" \
-  --endpoint "$MESSAGING_ENDPOINT" \
-  --location "global" \
-  --sku F0 \
-  -o none
+echo "[teams-setup] Finding or creating Azure Bot resource..."
+EXISTING_BOT=$(az bot show --resource-group "$RESOURCE_GROUP" --name "$BOT_NAME" --query "name" -o tsv 2>/dev/null || true)
+if [[ -n "$EXISTING_BOT" && "$EXISTING_BOT" != "None" ]]; then
+  echo "[teams-setup] Bot already exists — updating endpoint..."
+  az bot update \
+    --resource-group "$RESOURCE_GROUP" \
+    --name "$BOT_NAME" \
+    --endpoint "$MESSAGING_ENDPOINT" \
+    -o none
+else
+  az bot create \
+    --resource-group "$RESOURCE_GROUP" \
+    --name "$BOT_NAME" \
+    --app-type SingleTenant \
+    --appid "$APP_ID" \
+    --tenant-id "$TENANT_ID" \
+    --endpoint "$MESSAGING_ENDPOINT" \
+    --location "global" \
+    --sku F0 \
+    -o none
+fi
 
-echo "[teams-setup] Enabling Microsoft Teams channel..."
+echo "[teams-setup] Enabling Microsoft Teams channel (idempotent)..."
 az bot msteams create \
   --resource-group "$RESOURCE_GROUP" \
   --name "$BOT_NAME" \
