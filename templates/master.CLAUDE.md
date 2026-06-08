@@ -37,6 +37,8 @@ The bot exposes `mcp__mcd__run_master_command` — **available only in this mast
 | "set ai-core's model to MiniMax-M2.7" | `run_master_command({ command: "model ai-core --set MiniMax-M2.7" })` (subprocess respawns) |
 | "what model is ai-core using?" | `run_master_command({ command: "show ai-core" })` (or `model ai-core`) |
 | "create a fresh project that uses minimax" | `run_master_command({ command: 'create --new-channel <slug> --slug <slug> --prompt "..." --provider minimax --model MiniMax-M2.7' })` |
+| "create a Teams project for this conversation ID: <id>" | `run_master_command({ command: 'create --platform teams <id> --slug <slug> --prompt "..."' })` |
+| "set up Teams credentials" / "teams-setup" | `run_master_command({ command: 'teams-setup <APP_ID> <APP_SECRET>' })` — writes TEAMS_APP_ID + TEAMS_APP_SECRET to .env |
 
 After calling the tool, take its returned text and emit it via `mcp__mcd__reply` (lightly cleaned up if it's verbose). Don't dump raw command output unless the operator explicitly asks for it — paraphrase the success and surface any errors clearly.
 
@@ -53,12 +55,18 @@ status <chat_id-or-slug>                — alias for show
 
 create <chat_id> --slug X --prompt "..." [--model M] [--provider NAME] [--repo-dir PATH]
 create --new-channel NAME --slug X --prompt "..." [--model M] [--provider NAME] [--parent CATEGORY_ID]
+create --platform teams <TEAMS_CONV_ID> --slug X --prompt "..."
    --new-channel auto-creates a Discord channel (needs Manage Channels perm)
+   --platform teams  attach to a Teams conversation instead of Discord
+                     TEAMS_CONV_ID: obtained from server logs after the first
+                     message the bot receives in that Teams channel/chat
    --repo-dir attaches to an existing local checkout via symlink
    --provider NAME routes the project's agent to a non-default provider
                    (e.g. `minimax`). Provider catalog lives at
                    defaults.providers in channels.json. Unset = use the
                    operator's Claude Code subscription.
+
+teams-setup [APP_ID APP_SECRET]   — write TEAMS_APP_ID/TEAMS_APP_SECRET to .env
 
 clone <chat_id-or--new-channel NAME> --slug X --repo URL [--branch BR] [--creds NAME] [--provider NAME] [--prompt "..."]
    Defaults inherit from channels.json defaults.git.credentials. Aliases live in
@@ -118,6 +126,20 @@ Projects default to the operator's Claude Code subscription auth (no API key, no
 Then on `create` / `clone` add `--provider minimax`, optionally with `--model MiniMax-M2.7`. The bot reads `MINIMAX_API_KEY` from its process env and exposes it (along with `ANTHROPIC_BASE_URL`) to the per-project claude subprocess. The agent in that channel calls MiniMax instead of Anthropic — same `mcp__mcd__reply` tool, same git env, just a different model API on the back end.
 
 `!project show <slug>` displays the resolved provider so you can verify routing. To switch an existing project on the fly (e.g. claude rate-limited → fall back to MiniMax), use `!project provider <slug> --set <alias>`. The subprocess is killed automatically; the next message in that channel respawns with the new env. Switch back with `--clear`.
+
+# Teams projects
+
+To wire up a Microsoft Teams channel/chat as a project:
+
+1. **Credentials** — run `!project teams-setup <APP_ID> <APP_SECRET>` once (writes to .env; values came from `bin/setup-teams.sh`).
+2. **Get the conv-id** — install the Teams app, then send any message to the bot in the target Teams channel or chat. The server logs the incoming `chatId` (look for `[TeamsAdapter] inbound chatId=...`). That value is the `<CONV_ID>`.
+3. **Create the project** — `!project create --platform teams <CONV_ID> --slug <slug> --prompt "..."`.
+
+The `CONV_ID` is either:
+- A Teams **channel ID** (`teamsChannelId`) for team/channel conversations — looks like `19:abc123@thread.tacv2`
+- A **conversation ID** (`conversation.id`) for direct messages / group chats — looks like `a:abc123...`
+
+The bot logs whichever arrives first. The operator can also check with: `journalctl -u mcd -n 100 | grep 'TeamsAdapter'` (or the tmux pane running MCD).
 
 # Design tips
 
