@@ -27,7 +27,7 @@ import { z } from 'zod'
 import { channelsDir } from './paths.ts'
 import type { OutboundReply } from './project-process.ts'
 
-const ChatIdRoute = /^\/mcp\/([A-Za-z0-9:_\-\.%+]{3,300})\/?$/
+const ChatIdRoute = /^\/mcp\/([A-Za-z0-9:_\-\.%+@]{3,300})\/?$/
 
 export interface MasterMcpServerOptions {
   host?: string
