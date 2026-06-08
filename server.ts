@@ -1047,6 +1047,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
   }
 
   const master = new MasterMcpServer({
+    port: process.env.MCD_MCP_PORT ? parseInt(process.env.MCD_MCP_PORT, 10) : undefined,
     onReply: (reply) => {
       // Route through the pool so the matching process bumps activity and
       // any pool-side observers fire before we hit Discord.
