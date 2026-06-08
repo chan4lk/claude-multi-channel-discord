@@ -29,14 +29,17 @@ fi
 rm -rf /tmp/tmux-"$(id -u)" 2>/dev/null || true
 
 while true; do
-  if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+  # `=SESSION` forces exact name match; without it, tmux prefix-matches, so an
+  # orphaned per-project session like `mcd-claude-…` fools us into thinking
+  # the master session still exists and we silently no-op the restart.
+  if ! tmux has-session -t "=$SESSION" 2>/dev/null; then
     tmux new-session -d -s "$SESSION" \
       -c "$REPO_DIR" \
       "$BUN server.ts"
   fi
 
-  # Block until the tmux session ends.
-  while tmux has-session -t "$SESSION" 2>/dev/null; do
+  # Block until the exact tmux session ends.
+  while tmux has-session -t "=$SESSION" 2>/dev/null; do
     sleep 5
   done
 
