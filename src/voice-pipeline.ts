@@ -10,7 +10,8 @@ import {
   type AudioPlayer,
 } from '@discordjs/voice'
 import { OpusEncoder } from '@discordjs/opus'
-import { writeFileSync, unlinkSync, createReadStream } from 'node:fs'
+import { writeFileSync, readFileSync, readdirSync, mkdirSync, existsSync, unlinkSync, createReadStream } from 'node:fs'
+import { resolve, join, relative } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
@@ -35,6 +36,23 @@ function decodeOpusFramesToPcm16Mono(frames: Buffer[]): Buffer {
   const mono = Buffer.alloc(outputSamples * 2)
   for (let i = 0; i < outputSamples; i++) {
     const src = i * 3 * 4
+    const l = stereo.readInt16LE(src)
+    const r = stereo.readInt16LE(src + 2)
+    mono.writeInt16LE(Math.round((l + r) / 2), i * 2)
+  }
+  return mono
+}
+
+// Decode a single Opus frame → PCM16 24kHz mono (for OpenAI Realtime API)
+function decodeOpusFramePcm24kMono(frame: Buffer, encoder: OpusEncoder): Buffer {
+  let stereo: Buffer
+  try { stereo = encoder.decode(frame) } catch { return Buffer.alloc(0) }
+  // stereo: 48kHz 2ch int16 LE → 24kHz 1ch int16 LE (2:1 downsample + mono mix)
+  const inputSamples = Math.floor(stereo.byteLength / 4)
+  const outputSamples = Math.floor(inputSamples / 2)
+  const mono = Buffer.alloc(outputSamples * 2)
+  for (let i = 0; i < outputSamples; i++) {
+    const src = i * 2 * 4
     const l = stereo.readInt16LE(src)
     const r = stereo.readInt16LE(src + 2)
     mono.writeInt16LE(Math.round((l + r) / 2), i * 2)
@@ -144,6 +162,15 @@ interface VoiceSession {
   voiceConfig: VoiceProjectConfig
   audioPlayer: AudioPlayer
   systemPrompt: string
+  projectDir: string
+  // OpenAI Realtime provider fields
+  realtimeWs?: WebSocket
+  realtimeAudioChunks?: Buffer[]
+  realtimeUserText?: string
+  realtimeBotText?: string
+  realtimeTurnStart?: number
+  realtimeLastUserId?: string
+  realtimeEncoder?: OpusEncoder
 }
 
 export class VoicePipeline {
@@ -161,6 +188,7 @@ export class VoicePipeline {
     chatId: string
     voiceConfig: VoiceProjectConfig
     systemPrompt: string
+    projectDir: string
   }): Promise<void> {
     if (this.sessions.has(opts.guildId)) {
       this.teardown(opts.guildId)
@@ -191,6 +219,7 @@ export class VoicePipeline {
       voiceConfig: opts.voiceConfig,
       audioPlayer,
       systemPrompt: opts.systemPrompt,
+      projectDir: opts.projectDir,
     }
 
     this.sessions.set(opts.guildId, session)
@@ -222,10 +251,18 @@ export class VoicePipeline {
     const session = this.sessions.get(guildId)
     if (!session) return
     try { session.connection.destroy() } catch {}
+    if (session.realtimeWs && session.realtimeWs.readyState === WebSocket.OPEN) {
+      try { session.realtimeWs.close() } catch {}
+    }
     this.sessions.delete(guildId)
   }
 
   private attachReceiverHandlers(session: VoiceSession): void {
+    if (session.voiceConfig.provider === 'openai-realtime') {
+      this.attachRealtimeHandlers(session)
+      return
+    }
+
     const { connection } = session
 
     connection.receiver.speaking.on('start', (userId: string) => {
@@ -250,6 +287,263 @@ export class VoicePipeline {
           })
       })
     })
+  }
+
+  private attachRealtimeHandlers(session: VoiceSession): void {
+    const apiKey = process.env.OPENAI_API_KEY
+    if (!apiKey) {
+      process.stderr.write(`voice: OPENAI_API_KEY not set — cannot use openai-realtime in guild ${session.guildId}\n`)
+      return
+    }
+
+    session.realtimeEncoder = new OpusEncoder(48000, 2)
+    session.realtimeAudioChunks = []
+
+    const realtimeModel = process.env.MCD_REALTIME_MODEL ?? 'gpt-realtime'
+    const ws = new WebSocket(
+      `wss://api.openai.com/v1/realtime?model=${realtimeModel}`,
+      // @ts-ignore — Bun WebSocket supports headers as second arg
+      { headers: { 'Authorization': `Bearer ${apiKey}` } },
+    )
+    session.realtimeWs = ws
+
+    ws.onopen = () => {
+      process.stderr.write(`voice: OpenAI Realtime connected for guild ${session.guildId}\n`)
+      ws.send(JSON.stringify({
+        type: 'session.update',
+        session: {
+          type: 'realtime',
+          model: realtimeModel,
+          output_modalities: ['audio'],
+          instructions: session.systemPrompt,
+          tools: [
+            {
+              type: 'function',
+              name: 'list_files',
+              description: 'List files in the project directory (prds/ folder and root files like BACKLOG.md)',
+              parameters: {
+                type: 'object',
+                properties: {
+                  subdir: { type: 'string', description: 'Subdirectory to list, e.g. "prds". Defaults to project root.' },
+                },
+                required: [],
+              },
+            },
+            {
+              type: 'function',
+              name: 'read_file',
+              description: 'Read a file from the project. Use paths like "BACKLOG.md" or "prds/my-feature.md".',
+              parameters: {
+                type: 'object',
+                properties: {
+                  path: { type: 'string', description: 'File path relative to project root' },
+                },
+                required: ['path'],
+              },
+            },
+            {
+              type: 'function',
+              name: 'write_file',
+              description: 'Write or overwrite a file in the project. Creates parent dirs automatically. Use for saving PRDs or updating BACKLOG.md.',
+              parameters: {
+                type: 'object',
+                properties: {
+                  path: { type: 'string', description: 'File path relative to project root, e.g. "prds/my-feature.md"' },
+                  content: { type: 'string', description: 'Full file content to write' },
+                },
+                required: ['path', 'content'],
+              },
+            },
+          ],
+          audio: {
+            input: {
+              format: { type: 'audio/pcm', rate: 24000 },
+              turn_detection: { type: 'none' },
+            },
+            output: {
+              format: { type: 'audio/pcm', rate: 24000 },
+              voice: 'alloy',
+            },
+          },
+        },
+      }))
+    }
+
+    ws.onmessage = (event: MessageEvent) => {
+      try {
+        let raw: string
+        if (typeof event.data === 'string') {
+          raw = event.data
+        } else if (event.data instanceof ArrayBuffer) {
+          raw = Buffer.from(event.data).toString('utf8')
+        } else {
+          raw = Buffer.from(event.data as Uint8Array).toString('utf8')
+        }
+        const msg = JSON.parse(raw) as { type: string; [key: string]: unknown }
+        if (msg.type.includes('output_audio') && msg.type.includes('delta')) {
+          process.stderr.write(`voice: realtime audio delta keys=${Object.keys(msg).join(',')} guild=${session.guildId}\n`)
+        } else if (!msg.type.includes('delta')) {
+          process.stderr.write(`voice: realtime event type=${msg.type} guild=${session.guildId}\n`)
+        }
+        this.handleRealtimeEvent(session, msg)
+      } catch (err) {
+        process.stderr.write(`voice: realtime onmessage parse error: ${(err as Error).message}\n`)
+      }
+    }
+
+    ws.onerror = () => {
+      process.stderr.write(`voice: Realtime WS error in guild ${session.guildId}\n`)
+    }
+
+    ws.onclose = () => {
+      process.stderr.write(`voice: Realtime WS closed for guild ${session.guildId}\n`)
+    }
+
+    const { connection } = session
+    connection.receiver.speaking.on('start', (userId: string) => {
+      process.stderr.write(`voice: realtime speaking start from ${userId} in guild ${session.guildId}\n`)
+      session.realtimeLastUserId = userId
+      if (!session.realtimeTurnStart) session.realtimeTurnStart = Date.now()
+
+      const stream = connection.receiver.subscribe(userId, {
+        end: { behavior: EndBehaviorType.AfterSilence, duration: 1500 },
+      })
+
+      stream.on('data', (chunk: Buffer) => {
+        if (!session.realtimeEncoder || ws.readyState !== WebSocket.OPEN) return
+        const pcm24k = decodeOpusFramePcm24kMono(chunk, session.realtimeEncoder)
+        if (pcm24k.byteLength === 0) return
+        ws.send(JSON.stringify({
+          type: 'input_audio_buffer.append',
+          audio: pcm24k.toString('base64'),
+        }))
+      })
+
+      stream.on('end', () => {
+        if (ws.readyState !== WebSocket.OPEN) return
+        process.stderr.write(`voice: realtime committing audio buffer for guild ${session.guildId}\n`)
+        ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }))
+      })
+    })
+  }
+
+  private handleRealtimeEvent(session: VoiceSession, event: { type: string; [key: string]: unknown }): void {
+    switch (event.type) {
+      case 'response.audio.delta':
+      case 'response.output_audio.delta': {
+        const audioB64 = (event.delta ?? event.audio) as string | undefined
+        if (audioB64) session.realtimeAudioChunks?.push(Buffer.from(audioB64, 'base64'))
+        break
+      }
+      case 'response.audio.done':
+      case 'response.output_audio.done': {
+        session.turnQueue = session.turnQueue
+          .then(() => this.playRealtimeAudio(session))
+          .catch((err: Error) => {
+            process.stderr.write(`voice: realtime playback error: ${err.message}\n`)
+          })
+        break
+      }
+      case 'response.audio_transcript.done':
+      case 'response.output_audio_transcript.done': {
+        session.realtimeBotText = (event.transcript ?? event.text) as string
+        break
+      }
+      case 'conversation.item.input_audio_transcription.completed': {
+        session.realtimeUserText = (event.transcript as string) ?? ''
+        break
+      }
+      case 'response.done': {
+        const userText = session.realtimeUserText ?? ''
+        const botText = session.realtimeBotText ?? ''
+        const userId = session.realtimeLastUserId ?? 'unknown'
+        const durationMs = Date.now() - (session.realtimeTurnStart ?? Date.now())
+        session.realtimeUserText = undefined
+        session.realtimeBotText = undefined
+        session.realtimeTurnStart = undefined
+        if (userText || botText) {
+          this.onTurnComplete({
+            chatId: session.chatId,
+            guildId: session.guildId,
+            userId,
+            ts: new Date().toISOString(),
+            userText,
+            botText,
+            durationMs,
+          }).catch((err: Error) => {
+            process.stderr.write(`voice: onTurnComplete error: ${err.message}\n`)
+          })
+        }
+        break
+      }
+      case 'response.function_call_arguments.done': {
+        const name = event.name as string
+        const callId = event.call_id as string
+        let args: Record<string, string> = {}
+        try { args = JSON.parse(event.arguments as string) } catch {}
+        process.stderr.write(`voice: tool call name=${name} args=${JSON.stringify(args)} guild=${session.guildId}\n`)
+        const output = this.executeFilesystemTool(session.projectDir, name, args)
+        if (session.realtimeWs && session.realtimeWs.readyState === WebSocket.OPEN) {
+          session.realtimeWs.send(JSON.stringify({
+            type: 'conversation.item.create',
+            item: { type: 'function_call_output', call_id: callId, output },
+          }))
+          session.realtimeWs.send(JSON.stringify({ type: 'response.create' }))
+        }
+        break
+      }
+      case 'error': {
+        process.stderr.write(`voice: Realtime API error: ${JSON.stringify(event.error)}\n`)
+        break
+      }
+    }
+  }
+
+  private executeFilesystemTool(projectDir: string, name: string, args: Record<string, string>): string {
+    try {
+      if (name === 'list_files') {
+        const subdir = args.subdir ?? ''
+        const target = subdir ? join(projectDir, subdir) : projectDir
+        if (!existsSync(target)) return `Directory not found: ${subdir || '.'}`
+        const entries = readdirSync(target, { withFileTypes: true })
+        return entries.map(e => e.isDirectory() ? `${e.name}/` : e.name).join('\n') || '(empty)'
+      }
+      if (name === 'read_file') {
+        const safePath = resolve(projectDir, args.path ?? '')
+        if (!safePath.startsWith(projectDir)) return 'Error: path outside project directory'
+        if (!existsSync(safePath)) return `File not found: ${args.path}`
+        return readFileSync(safePath, 'utf8')
+      }
+      if (name === 'write_file') {
+        const safePath = resolve(projectDir, args.path ?? '')
+        if (!safePath.startsWith(projectDir)) return 'Error: path outside project directory'
+        const dir = join(safePath, '..')
+        mkdirSync(dir, { recursive: true })
+        writeFileSync(safePath, args.content ?? '', 'utf8')
+        return `Written: ${relative(projectDir, safePath)}`
+      }
+      return `Unknown tool: ${name}`
+    } catch (err) {
+      return `Error: ${(err as Error).message}`
+    }
+  }
+
+  private async playRealtimeAudio(session: VoiceSession): Promise<void> {
+    const chunks = session.realtimeAudioChunks ?? []
+    session.realtimeAudioChunks = []
+    if (chunks.length === 0) return
+    const pcm = Buffer.concat(chunks)
+    const wavPath = `/tmp/mcd-rt-${randomBytes(6).toString('hex')}.wav`
+    try {
+      writeWav(wavPath, pcm, 24000)
+      const resource = createAudioResource(createReadStream(wavPath))
+      session.audioPlayer.play(resource)
+      await entersState(session.audioPlayer, AudioPlayerStatus.Idle, session.voiceConfig.maxTurnSeconds * 1000)
+    } catch (err) {
+      process.stderr.write(`voice: realtime audio playback error: ${(err as Error).message}\n`)
+    } finally {
+      try { unlinkSync(wavPath) } catch {}
+    }
   }
 
   protected async onUtteranceEnd(

@@ -60,6 +60,7 @@ const VoiceProjectConfigSchema = z.object({
   enabled: z.boolean().default(false),
   kokoroVoice: z.string().default('af_bella'),
   maxTurnSeconds: z.number().int().positive().default(30),
+  provider: z.enum(['local', 'openai-realtime']).default('local'),
 })
 export type VoiceProjectConfig = z.infer<typeof VoiceProjectConfigSchema>
 
