@@ -57,6 +57,13 @@ export interface MasterMcpServerOptions {
   executeMasterCommand?: (commandLine: string) => Promise<string>
   /** Diagnostics. Defaults to stderr. */
   log?: (msg: string) => void
+  /**
+   * Optional adapter for MS Teams webhook activities. When set, POST
+   * requests to `/teams` are forwarded here. When absent, `/teams`
+   * returns 503. Declared as a structural (duck-typed) interface to
+   * avoid importing TeamsAdapter directly.
+   */
+  teamsAdapter?: { handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> }
 }
 
 export class MasterMcpServer {
@@ -69,6 +76,7 @@ export class MasterMcpServer {
   private readonly getMasterChatId: () => string | undefined
   private readonly executeMasterCommand: ((cmd: string) => Promise<string>) | null
   private readonly log: (msg: string) => void
+  private readonly teamsAdapter: { handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> } | undefined
 
   constructor(opts: MasterMcpServerOptions) {
     this.host = opts.host ?? '127.0.0.1'
@@ -78,6 +86,7 @@ export class MasterMcpServer {
     this.getMasterChatId = opts.getMasterChatId ?? (() => undefined)
     this.executeMasterCommand = opts.executeMasterCommand ?? null
     this.log = opts.log ?? ((m) => process.stderr.write(`[mcp-master] ${m}\n`))
+    this.teamsAdapter = opts.teamsAdapter
   }
 
   async start(): Promise<{ host: string; port: number }> {
@@ -128,6 +137,17 @@ export class MasterMcpServer {
 
   private async route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = req.url ?? ''
+
+    if (url === '/teams' && req.method === 'POST') {
+      if (this.teamsAdapter) {
+        await this.teamsAdapter.handleRequest(req, res)
+      } else {
+        res.writeHead(503, { 'Content-Type': 'text/plain' })
+        res.end('Teams adapter not configured')
+      }
+      return
+    }
+
     const match = ChatIdRoute.exec(url)
     if (!match) {
       res.writeHead(404, { 'Content-Type': 'application/json' })

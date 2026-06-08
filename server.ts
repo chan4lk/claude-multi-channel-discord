@@ -38,6 +38,7 @@ import { join, sep } from 'path'
 import { buildEmitter } from './src/mission-control-emitter.ts'
 
 import { loadConfig as loadChannelsConfig, resolveClaudeArgs, resolveProvider } from './src/channels-config.ts'
+import { TeamsAdapter } from './src/teams-adapter.ts'
 import { ClaudeProjectProcess } from './src/claude-process.ts'
 import { chunk as chunkText, DISCORD_HARD_CHUNK_LIMIT } from './src/discord-chunk.ts'
 import { handleMasterCommand } from './src/master-commands.ts'
@@ -77,6 +78,43 @@ try {
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN
 const STATIC = process.env.DISCORD_ACCESS_MODE === 'static'
+
+const teamsAppId = process.env.TEAMS_APP_ID
+const teamsAppSecret = process.env.TEAMS_APP_SECRET
+let teamsAdapter: TeamsAdapter | null = null
+if (teamsAppId && teamsAppSecret) {
+  teamsAdapter = new TeamsAdapter({
+    appId: teamsAppId,
+    appSecret: teamsAppSecret,
+    onInbound: (chatId, env, _serviceUrl) => {
+      handleTeamsInbound(chatId, env)
+    },
+  })
+  process.stderr.write('discord: Teams adapter initialized\n')
+}
+
+function handleTeamsInbound(chatId: string, env: import('./src/project-process.ts').InboundEnvelope): void {
+  if (!projectPool) {
+    process.stderr.write(`teams: drop — project pool not initialized for chat_id ${chatId}\n`)
+    return
+  }
+  let cfg
+  try {
+    cfg = loadChannelsConfig()
+  } catch {
+    cfg = null
+  }
+  if (!cfg || !cfg.projects[chatId]) {
+    process.stderr.write(`teams: drop — no project for chat_id ${chatId}\n`)
+    return
+  }
+  process.stderr.write(`teams: route chat=${chatId} user=${env.userId} → pool\n`)
+  void projectPool
+    .deliver(chatId, env)
+    .catch((err) => {
+      process.stderr.write(`teams: pool deliver failed: ${err}\n`)
+    })
+}
 
 if (!TOKEN) {
   process.stderr.write(
@@ -1009,6 +1047,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
   }
 
   const master = new MasterMcpServer({
+    port: process.env.MCD_MCP_PORT ? parseInt(process.env.MCD_MCP_PORT, 10) : undefined,
     onReply: (reply) => {
       // Route through the pool so the matching process bumps activity and
       // any pool-side observers fire before we hit Discord.
@@ -1021,6 +1060,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
     // Reread channels.json each call — `master.chatId` can change at
     // runtime via terminal `/discord:project init` re-pointing.
     getMasterChatId: () => loadChannelsConfig().master?.chatId,
+    teamsAdapter: teamsAdapter ?? undefined,
     // Master-only privileged path. Claude in the master channel can
     // execute the same `!project ...` verbs the operator would type, so
     // natural-language asks like "create a project for keyflow at <url>"
@@ -1084,9 +1124,19 @@ async function maybeInitProjectsBackend(): Promise<void> {
     },
     getConfig: loadChannelsConfig,
     onReply: (reply) => {
-      void dispatchProjectReply(reply).catch((err) => {
-        process.stderr.write(`discord: project reply dispatch failed: ${err}\n`)
-      })
+      const cfg = loadChannelsConfig()
+      const platform = cfg.projects[reply.chatId]?.platform ?? 'discord'
+      if (platform === 'teams' && teamsAdapter) {
+        if (reply.kind === 'text') {
+          teamsAdapter.postReply(reply.chatId, reply.text, reply.replyTo).catch(err => {
+            process.stderr.write(`teams: postReply failed: ${err}\n`)
+          })
+        }
+      } else {
+        void dispatchProjectReply(reply).catch((err) => {
+          process.stderr.write(`discord: project reply dispatch failed: ${err}\n`)
+        })
+      }
     },
     onEvent: (evt) => {
       if (evt.kind !== 'tool-progress') {
@@ -1198,8 +1248,12 @@ async function dispatchProjectReply(reply: OutboundReply): Promise<void> {
 
   const chunks = chunkText(reply.text, limit, mode)
   process.stderr.write(`discord: dispatch chat=${reply.chatId} chunks=${chunks.length} text=${JSON.stringify(reply.text).slice(0, 60)}\n`)
-  // Real reply marks end of turn — clear progress state so the next turn starts fresh.
-  editProgressState.delete(reply.chatId)
+  // Real reply marks end of turn — delete the progress message and clear state.
+  const progressState = editProgressState.get(reply.chatId)
+  if (progressState) {
+    editProgressState.delete(reply.chatId)
+    channel.messages.fetch(progressState.msgId).then((m) => m.delete()).catch(() => {})
+  }
   for (let i = 0; i < chunks.length; i++) {
     const isFirst = i === 0
     const threadThis =

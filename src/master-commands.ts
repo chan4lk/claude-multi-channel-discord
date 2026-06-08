@@ -16,7 +16,7 @@ import {
 } from './channels-config.ts'
 import { buildGitEnv, gitClone, gitPullFastForward, gitSetRemote, gitStatusSummary } from './git-ops.ts'
 import { getCredential, loadCredentials } from './git-credentials.ts'
-import { accessFile, archiveDir, projectClaudeMd, projectDir } from './paths.ts'
+import { accessFile, archiveDir, channelsDir, projectClaudeMd, projectDir } from './paths.ts'
 import { loadSchedules, newScheduleId, saveSchedules, type Schedule } from './schedules-config.ts'
 
 export type MasterCommandResult =
@@ -142,6 +142,8 @@ export async function handleMasterCommand(
       return { kind: 'reply', text: await handleModel(rest, ctx) }
     case 'progress':
       return { kind: 'reply', text: await handleProgress(rest, ctx) }
+    case 'teams-setup':
+      return { kind: 'reply', text: handleTeamsSetup(rest) }
     default:
       return {
         kind: 'reply',
@@ -171,6 +173,7 @@ function helpText(prefix: string): string {
     `${prefix} provider <chat_id-or-slug> [--set ALIAS | --clear]    — switch a project to a different provider (or back to Claude subscription)`,
     `${prefix} model    <chat_id-or-slug> [--set NAME | --clear]    — set or clear the project's --model arg`,
     `${prefix} progress <chat_id-or-slug> [--set off|edit|post | --clear]    — show/set live tool-call progress mode`,
+    `${prefix} teams-setup <APP_ID> <APP_SECRET>                      — write Teams bot credentials to .env (run without args for instructions)`,
     `${prefix} rm     <chat_id-or-slug> --yes                         — archive + remove`,
     `${prefix} help                          — this message`,
     '```',
@@ -264,16 +267,31 @@ async function handleCreate(rest: string[], ctx: MasterContext): Promise<string>
   const model = typeof flags.model === 'string' ? flags.model : undefined
   if (!prompt) return '`create` requires `--prompt "..."` (use --prompt "" if you really want an empty CLAUDE.md)'
 
+  // --platform flag: 'discord' (default) or 'teams'
+  const platformRaw = typeof flags.platform === 'string' ? flags.platform : 'discord'
+  if (platformRaw !== 'discord' && platformRaw !== 'teams') {
+    return '`--platform` must be `discord` or `teams`'
+  }
+  const platform = platformRaw as 'discord' | 'teams'
+
   // Channel id can come from a positional argument OR `--new-channel <name>`
   // which auto-creates a fresh guild text channel using the bot's
   // Manage Channels permission. (Idempotent — reuses an existing channel
   // with the same name if one's there.)
+  // When --platform teams, the positional arg is the Teams conversation ID;
+  // Discord channel creation is skipped entirely.
   const newChannelName = typeof flags['new-channel'] === 'string' ? flags['new-channel'] : null
   let chatId: string
   let createdChannelNote: string | null = null
   let weCreatedChannel = false
 
-  if (newChannelName !== null) {
+  if (platform === 'teams') {
+    // Teams: positional arg is the conversation ID. --new-channel is not applicable.
+    if (positional.length === 0) {
+      return '`create --platform teams` requires the Teams conversation ID as the first positional argument'
+    }
+    chatId = positional[0]!
+  } else if (newChannelName !== null) {
     if (!ctx.mutator?.createDiscordChannel) {
       return 'auto-create channel unavailable — bot client not wired into the mutator'
     }
@@ -369,6 +387,7 @@ async function handleCreate(rest: string[], ctx: MasterContext): Promise<string>
       ...config.projects,
       [chatId]: {
         slug,
+        ...(platform === 'teams' ? { platform } : {}),
         ...(model ? { model } : {}),
         ...(provider ? { provider } : {}),
       },
@@ -1101,6 +1120,66 @@ async function handleStop(rest: string[], ctx: MasterContext): Promise<string> {
     return `kill failed: ${(err as Error).message}`
   }
   return `✅ stopped **${entry.project.slug}**. The next message in that channel will spawn a fresh subprocess.`
+}
+
+/**
+ * `!project teams-setup <APP_ID> <APP_SECRET>`
+ *
+ * Without args: print Azure Bot Registration setup instructions.
+ * With args: write TEAMS_APP_ID and TEAMS_APP_SECRET to the .env file
+ * (appending or overwriting existing lines). Mode 0600.
+ */
+function handleTeamsSetup(rest: string[]): string {
+  if (rest.length < 2) {
+    return [
+      '**Teams setup**: create an Azure Bot Registration at portal.azure.com:',
+      '```',
+      '1. Create → "Azure Bot" resource',
+      '2. Bot handle: choose any name',
+      '3. Messaging endpoint: https://<your-server-host>/teams',
+      '4. Under "Configuration" → "Manage Password" → add a client secret',
+      '5. Note the App ID (from "Configuration") and the secret value',
+      '```',
+      'Then run:',
+      '```',
+      '!project teams-setup <APP_ID> <APP_SECRET>',
+      '```',
+    ].join('\n')
+  }
+
+  const appId = rest[0]!
+  const appSecret = rest[1]!
+
+  const envPath = join(channelsDir(), '.env')
+
+  let current = ''
+  try {
+    current = readFileSync(envPath, 'utf8')
+  } catch {
+    // File may not exist yet; start fresh.
+  }
+
+  // Remove any existing TEAMS_APP_ID / TEAMS_APP_SECRET lines.
+  const lines = current.split('\n').filter(
+    (l) => !l.startsWith('TEAMS_APP_ID=') && !l.startsWith('TEAMS_APP_SECRET='),
+  )
+  // Trim trailing empty lines so we don't accumulate blank rows.
+  while (lines.length > 0 && lines[lines.length - 1]!.trim() === '') {
+    lines.pop()
+  }
+
+  lines.push(`TEAMS_APP_ID=${appId}`)
+  lines.push(`TEAMS_APP_SECRET=${appSecret}`)
+  lines.push('')
+
+  writeFileSync(envPath, lines.join('\n'), { mode: 0o600 })
+
+  return [
+    `✅ Teams credentials written to \`${envPath}\`.`,
+    `TEAMS_APP_ID: \`${appId}\``,
+    `TEAMS_APP_SECRET: \`${'*'.repeat(Math.min(appSecret.length, 8))}...\``,
+    '_Restart the bot for the new env vars to take effect._',
+  ].join('\n')
 }
 
 /**

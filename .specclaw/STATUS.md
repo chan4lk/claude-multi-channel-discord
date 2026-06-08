@@ -1,13 +1,29 @@
-# SpecClaw Project Status — multi-channel-discord
+# 🦞 SpecClaw Dashboard
 
-**Updated:** 2026-05-13
+**Project:** multi-channel-discord
+**Last Updated:** 2026-06-08 10:43 UTC
 
 ## Active Changes
 
-| Change | Phase | Status |
-|--------|-------|--------|
-| [watchdog-subagent-aware](changes/watchdog-subagent-aware/proposal.md) | Plan | 🟡 awaiting build approval |
 
-## Archived
+- 🔨 **discord-realtime-voice** — 8/9 tasks (88%) | 0 failed
+- ✅ **mission-control-dashboard** — 11/11 tasks (100%) | 0 failed
+- ✅ **mission-control-dashboard-fixes** — 10/10 tasks (100%) | 0 failed
+- 🔨 **mission-control-ui-redesign** — 13/14 tasks (92%) | 0 failed
+- ✅ **mission-control-usable** — 9/9 tasks (100%) | 0 failed
+- 🔨 **ms-teams-channel** — 1/8 tasks (12%) | 0 failed
+- ✅ **watchdog-subagent-aware** — 5/5 tasks (100%) | 0 failed
 
-_None yet._
+## Pending Proposals
+
+_None._
+
+## Recently Completed
+
+_None._
+
+## Stats
+
+- **Total changes:** 7
+- **Active:** 7
+- **Completed:** 0
