@@ -26,10 +26,13 @@ ENV_FILE="$STATE_DIR/.env"
 echo "[teams-setup] Checking az login..."
 az account show --query "user.name" -o tsv > /dev/null
 
+TENANT_ID=$(az account show --query "tenantId" -o tsv)
+echo "[teams-setup] Tenant ID: $TENANT_ID"
+
 echo "[teams-setup] Creating App Registration: $BOT_NAME"
 APP_ID=$(az ad app create \
   --display-name "$BOT_NAME" \
-  --sign-in-audience AzureADMultipleOrgs \
+  --sign-in-audience AzureADMyOrg \
   --query "appId" -o tsv)
 echo "[teams-setup] App ID: $APP_ID"
 
@@ -46,8 +49,9 @@ echo "[teams-setup] Creating Azure Bot resource..."
 az bot create \
   --resource-group "$RESOURCE_GROUP" \
   --name "$BOT_NAME" \
-  --app-type MultiTenant \
+  --app-type SingleTenant \
   --appid "$APP_ID" \
+  --tenant-id "$TENANT_ID" \
   --endpoint "$MESSAGING_ENDPOINT" \
   --location "global" \
   --sku F0 \
