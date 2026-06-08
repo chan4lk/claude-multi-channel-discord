@@ -75,10 +75,17 @@ const CACHE_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
 // TeamsAdapter
 // ---------------------------------------------------------------------------
 
+const TOKEN_ENDPOINT =
+  'https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token'
+const BOT_FRAMEWORK_SCOPE = 'https://api.botframework.com/.default'
+const CHUNK_SIZE = 4000
+
 export class TeamsAdapter {
   private jwksCache: { keys: JwkKey[]; fetchedAt: number } | null = null
   private openIdCache: { jwksUri: string; fetchedAt: number } | null = null
   private serviceUrlMap = new Map<string, string>() // chatId → serviceUrl
+  private conversationIdMap = new Map<string, string>() // chatId → conversationId
+  private tokenCache: { token: string; expiresAt: number } | null = null
 
   constructor(private opts: TeamsAdapterOpts) {}
 
@@ -144,8 +151,11 @@ export class TeamsAdapter {
         return
       }
 
-      // Store serviceUrl for outbound replies (T3)
+      // Store serviceUrl and conversationId for outbound replies
       this.serviceUrlMap.set(chatId, activity.serviceUrl)
+      if (activity.conversation?.id) {
+        this.conversationIdMap.set(chatId, activity.conversation.id)
+      }
 
       // Build InboundEnvelope
       const envelope: InboundEnvelope = {
@@ -167,10 +177,98 @@ export class TeamsAdapter {
   }
 
   /**
-   * Stub — postReply will be implemented in T3.
+   * Post a reply to a Teams conversation, chunked at 4000 chars.
+   * Uses OAuth2 client-credentials to obtain a Bearer token (cached).
    */
   async postReply(chatId: string, text: string, replyTo?: string): Promise<void> {
-    throw new Error('not implemented')
+    const serviceUrl = this.serviceUrlMap.get(chatId)
+    const conversationId = this.conversationIdMap.get(chatId)
+
+    if (!serviceUrl || !conversationId) {
+      console.error(
+        `[TeamsAdapter] postReply: no serviceUrl or conversationId for chatId=${chatId}`
+      )
+      return
+    }
+
+    let token: string
+    try {
+      token = await this.getAccessToken()
+    } catch (err) {
+      console.error('[TeamsAdapter] postReply: failed to obtain access token:', err)
+      return
+    }
+
+    const chunks = chunkText(text, CHUNK_SIZE)
+    const url = `${serviceUrl.replace(/\/$/, '')}/v3/conversations/${encodeURIComponent(conversationId)}/activities`
+
+    for (const chunk of chunks) {
+      const body: Record<string, unknown> = { type: 'message', text: chunk }
+      if (replyTo) {
+        body.replyToId = replyTo
+      }
+
+      try {
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(body),
+        })
+        if (!resp.ok) {
+          const detail = await resp.text().catch(() => '')
+          console.error(
+            `[TeamsAdapter] postReply: POST failed status=${resp.status} detail=${detail}`
+          )
+        }
+      } catch (err) {
+        console.error('[TeamsAdapter] postReply: fetch error:', err)
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Token acquisition (client-credentials)
+  // -------------------------------------------------------------------------
+
+  private async getAccessToken(): Promise<string> {
+    const now = Date.now()
+    if (this.tokenCache && now < this.tokenCache.expiresAt - 60_000) {
+      return this.tokenCache.token
+    }
+
+    const params = new URLSearchParams({
+      grant_type: 'client_credentials',
+      client_id: this.opts.appId,
+      client_secret: this.opts.appSecret,
+      scope: BOT_FRAMEWORK_SCOPE,
+    })
+
+    const resp = await fetch(TOKEN_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.toString(),
+    })
+
+    if (!resp.ok) {
+      const detail = await resp.text().catch(() => '')
+      throw new Error(
+        `Token endpoint returned ${resp.status}: ${detail}`
+      )
+    }
+
+    const data = (await resp.json()) as {
+      access_token: string
+      expires_in: number
+    }
+
+    this.tokenCache = {
+      token: data.access_token,
+      expiresAt: now + data.expires_in * 1000,
+    }
+    return this.tokenCache.token
   }
 
   // -------------------------------------------------------------------------
@@ -345,4 +443,41 @@ function readBody(req: IncomingMessage): Promise<string> {
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
     req.on('error', reject)
   })
+}
+
+/**
+ * Split `text` into chunks of at most `maxLen` characters.
+ * Prefers splitting on newline boundaries; falls back to hard cut.
+ */
+function chunkText(text: string, maxLen: number): string[] {
+  if (text.length <= maxLen) return [text]
+
+  const result: string[] = []
+  const lines = text.split('\n')
+  let current = ''
+
+  for (const line of lines) {
+    const addition = current.length === 0 ? line : `${current}\n${line}`
+    if (addition.length <= maxLen) {
+      current = addition
+    } else {
+      if (current.length > 0) {
+        result.push(current)
+        current = ''
+      }
+      // Line itself may exceed maxLen — hard-cut it
+      let remaining = line
+      while (remaining.length > maxLen) {
+        result.push(remaining.slice(0, maxLen))
+        remaining = remaining.slice(maxLen)
+      }
+      current = remaining
+    }
+  }
+
+  if (current.length > 0) {
+    result.push(current)
+  }
+
+  return result
 }
