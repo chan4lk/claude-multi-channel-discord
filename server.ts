@@ -1331,6 +1331,14 @@ async function handleToolProgressEvent(
   const mode = project?.progressMode ?? config.defaults.progressMode ?? 'off'
   if (mode === 'off') return
 
+  const platform = project?.platform ?? 'discord'
+
+  if (platform === 'teams' && teamsAdapter) {
+    await handleToolProgressTeams(chatId, ev, mode)
+    void slug
+    return
+  }
+
   const channel = await fetchTextChannel(chatId).catch(() => null)
   if (!channel) return
 
@@ -1398,6 +1406,63 @@ async function handleToolProgressEvent(
     if (allDone) editProgressState.delete(chatId)
   }
   void slug // suppress unused warning
+}
+
+async function handleToolProgressTeams(
+  chatId: string,
+  ev: ToolProgressEvent,
+  mode: string,
+): Promise<void> {
+  if (!teamsAdapter) return
+  const line = formatProgressLine(ev)
+
+  if (mode === 'post') {
+    if (ev.phase === 'start') {
+      const actId = await teamsAdapter.postReply(chatId, line).catch(() => null)
+      if (actId) postProgressMsgIds.set(`${chatId}:${ev.toolId}`, actId)
+    } else {
+      const key = `${chatId}:${ev.toolId}`
+      const actId = postProgressMsgIds.get(key)
+      if (actId) {
+        postProgressMsgIds.delete(key)
+        await teamsAdapter.updateActivity(chatId, actId, line).catch(() => {})
+      }
+    }
+    return
+  }
+
+  // edit mode — single message grown in-place via updateActivity
+  if (ev.phase === 'start') {
+    const state = editProgressState.get(chatId)
+    if (state) {
+      state.lines.push(line)
+      const content = state.lines.slice(-8).join('\n')
+      await teamsAdapter.updateActivity(chatId, state.msgId, content).catch(async () => {
+        const actId = await teamsAdapter!.postReply(chatId, content).catch(() => null)
+        if (actId) state.msgId = actId
+      })
+    } else {
+      const actId = await teamsAdapter.postReply(chatId, line).catch(() => null)
+      if (actId) editProgressState.set(chatId, { msgId: actId, lines: [line] })
+    }
+  } else {
+    const state = editProgressState.get(chatId)
+    if (!state) return
+    const startPrefix = `🔧 ${ev.toolName}`
+    const idx = [...state.lines].reverse().findIndex((l) => l.startsWith(startPrefix))
+    if (idx !== -1) {
+      state.lines[state.lines.length - 1 - idx] = line
+    } else {
+      state.lines.push(line)
+    }
+    const content = state.lines.slice(-8).join('\n')
+    await teamsAdapter.updateActivity(chatId, state.msgId, content).catch(async () => {
+      const actId = await teamsAdapter!.postReply(chatId, content).catch(() => null)
+      if (actId) state.msgId = actId
+    })
+    const allDone = state.lines.every((l) => l.startsWith('✅') || l.startsWith('❌'))
+    if (allDone) editProgressState.delete(chatId)
+  }
 }
 
 /**
