@@ -124,6 +124,10 @@ cat > "$MANIFEST_DIR/manifest.json" << EOF
     "supportsFiles": false
   }],
   "permissions": ["identity", "messageTeamMembers"],
+  "webApplicationInfo": {
+    "id": "$APP_ID",
+    "resource": "https://RscBasedStoreApp"
+  },
   "authorization": {
     "permissions": {
       "resourceSpecific": [
