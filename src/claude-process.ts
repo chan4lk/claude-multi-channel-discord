@@ -814,7 +814,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
       }
 
       // Auto-dismiss .mcp.json discovery dialog.
-      if (!this.dismissedMcpDialog && pane.includes('New MCP server found in .mcp.json')) {
+      if (!this.dismissedMcpDialog && (pane.includes('New MCP server found in .mcp.json') || pane.includes('New MCP server found in this project'))) {
         this.log('detected .mcp.json discovery dialog — sending 3 + Enter to skip')
         spawnSync('tmux', ['send-keys', '-t', session, '3'], { stdio: 'ignore' })
         await sleep(120)

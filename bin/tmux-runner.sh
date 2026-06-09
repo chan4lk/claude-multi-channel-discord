@@ -33,9 +33,14 @@ while true; do
   # orphaned per-project session like `mcd-claude-…` fools us into thinking
   # the master session still exists and we silently no-op the restart.
   if ! tmux has-session -t "=$SESSION" 2>/dev/null; then
+    # `tmux new-session` runs the command in a fresh login-less shell that does
+    # NOT inherit env from this wrapper (so systemd's MCD_CHANNELS_DIR is dropped
+    # on the floor). Inline the env assignment into the command string so the
+    # spawned `bun server.ts` sees it. Use the systemd default when the wrapper
+    # itself was started without the var (e.g. running the script by hand).
     tmux new-session -d -s "$SESSION" \
       -c "$REPO_DIR" \
-      "$BUN server.ts"
+      "MCD_CHANNELS_DIR='${MCD_CHANNELS_DIR:-/home/openclaw/.claude/channels/discord-multi}' $BUN server.ts"
   fi
 
   # Block until the exact tmux session ends.
