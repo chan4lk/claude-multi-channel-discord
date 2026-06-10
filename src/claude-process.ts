@@ -334,6 +334,12 @@ export class ClaudeProjectProcess implements ProjectProcess {
     const cwd = projectDir(this.slug)
     if (!existsSync(cwd)) throw new Error(`project working dir missing: ${cwd}`)
 
+    // Set projectCwd BEFORE writeMcpConfig() — the latter reads
+    // this.projectCwd to compute the project-level .mcp.json path
+    // (line ~1098), and at the time of the call it was still null,
+    // causing path.join(null, ...) to throw on every spawn.
+    this.projectCwd = cwd
+
     this.mcpConfigPath = this.writeMcpConfig()
 
     const claudeArgs = this.opts.claudeArgs ?? {}
@@ -374,7 +380,6 @@ export class ClaudeProjectProcess implements ProjectProcess {
     }
     // Remember whether we're resuming for first-turn bookkeeping below.
     this.resumedSession = !!sessionId
-    this.projectCwd = cwd
     // Snapshot the current set of session jsonl files BEFORE we hand
     // control to tmux. After waitForTuiReady we use this to identify
     // which UUID belongs to *this* spawn rather than picking whatever
@@ -1077,13 +1082,39 @@ export class ClaudeProjectProcess implements ProjectProcess {
     // and consistently picked the upstream one — which then refused with
     // "channel not allowlisted" because its access.json belongs to the
     // OLD bot.
-    const config = {
+    const config: { mcpServers: Record<string, unknown> } = {
       mcpServers: {
         mcd: {
           type: 'http',
           url: this.master.urlFor(this.chatId),
         },
       },
+    }
+    // Merge project-level .mcp.json servers so projects that declare their
+    // own MCP tools (e.g. a remote API server) still get them even under
+    // --strict-mcp-config. Skip any server named "discord" to avoid
+    // colliding with the upstream plugin. Guard projectCwd defensively
+    // even though start() now sets it before calling writeMcpConfig() —
+    // class field type is `string | null` so TS can't narrow it here.
+    if (!this.projectCwd) {
+      this.log('writeMcpConfig: projectCwd unset, skipping project .mcp.json merge')
+    } else {
+      const projectMcpPath = join(this.projectCwd, '.mcp.json')
+      if (existsSync(projectMcpPath)) {
+        try {
+          const projectMcp = JSON.parse(readFileSync(projectMcpPath, 'utf8')) as {
+            mcpServers?: Record<string, unknown>
+          }
+          for (const [name, server] of Object.entries(projectMcp.mcpServers ?? {})) {
+            if (name === 'discord') continue // reserved — would shadow the upstream plugin
+            if (name === 'mcd') continue // reserved — our own server
+            config.mcpServers[name] = server
+          }
+          this.log(`merged ${Object.keys(projectMcp.mcpServers ?? {}).length} server(s) from project .mcp.json`)
+        } catch (err) {
+          this.log(`failed to parse project .mcp.json: ${(err as Error).message}`)
+        }
+      }
     }
     writeFileSync(path, JSON.stringify(config, null, 2), { mode: 0o600 })
     return path
