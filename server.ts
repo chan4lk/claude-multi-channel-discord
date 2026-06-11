@@ -1163,9 +1163,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
           text: `⚠️ \`${evt.slug}\`: agent stopped responding (no reply for ${minutes} min). ` +
             'Tearing down — send another message to respawn.',
         }
-        void dispatchProjectReply(reply).catch((err) => {
-          process.stderr.write(`discord: stuck notify failed: ${err}\n`)
-        })
+        void routeNotification(loadChannelsConfig(), reply, 'stuck notify')
       }
       if (evt.kind === 'progress-skip') {
         const minutes = Math.round(evt.sinceLastReplyMs / 60_000)
@@ -1174,9 +1172,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
           chatId: evt.chatId,
           text: `⏳ \`${evt.slug}\`: still working (transcript active, ${minutes} min since last reply)`,
         }
-        void dispatchProjectReply(reply).catch((err) => {
-          process.stderr.write(`discord: progress-skip notify failed: ${err}\n`)
-        })
+        void routeNotification(loadChannelsConfig(), reply, 'progress-skip notify')
       }
       if (evt.kind === 'crashed') {
         detachSpecclawWatcher(evt.chatId)
@@ -1233,6 +1229,19 @@ async function maybeInitProjectsBackend(): Promise<void> {
     },
   })
   process.stderr.write('discord: voice pipeline initialized\n')
+}
+
+function routeNotification(cfg: ReturnType<typeof loadChannelsConfig>, reply: Extract<OutboundReply, { kind: 'text' }>, label: string): void {
+  const platform = cfg.projects[reply.chatId]?.platform ?? 'discord'
+  if (platform === 'teams' && teamsAdapter) {
+    teamsAdapter.postReply(reply.chatId, reply.text, reply.replyTo).catch((err) => {
+      process.stderr.write(`teams: ${label} failed: ${err}\n`)
+    })
+  } else {
+    void dispatchProjectReply(reply).catch((err) => {
+      process.stderr.write(`discord: ${label} failed: ${err}\n`)
+    })
+  }
 }
 
 async function dispatchProjectReply(reply: OutboundReply): Promise<void> {
