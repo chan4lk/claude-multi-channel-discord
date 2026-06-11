@@ -162,6 +162,7 @@ function helpText(prefix: string): string {
     `${prefix} create <chat_id-or--new-channel NAME> --slug X --prompt "..." [--model M] [--provider NAME] [--repo-dir PATH]`,
     `${prefix} clone  <chat_id-or--new-channel NAME> --slug X --repo URL [--branch BR] [--creds NAME] [--provider NAME]`,
     `${prefix} set    <chat_id-or-slug> --prompt "..."                — rewrite CLAUDE.md`,
+    `${prefix} set    <chat_id-or-slug> --stuck-threshold-minutes N  — override stuck-watchdog threshold`,
     `${prefix} rename <chat_id-or-slug> --slug NEW                    — rename slug + dir`,
     `${prefix} remote <chat_id-or-slug> [--set URL] [--creds NAME]    — show/set git remote`,
     `${prefix} pull   <chat_id-or-slug>                               — git pull --ff-only`,
@@ -461,24 +462,45 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
   if (!entry) return `no project found for "${target}"`
 
   const prompt = typeof flags.prompt === 'string' ? flags.prompt : null
-  if (prompt === null) return '`set` requires `--prompt "..."`'
+  const stuckRaw = flags['stuck-threshold-minutes']
+  const stuckMinutes = stuckRaw !== undefined ? Number(stuckRaw) : null
 
-  writeFileSync(projectClaudeMd(entry.project.slug), `${prompt.trim()}\n`, { mode: 0o600 })
-
-  // Trigger a respawn so the new prompt takes effect on the next message.
-  // CLAUDE.md is read at session start; an in-flight session would otherwise
-  // keep using the old text.
-  let respawnNote = '_subprocess will respawn on next message._'
-  if (flags['no-restart'] !== true && ctx.mutator) {
-    try {
-      await ctx.mutator.killProject(entry.chatId)
-      respawnNote = '_subprocess killed; next message will spawn it with the new prompt._'
-    } catch (err) {
-      respawnNote = `_kill failed: ${(err as Error).message}; restart manually if needed._`
-    }
+  if (prompt === null && stuckMinutes === null) {
+    return '`set` requires `--prompt "..."` or `--stuck-threshold-minutes N`'
   }
 
-  return [`✅ rewrote CLAUDE.md for **${entry.project.slug}** (${prompt.length} chars).`, respawnNote].join('\n')
+  const results: string[] = []
+
+  if (prompt !== null) {
+    writeFileSync(projectClaudeMd(entry.project.slug), `${prompt.trim()}\n`, { mode: 0o600 })
+    results.push(`✅ rewrote CLAUDE.md for **${entry.project.slug}** (${prompt.length} chars).`)
+  }
+
+  if (stuckMinutes !== null) {
+    if (!Number.isInteger(stuckMinutes) || stuckMinutes <= 0) {
+      return '`--stuck-threshold-minutes` must be a positive integer'
+    }
+    const updated = { ...config, projects: { ...config.projects, [entry.chatId]: { ...entry.project, stuckThresholdMinutes: stuckMinutes } } }
+    saveConfig(updated)
+    results.push(`✅ set \`stuckThresholdMinutes\` = ${stuckMinutes} for **${entry.project.slug}**.`)
+  }
+
+  // Respawn only needed when prompt changed (CLAUDE.md is read at session start).
+  let respawnNote = ''
+  if (prompt !== null) {
+    respawnNote = '_subprocess will respawn on next message._'
+    if (flags['no-restart'] !== true && ctx.mutator) {
+      try {
+        await ctx.mutator.killProject(entry.chatId)
+        respawnNote = '_subprocess killed; next message will spawn it with the new prompt._'
+      } catch (err) {
+        respawnNote = `_kill failed: ${(err as Error).message}; restart manually if needed._`
+      }
+    }
+    results.push(respawnNote)
+  }
+
+  return results.join('\n')
 }
 
 async function handleRename(rest: string[], ctx: MasterContext): Promise<string> {
