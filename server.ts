@@ -39,6 +39,8 @@ import { buildEmitter } from './src/mission-control-emitter.ts'
 
 import { loadConfig as loadChannelsConfig, resolveClaudeArgs, resolveProvider } from './src/channels-config.ts'
 import { TeamsAdapter } from './src/teams-adapter.ts'
+import { WhatsAppAdapter } from './src/whatsapp-adapter.ts'
+import { toBuffer as qrToBuffer } from 'qrcode'
 import { ClaudeProjectProcess } from './src/claude-process.ts'
 import { chunk as chunkText, DISCORD_HARD_CHUNK_LIMIT } from './src/discord-chunk.ts'
 import { handleMasterCommand } from './src/master-commands.ts'
@@ -95,6 +97,69 @@ if (teamsAppId && teamsAppSecret) {
   process.stderr.write('discord: Teams adapter initialized\n')
 }
 
+const WHATSAPP_AUTH_DIR = join(STATE_DIR, 'whatsapp-auth')
+let whatsappAdapter: WhatsAppAdapter | null = null
+if (existsSync(WHATSAPP_AUTH_DIR) || process.env.WHATSAPP_ENABLED === '1') {
+  whatsappAdapter = new WhatsAppAdapter({
+    authDir: WHATSAPP_AUTH_DIR,
+    getConfig: loadChannelsConfig,
+    onInbound: (chatId, env) => handleWhatsAppInbound(chatId, env),
+    onQr: (qr) => { void postWhatsAppQr(qr) },
+    onNotice: (text) => { void postWhatsAppNotice(text) },
+    isAllowed: (senderId) => loadAccess().allowFrom.includes(senderId),
+  })
+  whatsappAdapter.start().catch((err) => process.stderr.write(`whatsapp: start failed: ${err}\n`))
+  process.stderr.write('discord: WhatsApp adapter initialized\n')
+}
+
+let whatsappQrMsg: { channelId: string; id: string } | null = null
+
+async function postWhatsAppQr(qr: string): Promise<void> {
+  try {
+    const masterChatId = loadChannelsConfig().master?.chatId
+    if (!masterChatId) {
+      process.stderr.write('whatsapp: QR post skipped — no master chatId configured\n')
+      return
+    }
+    const png = await qrToBuffer(qr, { type: 'png', width: 512 })
+    const ch = await client.channels.fetch(masterChatId)
+    if (!ch || !('send' in ch)) {
+      process.stderr.write('whatsapp: QR post skipped — master channel not sendable\n')
+      return
+    }
+    // Delete the previous QR message if any (can't edit an attachment)
+    if (whatsappQrMsg) {
+      try {
+        const prev = await client.channels.fetch(whatsappQrMsg.channelId)
+        if (prev && 'messages' in prev) {
+          const prevMsg = await (prev as import('discord.js').TextChannel).messages.fetch(whatsappQrMsg.id)
+          await prevMsg.delete()
+        }
+      } catch { /* best-effort */ }
+      whatsappQrMsg = null
+    }
+    const sent = await (ch as import('discord.js').TextChannel).send({
+      content: 'Scan to pair WhatsApp:',
+      files: [{ attachment: png, name: 'whatsapp-qr.png' }],
+    })
+    whatsappQrMsg = { channelId: masterChatId, id: sent.id }
+  } catch (err) {
+    process.stderr.write(`whatsapp: QR post failed: ${err}\n`)
+  }
+}
+
+async function postWhatsAppNotice(text: string): Promise<void> {
+  try {
+    const masterChatId = loadChannelsConfig().master?.chatId
+    if (!masterChatId) return
+    const ch = await client.channels.fetch(masterChatId)
+    if (!ch || !('send' in ch)) return
+    await (ch as import('discord.js').TextChannel).send({ content: `⚠️ WhatsApp: ${text}` })
+  } catch (err) {
+    process.stderr.write(`whatsapp: notice post failed: ${err}\n`)
+  }
+}
+
 function handleTeamsInbound(chatId: string, env: import('./src/project-process.ts').InboundEnvelope): void {
   if (!projectPool) {
     process.stderr.write(`teams: drop — project pool not initialized for chat_id ${chatId}\n`)
@@ -115,6 +180,29 @@ function handleTeamsInbound(chatId: string, env: import('./src/project-process.t
     .deliver(chatId, env)
     .catch((err) => {
       process.stderr.write(`teams: pool deliver failed: ${err}\n`)
+    })
+}
+
+function handleWhatsAppInbound(chatId: string, env: import('./src/project-process.ts').InboundEnvelope): void {
+  if (!projectPool) {
+    process.stderr.write(`whatsapp: drop — project pool not initialized for chat_id ${chatId}\n`)
+    return
+  }
+  let cfg
+  try {
+    cfg = loadChannelsConfig()
+  } catch {
+    cfg = null
+  }
+  if (!cfg || !cfg.projects[chatId]) {
+    process.stderr.write(`whatsapp: drop — no project for chat_id ${chatId}\n`)
+    return
+  }
+  process.stderr.write(`whatsapp: route chat=${chatId} user=${env.userId} → pool\n`)
+  void projectPool
+    .deliver(chatId, env)
+    .catch((err) => {
+      process.stderr.write(`whatsapp: pool deliver failed: ${err}\n`)
     })
 }
 
@@ -1134,6 +1222,12 @@ async function maybeInitProjectsBackend(): Promise<void> {
             process.stderr.write(`teams: postReply failed: ${err}\n`)
           })
         }
+      } else if (platform === 'whatsapp' && whatsappAdapter) {
+        if (reply.kind === 'text') {
+          whatsappAdapter.postReply(reply.chatId, reply.text, reply.replyTo).catch(err => {
+            process.stderr.write(`whatsapp: postReply failed: ${err}\n`)
+          })
+        }
       } else {
         void dispatchProjectReply(reply).catch((err) => {
           process.stderr.write(`discord: project reply dispatch failed: ${err}\n`)
@@ -1236,6 +1330,10 @@ function routeNotification(cfg: ReturnType<typeof loadChannelsConfig>, reply: Ex
   if (platform === 'teams' && teamsAdapter) {
     teamsAdapter.postReply(reply.chatId, reply.text, reply.replyTo).catch((err) => {
       process.stderr.write(`teams: ${label} failed: ${err}\n`)
+    })
+  } else if (platform === 'whatsapp' && whatsappAdapter) {
+    whatsappAdapter.postReply(reply.chatId, reply.text, reply.replyTo).catch((err) => {
+      process.stderr.write(`whatsapp: ${label} failed: ${err}\n`)
     })
   } else {
     void dispatchProjectReply(reply).catch((err) => {
@@ -1344,6 +1442,12 @@ async function handleToolProgressEvent(
 
   if (platform === 'teams' && teamsAdapter) {
     await handleToolProgressTeams(chatId, ev, mode)
+    void slug
+    return
+  }
+
+  if (platform === 'whatsapp' && whatsappAdapter) {
+    await handleToolProgressWhatsApp(chatId, ev, mode)
     void slug
     return
   }
@@ -1467,6 +1571,63 @@ async function handleToolProgressTeams(
     const content = state.lines.slice(-8).join('\n')
     await teamsAdapter.updateActivity(chatId, state.msgId, content).catch(async () => {
       const actId = await teamsAdapter!.postReply(chatId, content).catch(() => null)
+      if (actId) state.msgId = actId
+    })
+    const allDone = state.lines.every((l) => l.startsWith('✅') || l.startsWith('❌'))
+    if (allDone) editProgressState.delete(chatId)
+  }
+}
+
+async function handleToolProgressWhatsApp(
+  chatId: string,
+  ev: ToolProgressEvent,
+  mode: string,
+): Promise<void> {
+  if (!whatsappAdapter) return
+  const line = formatProgressLine(ev)
+
+  if (mode === 'post') {
+    if (ev.phase === 'start') {
+      const actId = await whatsappAdapter.postReply(chatId, line).catch(() => null)
+      if (actId) postProgressMsgIds.set(`${chatId}:${ev.toolId}`, actId)
+    } else {
+      const key = `${chatId}:${ev.toolId}`
+      const actId = postProgressMsgIds.get(key)
+      if (actId) {
+        postProgressMsgIds.delete(key)
+        await whatsappAdapter.updateActivity(chatId, actId, line).catch(() => {})
+      }
+    }
+    return
+  }
+
+  // edit mode — single message grown in-place via updateActivity
+  if (ev.phase === 'start') {
+    const state = editProgressState.get(chatId)
+    if (state) {
+      state.lines.push(line)
+      const content = state.lines.slice(-8).join('\n')
+      await whatsappAdapter.updateActivity(chatId, state.msgId, content).catch(async () => {
+        const actId = await whatsappAdapter!.postReply(chatId, content).catch(() => null)
+        if (actId) state.msgId = actId
+      })
+    } else {
+      const actId = await whatsappAdapter.postReply(chatId, line).catch(() => null)
+      if (actId) editProgressState.set(chatId, { msgId: actId, lines: [line] })
+    }
+  } else {
+    const state = editProgressState.get(chatId)
+    if (!state) return
+    const startPrefix = `🔧 ${ev.toolName}`
+    const idx = [...state.lines].reverse().findIndex((l) => l.startsWith(startPrefix))
+    if (idx !== -1) {
+      state.lines[state.lines.length - 1 - idx] = line
+    } else {
+      state.lines.push(line)
+    }
+    const content = state.lines.slice(-8).join('\n')
+    await whatsappAdapter.updateActivity(chatId, state.msgId, content).catch(async () => {
+      const actId = await whatsappAdapter!.postReply(chatId, content).catch(() => null)
       if (actId) state.msgId = actId
     })
     const allDone = state.lines.every((l) => l.startsWith('✅') || l.startsWith('❌'))

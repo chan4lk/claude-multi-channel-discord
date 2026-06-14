@@ -115,6 +115,22 @@ Then `!project create --provider minimax --model MiniMax-M2.7 ...` (or `clone --
 
 Mixing providers across channels is fine. Subscription-auth projects coexist with API-key-auth projects in the same bot process.
 
+### WhatsApp adapter (`src/whatsapp-adapter.ts`)
+
+WhatsApp is a third platform alongside Discord and Teams. `WhatsAppAdapter` wraps a single **Baileys** (`@whiskeysockets/baileys`) WebSocket — one socket, all WhatsApp projects, multiplexed by JID. The adapter mirrors the Teams adapter contract at the same three seams `server.ts` uses for all platforms:
+
+- **Inbound:** Baileys `messages.upsert` events are matched to a project by the sender's JID (stored as `whatsappJid` on the project entry), wrapped into an `InboundEnvelope`, and handed to `ProjectPool.deliver()` — identical to the Teams path.
+- **Outbound (`postReply`):** `mcp__mcd__reply` calls land in `MasterMcpServer`; the pool's `onReply` callback calls `WhatsAppAdapter.postReply(chatId, text)` which sends the message via Baileys.
+- **Progress updates (`updateActivity`):** `post`/`edit` progress modes work over WhatsApp with parity to Discord and Teams.
+
+The project's `platform` field (`'discord' | 'teams' | 'whatsapp'`) is the dispatch switch in `server.ts` — the pool and subprocess layers are platform-agnostic.
+
+**Auth and pairing:** The adapter is enabled when `MCD_CHANNELS_DIR/whatsapp-auth/` exists or `WHATSAPP_ENABLED=1` is set. On first run with no stored session, Baileys generates a QR code which the adapter renders as a PNG and posts to the master Discord channel. The operator scans it; Baileys completes auth and writes multi-file credentials to `whatsapp-auth/` (mode 0600). Subsequent restarts resume from stored credentials without re-pairing.
+
+**Access control:** The sender's E.164 number is checked against the existing `access.allowFrom` list — no separate allowlist.
+
+**ToS caveat:** Baileys is an unofficial WhatsApp Web client not sanctioned by Meta/WhatsApp. Deployment in production or at scale risks number bans; use a dedicated self-hosted account.
+
 ### `ClaudeProjectProcess` (`src/claude-process.ts`)
 
 One per project (`Map<chat_id, ClaudeProjectProcess>` lives in the pool). Wraps a single tmux session running `claude --mcp-config <tmpfile> --strict-mcp-config --permission-mode auto [--model M] [--allowed-tools ...] [--disallowed-tools ...] [--resume <session-id>] [<extraArgs>...]`.
@@ -179,6 +195,7 @@ The `MasterMutator` interface is the dependency-injection seam — the parser do
 ├── git-credentials.json       credential aliases (mode 0600)
 ├── schedules.json             daily HH:MM cron-lite, mode 0600
 ├── inbox/                     downloaded attachments (one file per call)
+├── whatsapp-auth/             Baileys multi-file auth state (mode 0600); presence enables WhatsApp
 └── projects/
     ├── master/
     │   └── CLAUDE.md          deployed from templates/master.CLAUDE.md by setup-new-instance.sh
@@ -195,7 +212,7 @@ The `MasterMutator` interface is the dependency-injection seam — the parser do
 
 - `master.chatId` + `master.commandPrefix` (default `!project`)
 - `defaults.{model, idleEvictMinutes, maxConcurrent, git.{userName,userEmail,credentials,branchPrefix}, claude.{permissionMode,allowedTools,disallowedTools,extraArgs}, providers.<alias>.{baseUrl,apiKeyEnv}, provider?}`
-- `projects[<chat_id>].{slug, model?, git?, claude?, provider?}` — per-project overrides
+- `projects[<chat_id>].{slug, model?, git?, claude?, provider?, platform?, whatsappJid?}` — per-project overrides; `platform` is `'discord' | 'teams' | 'whatsapp'` (default `'discord'`); `whatsappJid` (e.g. `15551234567@s.whatsapp.net`) is required when `platform === 'whatsapp'`
 
 `git-credentials.json` aliases (mode 0600 enforced by the loader):
 

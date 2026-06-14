@@ -70,8 +70,16 @@ const ProjectSchema = z.object({
    * Messaging platform this project is attached to. Omitted (discord) by default.
    * Set to 'teams' when the chatId is a Microsoft Teams conversation ID
    * rather than a Discord channel snowflake.
+   * Set to 'whatsapp' when the project is bound to a WhatsApp contact/group
+   * identified by `whatsappJid`.
    */
-  platform: z.enum(['discord', 'teams']).optional(),
+  platform: z.enum(['discord', 'teams', 'whatsapp']).optional(),
+  /**
+   * WhatsApp JID (Jabber ID) of the bound contact or group, e.g.
+   * `15551234567@s.whatsapp.net` (individual) or `<id>@g.us` (group).
+   * Required when `platform === 'whatsapp'`; ignored otherwise.
+   */
+  whatsappJid: z.string().optional(),
   model: z.string().optional(),
   git: ProjectGitSchema.optional(),
   claude: ClaudeArgsSchema.optional(),
@@ -95,6 +103,14 @@ const ProjectSchema = z.object({
    */
   stuckThresholdMinutes: z.number().int().positive().optional(),
   voice: VoiceProjectConfigSchema.optional(),
+}).superRefine((val, ctx) => {
+  if (val.platform === 'whatsapp' && !val.whatsappJid) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "whatsappJid is required when platform is 'whatsapp'",
+      path: ['whatsappJid'],
+    })
+  }
 })
 
 const DefaultsGitSchema = z.object({

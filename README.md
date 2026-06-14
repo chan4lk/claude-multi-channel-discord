@@ -99,6 +99,41 @@ Or clone a repo into a channel:
 
 ---
 
+## WhatsApp setup (optional)
+
+> **⚠️ Unofficial client — ToS risk:** WhatsApp support is powered by **Baileys**, an unofficial WhatsApp Web library. Use violates WhatsApp's Terms of Service and can result in your number being permanently banned. Only use with a personal or dedicated self-hosted account.
+
+**1. Enable:** Create the auth directory before starting the server:
+
+```sh
+mkdir -p ~/.claude/channels/discord-multi/whatsapp-auth
+chmod 700 ~/.claude/channels/discord-multi/whatsapp-auth
+```
+
+Or set `WHATSAPP_ENABLED=1` in your environment. Either way, the adapter activates on the next server start.
+
+**2. Pair:** On first run the bot posts a QR code image to your master Discord channel. Open WhatsApp on your phone → Linked Devices → Link a Device, and scan the QR within 60 seconds. The session is then saved to `whatsapp-auth/` and persists across restarts.
+
+**3. Bind a project:** In `channels.json`, set `platform` and `whatsappJid` on the project entry:
+
+```jsonc
+{
+  "projects": {
+    "<chat_id>": {
+      "slug": "my-whatsapp-project",
+      "platform": "whatsapp",
+      "whatsappJid": "15551234567@s.whatsapp.net"
+    }
+  }
+}
+```
+
+`whatsappJid` is the contact's phone number in E.164 format with the `@s.whatsapp.net` suffix. Once set, messages from that contact route to the project's Claude subprocess and replies go back over WhatsApp.
+
+Access control reuses `access.allowFrom` — the sender's E.164 number must be in the allowlist. Inbound media surfaces as attachment summaries; files are not downloaded.
+
+---
+
 ## Documentation
 
 | Guide | Contents |

@@ -30,9 +30,9 @@ check('urlFor: emits chat-scoped URL', url === `http://${host}:${port}/mcp/12345
 const badRes = await fetch(`http://${host}:${port}/notmcp`)
 check('GET /notmcp → 404', badRes.status === 404)
 
-// Wrong shape of chat_id → 404
-const wrongShape = await fetch(`http://${host}:${port}/mcp/abc`)
-check('GET /mcp/abc → 404 (non-numeric chat_id)', wrongShape.status === 404)
+// Wrong shape of chat_id → 404 (too short — under 3 chars)
+const wrongShape = await fetch(`http://${host}:${port}/mcp/ab`)
+check('GET /mcp/ab → 404 (chat_id too short)', wrongShape.status === 404)
 
 // notifyChat with no live session is a no-op (does not throw)
 let notifyThrew = false
