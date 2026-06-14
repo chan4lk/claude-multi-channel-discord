@@ -141,6 +141,26 @@ The `CONV_ID` is either:
 
 The bot logs whichever arrives first. The operator can also check with: `journalctl -u mcd -n 100 | grep 'TeamsAdapter'` (or the tmux pane running MCD).
 
+# WhatsApp projects
+
+WhatsApp support uses **Baileys** (unofficial WhatsApp Web client — ToS risk; use a dedicated number, not a business-critical one).
+
+**Setup (one-time):**
+1. Create `whatsapp-auth/` in `MCD_CHANNELS_DIR` (`mkdir -p ~/.claude/channels/discord-multi/whatsapp-auth && chmod 700 ...`)
+2. Restart MCD — the adapter initialises and posts a QR code PNG to this master channel
+3. Scan the QR in WhatsApp → Linked Devices → Link a Device within 60 seconds
+4. Auth credentials are saved to `whatsapp-auth/` and survive restarts
+
+**Creating a WhatsApp project:**
+```
+!project create --platform whatsapp <CHAT_ID> --slug <slug> --prompt "..."
+```
+`CHAT_ID` can be any string you choose (it's internal — WhatsApp routing uses `whatsappJid`). After creating, manually add `"whatsappJid": "<e164>@s.whatsapp.net"` to the project entry in `channels.json` (e.g. `"15551234567@s.whatsapp.net"`).
+
+Messages from that contact route to the project's Claude subprocess; replies go back over WhatsApp. Access control reuses `access.allowFrom`.
+
+To check adapter status, look for `whatsapp:` lines in the MCD tmux pane.
+
 # Design tips
 
 - When the operator asks to create a project for an existing GitHub repo, prefer `clone` over `create` so a real working tree comes down. Rewrite their HTTPS URL to SSH first (see table above).
