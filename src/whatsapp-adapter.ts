@@ -73,6 +73,13 @@ export interface WhatsAppAdapterOpts {
 }
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Maximum characters per WhatsApp message chunk (mirrors Teams CHUNK_SIZE). */
+const WA_CHUNK_SIZE = 4000
+
+// ---------------------------------------------------------------------------
 // WhatsAppAdapter
 // ---------------------------------------------------------------------------
 
@@ -364,27 +371,72 @@ export class WhatsAppAdapter {
 
   /**
    * Send a text reply to a WhatsApp chat identified by chatId.
-   * TODO (T4): Chunk text if needed, call sock.sendMessage(jid, { text }).
-   * Returns the Baileys message key of the last sent chunk, or null on error.
+   * Chunks text into <= WA_CHUNK_SIZE pieces and sends each in order.
+   * Returns the Baileys message key id of the last sent chunk, or null on error.
    */
   async postReply(
-    _chatId: string,
-    _text: string,
-    _replyTo?: string
+    chatId: string,
+    text: string,
+    replyTo?: string  // unused — quoting not implemented (WhatsApp quoting requires the original WAMessage, which we do not retain)
   ): Promise<string | null> {
-    // TODO (T4): implement outbound send
-    return null
+    this._refreshRouting()
+    const jid = this.chatIdToJid.get(chatId)
+    if (!jid) {
+      console.error(`whatsapp: postReply — no jid for chatId ${chatId}`)
+      return null
+    }
+    if (!this.sock) {
+      console.error('whatsapp: postReply — socket not connected')
+      return null
+    }
+
+    // Chunk text into <= WA_CHUNK_SIZE slices.
+    const chunks: string[] = []
+    for (let i = 0; i < text.length; i += WA_CHUNK_SIZE) {
+      chunks.push(text.slice(i, i + WA_CHUNK_SIZE))
+    }
+    if (chunks.length === 0) chunks.push('')
+
+    let lastId: string | null = null
+    try {
+      for (const chunk of chunks) {
+        const result = await this.sock.sendMessage(jid, { text: chunk })
+        if (result?.key?.id) lastId = result.key.id
+      }
+    } catch (err) {
+      console.error('whatsapp: postReply failed:', err)
+      return null
+    }
+    return lastId
   }
 
   /**
    * Edit a previously sent WhatsApp message identified by (chatId, key).
-   * TODO (T4): Use sock.sendMessage with edit key if supported by Baileys v6.
+   * Reconstructs the Baileys edit key from the stored message id and calls
+   * sock.sendMessage with the edit field. Falls back to postReply on error.
    */
   async updateActivity(
-    _chatId: string,
-    _key: string,
-    _text: string
+    chatId: string,
+    key: string,
+    text: string
   ): Promise<void> {
-    // TODO (T4): implement message edit
+    this._refreshRouting()
+    const jid = this.chatIdToJid.get(chatId)
+    if (!jid) {
+      console.error(`whatsapp: updateActivity — no jid for chatId ${chatId}`)
+      return
+    }
+    if (!this.sock) {
+      console.error('whatsapp: updateActivity — socket not connected')
+      return
+    }
+
+    const editKey = { remoteJid: jid, id: key, fromMe: true }
+    try {
+      await this.sock.sendMessage(jid, { text, edit: editKey })
+    } catch (err) {
+      console.error('whatsapp: updateActivity failed, falling back to send:', err)
+      await this.postReply(chatId, text)
+    }
   }
 }

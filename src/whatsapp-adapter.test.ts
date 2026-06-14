@@ -262,6 +262,120 @@ function makeAdapter(opts?: {
 }
 
 // ---------------------------------------------------------------------------
+// T4 — outbound postReply / updateActivity tests
+// ---------------------------------------------------------------------------
+
+// Helper: build a mock WASocket that records sendMessage calls.
+type SendCall = [string, Record<string, unknown>]
+
+function makeMockSock(opts?: {
+  /** If provided, the nth call (0-indexed) throws this error instead of returning. */
+  throwOnCall?: number
+}): { sock: { sendMessage: (...args: unknown[]) => Promise<{ key: { id: string } }> }; calls: SendCall[] } {
+  const calls: SendCall[] = []
+  const sock = {
+    async sendMessage(...args: unknown[]) {
+      const idx = calls.length
+      calls.push(args as SendCall)
+      if (opts?.throwOnCall !== undefined && idx === opts.throwOnCall) {
+        throw new Error('mock sendMessage error')
+      }
+      return { key: { id: `m${calls.length}` } }
+    },
+  }
+  return { sock, calls }
+}
+
+// AC5: long text → 3 chunks (9000 chars / 4000 = ceil → 3 sends)
+{
+  const { adapter } = makeAdapter()
+  const { sock, calls } = makeMockSock()
+  ;(adapter as unknown as { sock: unknown; chatIdToJid: Map<string, string> }).sock = sock
+  ;(adapter as unknown as { chatIdToJid: Map<string, string> }).chatIdToJid.set(BOUND_CHAT_ID, BOUND_JID)
+
+  const longText = 'x'.repeat(9000)
+  const result = await (adapter as unknown as { postReply: (chatId: string, text: string) => Promise<string | null> }).postReply(BOUND_CHAT_ID, longText)
+
+  check('AC5 long text: sendMessage called 3 times', calls.length === 3, `got ${calls.length}`)
+  check('AC5 long text: returned id is last chunk id', result === 'm3', `got ${result}`)
+}
+
+// AC5: short text → exactly 1 send
+{
+  const { adapter } = makeAdapter()
+  const { sock, calls } = makeMockSock()
+  ;(adapter as unknown as { sock: unknown; chatIdToJid: Map<string, string> }).sock = sock
+  ;(adapter as unknown as { chatIdToJid: Map<string, string> }).chatIdToJid.set(BOUND_CHAT_ID, BOUND_JID)
+
+  const result = await (adapter as unknown as { postReply: (chatId: string, text: string) => Promise<string | null> }).postReply(BOUND_CHAT_ID, 'hello')
+
+  check('AC5 short text: sendMessage called once', calls.length === 1, `got ${calls.length}`)
+  check('AC5 short text: returned id m1', result === 'm1', `got ${result}`)
+}
+
+// postReply when sock is null → returns null, no throw
+{
+  const { adapter } = makeAdapter()
+  // sock stays null (default)
+  ;(adapter as unknown as { chatIdToJid: Map<string, string> }).chatIdToJid.set(BOUND_CHAT_ID, BOUND_JID)
+
+  let threw = false
+  let result: string | null = null
+  try {
+    result = await (adapter as unknown as { postReply: (chatId: string, text: string) => Promise<string | null> }).postReply(BOUND_CHAT_ID, 'hi')
+  } catch {
+    threw = true
+  }
+
+  check('postReply no sock: returns null', result === null)
+  check('postReply no sock: does not throw', !threw)
+}
+
+// updateActivity happy path → sendMessage called once with edit key whose id matches
+{
+  const { adapter } = makeAdapter()
+  const { sock, calls } = makeMockSock()
+  ;(adapter as unknown as { sock: unknown; chatIdToJid: Map<string, string> }).sock = sock
+  ;(adapter as unknown as { chatIdToJid: Map<string, string> }).chatIdToJid.set(BOUND_CHAT_ID, BOUND_JID)
+
+  let threw = false
+  try {
+    await (adapter as unknown as { updateActivity: (chatId: string, key: string, text: string) => Promise<void> }).updateActivity(BOUND_CHAT_ID, 'orig-key-123', 'edited text')
+  } catch {
+    threw = true
+  }
+
+  check('updateActivity happy: no throw', !threw)
+  check('updateActivity happy: sendMessage called once', calls.length === 1, `got ${calls.length}`)
+  const sentPayload = calls[0]?.[1] as { text?: string; edit?: { id?: string; remoteJid?: string; fromMe?: boolean } }
+  check('updateActivity happy: edit.id matches key', sentPayload?.edit?.id === 'orig-key-123', `got ${sentPayload?.edit?.id}`)
+  check('updateActivity happy: edit.remoteJid matches jid', sentPayload?.edit?.remoteJid === BOUND_JID)
+  check('updateActivity happy: text correct', sentPayload?.text === 'edited text')
+}
+
+// updateActivity fallback: first sendMessage throws → falls back to postReply (send), no throw
+{
+  const { adapter } = makeAdapter()
+  const { sock, calls } = makeMockSock({ throwOnCall: 0 })
+  ;(adapter as unknown as { sock: unknown; chatIdToJid: Map<string, string> }).sock = sock
+  ;(adapter as unknown as { chatIdToJid: Map<string, string> }).chatIdToJid.set(BOUND_CHAT_ID, BOUND_JID)
+
+  let threw = false
+  try {
+    await (adapter as unknown as { updateActivity: (chatId: string, key: string, text: string) => Promise<void> }).updateActivity(BOUND_CHAT_ID, 'key-xyz', 'fallback text')
+  } catch {
+    threw = true
+  }
+
+  check('updateActivity fallback: no throw escapes', !threw)
+  // call[0] throws, call[1] is the fallback postReply send
+  check('updateActivity fallback: sendMessage called twice (edit + fallback)', calls.length === 2, `got ${calls.length}`)
+  const fallbackPayload = calls[1]?.[1] as { text?: string; edit?: unknown }
+  check('updateActivity fallback: fallback has no edit key', fallbackPayload?.edit === undefined)
+  check('updateActivity fallback: fallback text correct', fallbackPayload?.text === 'fallback text')
+}
+
+// ---------------------------------------------------------------------------
 // Result
 // ---------------------------------------------------------------------------
 
