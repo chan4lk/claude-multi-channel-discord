@@ -38,9 +38,17 @@ while true; do
     # on the floor). Inline the env assignment into the command string so the
     # spawned `bun server.ts` sees it. Use the systemd default when the wrapper
     # itself was started without the var (e.g. running the script by hand).
+    # Build the inline env block. Only forward vars that are actually set in
+    # the wrapper's env, so the command string stays short. MCD_CHANNELS_DIR
+    # has a hardcoded fallback for when the wrapper itself was started without
+    # the var (e.g. running the script by hand).
+    INLINE_ENV=(
+      "MCD_CHANNELS_DIR='${MCD_CHANNELS_DIR:-/home/openclaw/.claude/channels/discord-multi}'"
+    )
+    [[ -n "${WHATSAPP_ENABLED:-}" ]] && INLINE_ENV+=("WHATSAPP_ENABLED='$WHATSAPP_ENABLED'")
     tmux new-session -d -s "$SESSION" \
       -c "$REPO_DIR" \
-      "MCD_CHANNELS_DIR='${MCD_CHANNELS_DIR:-/home/openclaw/.claude/channels/discord-multi}' $BUN server.ts"
+      "${INLINE_ENV[*]} $BUN server.ts"
   fi
 
   # Block until the exact tmux session ends.
