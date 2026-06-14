@@ -12,7 +12,7 @@ This file is your primary context for picking up development. Read it fully befo
 
 ## What this project is
 
-Fork of [`anthropics/claude-plugins-official/external_plugins/discord`](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/discord) (Apache-2.0). Adds per-channel Claude isolation: instead of one shared Claude session, each Discord channel gets its own `claude` process running inside a detached tmux session.
+Fork of [`anthropics/claude-plugins-official/external_plugins/discord`](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/discord) (Apache-2.0). Adds per-channel Claude isolation: instead of one shared Claude session, each Discord channel (or Teams/WhatsApp contact) gets its own `claude` process running inside a detached tmux session.
 
 The operator communicates with the bot from a designated **master channel** using `!project ...` commands. Project channels each have their own git checkout, system prompt, and Claude session that persists across bot restarts via `--resume`.
 
@@ -67,6 +67,7 @@ Discord Gateway (WSS)
 | `src/init.ts` | Bootstrap CLI (called by setup script + `/discord:project init` skill) |
 | `src/argv.ts` | Bash-like argv splitter + flag parser |
 | `src/discord-chunk.ts` | 2000-char chunker respecting Discord markdown |
+| `src/whatsapp-adapter.ts` | `WhatsAppAdapter` — Baileys socket, QR-to-master-channel pairing, inbound/outbound routing |
 
 Tests: `src/master-commands.test.ts`, `src/project-pool.test.ts`, `src/master-mcp-server.test.ts` (~80 checks total).
 
@@ -82,6 +83,7 @@ Tests: `src/master-commands.test.ts`, `src/project-pool.test.ts`, `src/master-mc
 ├── git-credentials.json       credential aliases (mode 0600)
 ├── schedules.json             daily HH:MM jobs (mode 0600)
 ├── inbox/                     downloaded attachments
+├── whatsapp-auth/             Baileys multi-file auth state (mode 0600); presence enables WhatsApp
 └── projects/
     ├── master/
     │   └── CLAUDE.md          deployed from templates/master.CLAUDE.md
@@ -95,7 +97,7 @@ Tests: `src/master-commands.test.ts`, `src/project-pool.test.ts`, `src/master-mc
 **`channels.json` key fields:**
 - `master.chatId` + `master.commandPrefix` (default `!project`)
 - `defaults.{model, idleEvictMinutes, maxConcurrent, git.{userName,userEmail,credentials,branchPrefix}, claude.{permissionMode,allowedTools,disallowedTools,extraArgs}, providers.<alias>.{baseUrl,apiKeyEnv}, provider?}`
-- `projects[<chat_id>].{slug, model?, git?, claude?, provider?}`
+- `projects[<chat_id>].{slug, model?, git?, claude?, provider?, platform?, whatsappJid?}` — `platform` is `'discord' | 'teams' | 'whatsapp'` (default `'discord'`); `whatsappJid` is required when `platform === 'whatsapp'` (contact's E.164 JID, e.g. `15551234567@s.whatsapp.net`)
 
 ---
 
@@ -122,6 +124,19 @@ Projects default to Claude Code subscription auth (no API key). To route a proje
 ```
 
 Then `!project create --provider minimax --model MiniMax-M2.7 ...`. At spawn `resolveProvider()` sets `ANTHROPIC_BASE_URL` + `ANTHROPIC_API_KEY` in the subprocess env.
+
+---
+
+## WhatsApp support
+
+> **⚠️ UNOFFICIAL CLIENT — ToS WARNING:**
+> WhatsApp support uses **Baileys** (`@whiskeysockets/baileys`), an unofficial WhatsApp Web client that is **not sanctioned by Meta/WhatsApp**. Using it can violate WhatsApp's Terms of Service and risks your phone number being permanently banned. Only use with a personal or dedicated self-hosted account — never a business-critical number.
+
+WhatsApp is enabled when the `whatsapp-auth/` directory exists under `MCD_CHANNELS_DIR` OR when `WHATSAPP_ENABLED=1` is set in the environment. On first run, a QR code PNG is posted to the master Discord channel; scan it with your WhatsApp account within 60 seconds. The Baileys session is then persisted in `whatsapp-auth/` and survives restarts.
+
+A single `WhatsAppAdapter` (Baileys socket) serves all WhatsApp projects via multiplexing — inbound `messages.upsert` events are matched to a project by the sender's JID and dispatched through the pool; outbound `mcp__mcd__reply` calls route back through the same adapter. Access control reuses `access.allowFrom`, matched against the sender's E.164 number. Inbound media is surfaced as attachment summaries only — files are not downloaded.
+
+To bind a project to a WhatsApp contact, set `platform: "whatsapp"` and `whatsappJid: "<e164>@s.whatsapp.net"` on the project entry in `channels.json` (or use `!project set` once that flag is supported). Progress modes (`post`/`edit`) work over WhatsApp with parity to Discord and Teams.
 
 ---
 
