@@ -31,3 +31,6 @@ notifications:
 
 github:
   sync: false
+
+pr:
+  test_policy: "unit"
