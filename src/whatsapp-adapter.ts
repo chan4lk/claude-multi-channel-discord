@@ -196,7 +196,9 @@ export class WhatsAppAdapter {
 
         if (connection === 'close') {
           this.sock = null
-          const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode
+          const boom = lastDisconnect?.error as Boom | undefined
+          const statusCode = boom?.output?.statusCode
+          console.error(`whatsapp: connection closed — statusCode=${statusCode} error=${boom?.message ?? boom ?? 'none'}`)
           const loggedOut = statusCode === DisconnectReason.loggedOut
 
           if (loggedOut) {
