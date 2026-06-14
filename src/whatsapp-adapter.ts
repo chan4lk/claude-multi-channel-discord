@@ -60,6 +60,11 @@ export interface WhatsAppAdapterOpts {
   getConfig: () => ChannelsConfig
   /** Called when a new inbound message is ready for the project pool. */
   onInbound: (chatId: string, env: InboundEnvelope) => void
+  /**
+   * Returns true if the given sender E.164 number is allowed to send messages.
+   * server.ts wires this to `loadAccess().allowFrom.includes(id)`.
+   */
+  isAllowed: (senderId: string) => boolean
   /** Called with a QR code string whenever re-pairing is needed.
    *  server.ts is responsible for rendering it to PNG and posting to master. */
   onQr: (qr: string) => void
@@ -235,16 +240,122 @@ export class WhatsAppAdapter {
   }
 
   // -------------------------------------------------------------------------
-  // T3 stub — inbound message parsing
+  // T3 — inbound message parsing
   // -------------------------------------------------------------------------
 
   /**
-   * Handle a messages.upsert event from Baileys.
-   * TODO (T3): Parse WAMessage, resolve jid → chatId, build InboundEnvelope,
-   * call this.opts.onInbound().
+   * Rebuild the jid↔chatId routing maps from the current config.
+   * Called lazily at the start of _handleUpsert so config edits are picked
+   * up without a restart.
    */
-  private _handleUpsert(_upsert: BaileysEventMap['messages.upsert']): void {
-    // TODO (T3): implement inbound message parsing
+  private _refreshRouting(): void {
+    this.jidToChatId.clear()
+    this.chatIdToJid.clear()
+    const config = this.opts.getConfig()
+    for (const [chatId, project] of Object.entries(config.projects)) {
+      if (project.platform === 'whatsapp' && project.whatsappJid) {
+        this.jidToChatId.set(project.whatsappJid, chatId)
+        this.chatIdToJid.set(chatId, project.whatsappJid)
+      }
+    }
+  }
+
+  /**
+   * Handle a messages.upsert event from Baileys.
+   * Parses WAMessage, resolves jid → chatId, builds InboundEnvelope,
+   * calls this.opts.onInbound().
+   */
+  private _handleUpsert(upsert: BaileysEventMap['messages.upsert']): void {
+    // Only process real-time notifications (not history sync).
+    if (upsert.type !== 'notify') return
+
+    // Rebuild routing maps on every upsert so config edits are picked up.
+    this._refreshRouting()
+
+    for (const msg of upsert.messages) {
+      try {
+        // Skip messages we sent ourselves.
+        if (msg.key.fromMe) continue
+
+        const remoteJid = msg.key.remoteJid
+        if (!remoteJid) continue
+
+        // Resolve jid → chatId.
+        const chatId = this.jidToChatId.get(remoteJid)
+        if (!chatId) {
+          console.error(`whatsapp: drop — no project for jid ${remoteJid}`)
+          continue
+        }
+
+        // Derive sender E.164 from remoteJid (format: <digits>@s.whatsapp.net).
+        const e164 = remoteJid.split('@')[0]
+
+        // Access-control check.
+        if (!this.opts.isAllowed(e164)) {
+          console.error(`whatsapp: drop — sender ${e164} not in allowFrom`)
+          continue
+        }
+
+        // Extract text content.
+        const text =
+          msg.message?.conversation ??
+          msg.message?.extendedTextMessage?.text ??
+          ''
+
+        // Extract attachment summaries (FR7) — no media bytes downloaded.
+        const attachments: string[] = []
+
+        if (msg.message?.imageMessage) {
+          const m = msg.message.imageMessage
+          const size = m.fileLength != null ? ` ${Number(m.fileLength)} bytes` : ''
+          attachments.push(`image (${m.mimetype ?? 'image'}${size})`)
+        }
+        if (msg.message?.videoMessage) {
+          const m = msg.message.videoMessage
+          const size = m.fileLength != null ? ` ${Number(m.fileLength)} bytes` : ''
+          attachments.push(`video (${m.mimetype ?? 'video'}${size})`)
+        }
+        if (msg.message?.audioMessage) {
+          const m = msg.message.audioMessage
+          const size = m.fileLength != null ? ` ${Number(m.fileLength)} bytes` : ''
+          attachments.push(`audio (${m.mimetype ?? 'audio'}${size})`)
+        }
+        if (msg.message?.documentMessage) {
+          const m = msg.message.documentMessage
+          const size = m.fileLength != null ? ` ${Number(m.fileLength)} bytes` : ''
+          const name = m.fileName ? ` "${m.fileName}"` : ''
+          attachments.push(`document${name} (${m.mimetype ?? 'application/octet-stream'}${size})`)
+        }
+        if (msg.message?.stickerMessage) {
+          const m = msg.message.stickerMessage
+          attachments.push(`sticker (${m.mimetype ?? 'image/webp'})`)
+        }
+
+        // Skip if nothing to deliver.
+        if (!text && attachments.length === 0) continue
+
+        // Convert messageTimestamp (seconds) to ISO string.
+        const tsSeconds = msg.messageTimestamp
+        const tsMs =
+          tsSeconds != null
+            ? Number(tsSeconds) * 1000
+            : Date.now()
+        const ts = new Date(tsMs).toISOString()
+
+        const env: InboundEnvelope = {
+          messageId: msg.key.id ?? '',
+          userId: e164,
+          username: msg.pushName ?? e164,
+          content: text,
+          ts,
+          ...(attachments.length > 0 ? { attachments } : {}),
+        }
+
+        this.opts.onInbound(chatId, env)
+      } catch (err) {
+        console.error('whatsapp: inbound parse error:', err)
+      }
+    }
   }
 
   // -------------------------------------------------------------------------
