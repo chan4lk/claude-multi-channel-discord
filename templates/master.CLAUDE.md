@@ -151,11 +151,19 @@ WhatsApp support uses **Baileys** (unofficial WhatsApp Web client — ToS risk; 
 3. Scan the QR in WhatsApp → Linked Devices → Link a Device within 60 seconds
 4. Auth credentials are saved to `whatsapp-auth/` and survive restarts
 
-**Creating a WhatsApp project:**
+**Creating a WhatsApp project (new project):**
 ```
-!project create --platform whatsapp <CHAT_ID> --slug <slug> --prompt "..."
+!project create --platform whatsapp <JID> --whatsapp-jid <JID> --slug <slug> --prompt "..."
 ```
-`CHAT_ID` can be any string you choose (it's internal — WhatsApp routing uses `whatsappJid`). After creating, manually add `"whatsappJid": "<e164>@s.whatsapp.net"` to the project entry in `channels.json` (e.g. `"15551234567@s.whatsapp.net"`).
+Use the contact's JID as both the `<CHAT_ID>` and `--whatsapp-jid` value. For a 1-on-1 contact: `94771234567@s.whatsapp.net`. For a group: the `<id>@g.us` from the server drop log.
+
+**Binding an existing project to WhatsApp:**
+```
+!project set <slug-or-chat_id> --whatsapp-jid <JID>
+```
+Sets `platform=whatsapp` and `whatsappJid` on an existing project entry. No restart needed — routing is live-read on each message.
+
+**Finding the JID:** Send a message from the target contact, then check the MCD tmux logs for: `whatsapp: drop — no project for jid <JID>`. That JID is the one to use.
 
 Messages from that contact route to the project's Claude subprocess; replies go back over WhatsApp. Access control reuses `access.allowFrom`.
 
