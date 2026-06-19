@@ -18,6 +18,7 @@ import { buildGitEnv, gitClone, gitPullFastForward, gitSetRemote, gitStatusSumma
 import { getCredential, loadCredentials } from './git-credentials.ts'
 import { accessFile, archiveDir, channelsDir, projectClaudeMd, projectDir } from './paths.ts'
 import { IntervalSchema, loadSchedules, newScheduleId, saveSchedules, type Schedule } from './schedules-config.ts'
+import { scanChannels, classifyChannel } from './heartbeat.ts'
 
 export type MasterCommandResult =
   | { kind: 'no-master-configured' }
@@ -144,6 +145,8 @@ export async function handleMasterCommand(
       return { kind: 'reply', text: await handleProgress(rest, ctx) }
     case 'teams-setup':
       return { kind: 'reply', text: handleTeamsSetup(rest) }
+    case 'heartbeat':
+      return { kind: 'reply', text: handleHeartbeat(rest, ctx) }
     default:
       return {
         kind: 'reply',
@@ -1330,6 +1333,55 @@ function defaultClonePrompt(slug: string, repo: string, baseBranch: string): str
     '',
     'Other tools (`mcp__mcd__react`, `mcp__mcd__edit_message`, `mcp__mcd__download_attachment`, `mcp__mcd__fetch_messages`) are available when useful — for example `download_attachment` to grab an inbound file, or `react` for a fast acknowledgment before a long task.',
   ].join('\n')
+}
+
+function handleHeartbeat(rest: string[], _ctx: MasterContext): string {
+  const { positional, flags } = parseFlags(rest)
+  const channelSlug = typeof flags.channel === 'string' ? flags.channel : null
+
+  const config = loadConfig()
+  const ts = new Date().toISOString()
+
+  if (channelSlug !== null) {
+    const state = classifyChannel(channelSlug, config)
+    const lines = [`Heartbeat scan — ${ts}`]
+    if (state.state === 'idle') {
+      lines.push(`✅ idle (1): ${state.slug}`)
+    } else {
+      const age = fmtAge(state.ageMins)
+      lines.push(`⏰ stalled (1):`)
+      lines.push(`  • ${state.slug} — ${state.reason}, ${age} ago`)
+      if (state.snippet) lines.push(`    snippet: "${state.snippet}"`)
+    }
+    return lines.join('\n')
+  }
+
+  const report = scanChannels(config)
+  const lines = [`Heartbeat scan — ${ts}`]
+
+  if (report.idle.length > 0) {
+    lines.push(`✅ idle (${report.idle.length}): ${report.idle.join(', ')}`)
+  }
+
+  if (report.stalled.length > 0) {
+    lines.push(`⏰ stalled (${report.stalled.length}):`)
+    for (const s of report.stalled) {
+      const age = fmtAge(s.ageMins)
+      lines.push(`  • ${s.slug} — ${s.reason}, ${age} ago`)
+      if (s.snippet) lines.push(`    snippet: "${s.snippet}"`)
+    }
+  }
+
+  return lines.join('\n')
+}
+
+function fmtAge(ageMins: number): string {
+  if (ageMins >= 60) {
+    const h = Math.floor(ageMins / 60)
+    const m = ageMins % 60
+    return `${h}h ${m}m`
+  }
+  return `${ageMins}m`
 }
 
 function removeChannelFromAccessGroups(chatId: string): void {
