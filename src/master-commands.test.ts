@@ -3,13 +3,15 @@
  * Exits 0 on pass, 1 on first failure. Keeps phase 2 tight without pulling
  * in a test framework.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { splitArgv, parseFlags } from './argv.ts'
 import { handleMasterCommand, type MasterContext, type MasterMutator } from './master-commands.ts'
 import { ChannelsConfigSchema, loadConfig, resolveClaudeArgs, saveConfig } from './channels-config.ts'
+import { loadSchedules } from './schedules-config.ts'
+import { classifyChannel } from './heartbeat.ts'
 
 let failed = 0
 function check(label: string, cond: boolean, detail?: string) {
@@ -286,6 +288,99 @@ check(
     'claudeArgs: extraArgs concat (defaults first, project last)',
     JSON.stringify(overrides.extraArgs) === JSON.stringify(['--no-banner', '--debug']),
   )
+}
+
+// --- heartbeat watchdog tests --------------------------------------------
+
+// schedule add with interval (interval value must be quoted so argv splitter treats it as one token)
+const schedIntervalAdd = await handleMasterCommand(
+  '!project schedule add master-test --at "every 30m" --prompt "heartbeat check"',
+  mctx(),
+)
+check('schedule add: interval accepted', schedIntervalAdd.kind === 'reply' && schedIntervalAdd.text.includes('every 30m'))
+{
+  const scheds = loadSchedules(join(stateDir, 'schedules.json'))
+  const entry = scheds.schedules.find(s => s.prompt === 'heartbeat check')
+  check('schedule add: interval stored', entry?.interval === 'every 30m')
+  check('schedule add: at not stored for interval', entry?.at === undefined)
+}
+
+// Re-create newproj for set/heartbeat tests (it was renamed and removed above)
+await handleMasterCommand(
+  '!project create 444444444444444444 --slug newproj --prompt "be helpful"',
+  mctx(),
+)
+
+// set heartbeat config
+const setHb = await handleMasterCommand(
+  '!project set newproj --heartbeat-mode autonomous --heartbeat-window 09:00-17:00',
+  mctx(),
+)
+check('set: heartbeat accepted', setHb.kind === 'reply' && setHb.text.includes('heartbeat'))
+{
+  const proj = loadConfig().projects['444444444444444444']
+  check('set: heartbeat mode persisted', proj?.heartbeat?.mode === 'autonomous')
+  check('set: heartbeat window persisted', proj?.heartbeat?.window === '09:00-17:00')
+}
+
+// heartbeat classifyChannel tests
+{
+  // Build the transcript path for the 'newproj' project
+  const projCwd = join(stateDir, 'projects', 'newproj')
+  const encoded = projCwd.replace(/[^a-zA-Z0-9]/g, '-')
+  const transcriptDir = join(homedir(), '.claude', 'projects', encoded)
+  mkdirSync(transcriptDir, { recursive: true })
+  const transcriptFile = join(transcriptDir, 'test-session.jsonl')
+
+  // Write mock transcript: assistant with question, no subsequent user
+  const entries = [
+    JSON.stringify({ role: 'user', content: [{ type: 'text', text: 'Do something' }] }),
+    JSON.stringify({ role: 'assistant', content: [{ type: 'text', text: 'Should I use API A or API B?' }] }),
+  ]
+  writeFileSync(transcriptFile, entries.join('\n') + '\n')
+  // Backdate the file mtime to 2h ago
+  const pastDate = new Date(Date.now() - 2 * 60 * 60 * 1000)
+  utimesSync(transcriptFile, pastDate, pastDate)
+
+  const result = classifyChannel('newproj', loadConfig())
+  check('heartbeat: question-unanswered classified as stalled', result.state === 'stalled')
+  check('heartbeat: reason is question-unanswered', result.reason === 'question-unanswered')
+  check('heartbeat: snippet contains question', result.snippet.includes('?'))
+}
+
+{
+  // Overwrite the same transcript file with tool_use without tool_result
+  const projCwd = join(stateDir, 'projects', 'newproj')
+  const encoded = projCwd.replace(/[^a-zA-Z0-9]/g, '-')
+  const transcriptDir = join(homedir(), '.claude', 'projects', encoded)
+  const transcriptFile = join(transcriptDir, 'test-session.jsonl')
+
+  const toolEntries = [
+    JSON.stringify({ role: 'user', content: [{ type: 'text', text: 'Do something' }] }),
+    JSON.stringify({ role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_123', name: 'Bash', input: {} }] }),
+    // No tool_result
+  ]
+  writeFileSync(transcriptFile, toolEntries.join('\n') + '\n')
+  const pastDate = new Date(Date.now() - 2 * 60 * 60 * 1000)
+  utimesSync(transcriptFile, pastDate, pastDate)
+
+  const result2 = classifyChannel('newproj', loadConfig())
+  check('heartbeat: tool-incomplete classified as stalled', result2.state === 'stalled')
+  check('heartbeat: reason is tool-incomplete', result2.reason === 'tool-incomplete')
+}
+
+{
+  // Write fresh transcript (mtime = now)
+  const projCwd = join(stateDir, 'projects', 'newproj')
+  const encoded = projCwd.replace(/[^a-zA-Z0-9]/g, '-')
+  const transcriptDir = join(homedir(), '.claude', 'projects', encoded)
+  const transcriptFile = join(transcriptDir, 'test-session.jsonl')
+  writeFileSync(transcriptFile, JSON.stringify({ role: 'assistant', content: [{ type: 'text', text: 'Should I?' }] }) + '\n')
+  // DO NOT backdate — mtime is now → should be 'active'
+
+  const result3 = classifyChannel('newproj', loadConfig())
+  check('heartbeat: fresh transcript classified as idle/active', result3.state === 'idle')
+  check('heartbeat: reason is active', result3.reason === 'active')
 }
 
 if (failed > 0) {

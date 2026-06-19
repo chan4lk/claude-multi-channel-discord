@@ -1151,6 +1151,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
     // runtime via terminal `/discord:project init` re-pointing.
     getMasterChatId: () => loadChannelsConfig().master?.chatId,
     teamsAdapter: teamsAdapter ?? undefined,
+    getPool: () => projectPool,
     // Master-only privileged path. Claude in the master channel can
     // execute the same `!project ...` verbs the operator would type, so
     // natural-language asks like "create a project for keyflow at <url>"

@@ -25,7 +25,8 @@ import { join } from 'node:path'
 import { z } from 'zod'
 
 import { channelsDir } from './paths.ts'
-import type { OutboundReply } from './project-process.ts'
+import type { InboundEnvelope, OutboundReply } from './project-process.ts'
+import type { ProjectPool } from './project-pool.ts'
 
 const ChatIdRoute = /^\/mcp\/([A-Za-z0-9:_\-\.%+@]{3,300})\/?$/
 
@@ -55,6 +56,12 @@ export interface MasterMcpServerOptions {
    * e.g. `create --new-channel foo --slug foo --prompt "..."`.
    */
   executeMasterCommand?: (commandLine: string) => Promise<string>
+  /**
+   * Returns the live ProjectPool. Used by the `inject` tool to deliver a
+   * synthetic envelope to an arbitrary project channel. Optional — when
+   * absent the `inject` tool is not exposed.
+   */
+  getPool?: () => ProjectPool | null
   /** Diagnostics. Defaults to stderr. */
   log?: (msg: string) => void
   /**
@@ -77,6 +84,7 @@ export class MasterMcpServer {
   private readonly executeMasterCommand: ((cmd: string) => Promise<string>) | null
   private readonly log: (msg: string) => void
   private readonly teamsAdapter: { handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> } | undefined
+  private readonly getPool: (() => ProjectPool | null) | undefined
 
   constructor(opts: MasterMcpServerOptions) {
     this.host = opts.host ?? '127.0.0.1'
@@ -87,6 +95,7 @@ export class MasterMcpServer {
     this.executeMasterCommand = opts.executeMasterCommand ?? null
     this.log = opts.log ?? ((m) => process.stderr.write(`[mcp-master] ${m}\n`))
     this.teamsAdapter = opts.teamsAdapter
+    this.getPool = opts.getPool
   }
 
   async start(): Promise<{ host: string; port: number }> {
@@ -229,6 +238,21 @@ export class MasterMcpServer {
       // This is how natural-language requests in the master channel get
       // turned into actions ("create a project for keyflow at <url>"
       // → claude calls run_master_command("clone --new-channel ...")).
+      if (this.getPool && this.getMasterChatId() === chatId) {
+        tools.push({
+          name: 'inject',
+          description: 'Inject a synthetic message into a project channel as if it arrived from the heartbeat user. Only available in the master channel. Use to trigger a scheduled nudge or heartbeat in another channel.',
+          inputSchema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              chatId: { type: 'string', description: 'The target project channel id.' },
+              text: { type: 'string', description: 'The message text to inject.' },
+            },
+            required: ['chatId', 'text'],
+          },
+        })
+      }
       if (this.executeMasterCommand && this.getMasterChatId() === chatId) {
         tools.push({
           name: 'run_master_command',
@@ -320,6 +344,28 @@ export class MasterMcpServer {
             this.log(`reply tool called for ${chatId}: text=${JSON.stringify(parsed.data.text).slice(0, 60)} reply_to=${parsed.data.reply_to ?? '-'}`)
             this.onReply({ kind: 'text', chatId, text: parsed.data.text, replyTo: parsed.data.reply_to })
             return okResult('ok')
+          }
+          case 'inject': {
+            if (!this.getPool) return errorResult('inject not configured')
+            if (this.getMasterChatId() !== chatId) {
+              return errorResult('mcp__mcd__inject can only be called from the master channel')
+            }
+            const targetChatId = String(args.chatId ?? '').trim()
+            const text = String(args.text ?? '').trim()
+            if (!targetChatId) return errorResult('chatId is required')
+            if (!text) return errorResult('text is required')
+            const pool = this.getPool()
+            if (!pool) return errorResult('pool not available')
+            const envelope: InboundEnvelope = {
+              messageId: `heartbeat-${Date.now()}`,
+              userId: 'heartbeat',
+              username: 'heartbeat',
+              content: text,
+              ts: new Date().toISOString(),
+            }
+            this.log(`inject tool: delivering to ${targetChatId}: ${JSON.stringify(text).slice(0, 60)}`)
+            await pool.deliver(targetChatId, envelope)
+            return okResult(JSON.stringify({ ok: true }))
           }
           case 'run_master_command': {
             if (!this.executeMasterCommand) return errorResult('run_master_command not configured')
