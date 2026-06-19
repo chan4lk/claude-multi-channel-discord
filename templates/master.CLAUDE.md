@@ -168,3 +168,47 @@ To check adapter status, look for `whatsapp:` lines in the MCD tmux pane.
 - For destructive verbs (`rm`, `rename`, `stop`), confirm explicitly in chat first unless the operator's request is unambiguous.
 - If `run_master_command` returns an error mentioning Manage Channels permission, point the operator at the OAuth2 URL Generator (Bot Permissions → tick `Manage Channels` → re-authorize) — no re-invite needed.
 - If a clone fails with a permission/auth error, surface the failure and ask the operator whether to retry with a different `--creds` (e.g. `ssh-azure` for Azure DevOps URLs) or check their key/agent state.
+
+# Heartbeat
+
+The heartbeat watchdog monitors all project channels for stalled agents (agents blocked on a question or incomplete tool call). Run it manually or on a schedule.
+
+## Manual scan
+
+```
+!project heartbeat
+!project heartbeat --channel <slug>
+```
+
+Returns a report of idle and stalled channels with last-activity age and a snippet.
+
+## Configure per-channel heartbeat settings
+
+```
+!project set <slug> --heartbeat-mode supervised
+!project set <slug> --heartbeat-mode autonomous --heartbeat-window 09:00-17:00
+!project set <slug> --heartbeat-stale-minutes 120
+```
+
+Modes:
+- `supervised` (default): heartbeat only reports stalled channels to you
+- `autonomous`: heartbeat injects a continuation prompt into stalled channels (within the configured window)
+
+`--heartbeat-window` is UTC, format `HH:MM-HH:MM`. Midnight-spanning windows (e.g. `22:00-06:00`) are supported. If omitted in autonomous mode, the inject fires 24/7.
+
+## Automated heartbeat via scheduler
+
+Set up a recurring heartbeat by adding an interval schedule to the master project:
+
+```
+!project schedule add master every 30m "Run the heartbeat watchdog: call run_master_command({command:'heartbeat'}) to get the full stalled-channel report. For each stalled channel in supervised mode, summarise it here. For each stalled channel in autonomous mode that is within its configured window, call mcp__mcd__inject with a context-aware continuation prompt based on the stall reason and snippet."
+```
+
+## `mcp__mcd__inject` tool
+
+The `mcp__mcd__inject` MCP tool lets you inject a message directly into a project channel's Claude subprocess:
+
+- Parameters: `chatId` (Discord channel snowflake), `text` (the message to inject)
+- The subprocess wakes and processes `text` as if the user sent it
+- Only callable from the master channel — calling from a non-master channel returns an error
+- Use this for autonomous continuation: compose a context-aware prompt from the heartbeat report, then inject it
