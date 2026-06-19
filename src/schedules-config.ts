@@ -24,11 +24,15 @@ export const SchedulesFile = (): string => join(channelsDir(), 'schedules.json')
 
 const TimeOfDaySchema = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/, '`at` must be HH:MM (24h)')
 
+export const IntervalSchema = z.string().regex(/^every \d+[mh]$/, '`interval` must be "every Xm" or "every Xh"')
+
 const ScheduleSchema = z.object({
   id: z.string().min(1),
   chatId: z.string().regex(/^\d{15,25}$/),
-  /** Daily fire time, host local zone, "HH:MM". */
-  at: TimeOfDaySchema,
+  /** Daily fire time, host local zone, "HH:MM". Mutually exclusive with `interval`. */
+  at: TimeOfDaySchema.optional(),
+  /** Recurring interval, e.g. "every 30m" or "every 2h". Mutually exclusive with `at`. */
+  interval: IntervalSchema.optional(),
   /** Reserved for cron support — unused in v1. */
   cron: z.string().optional(),
   prompt: z.string().min(1),
@@ -43,7 +47,10 @@ const ScheduleSchema = z.object({
   maxRuns: z.number().int().positive().nullable().default(null),
   /** Number of successful firings. */
   runCount: z.number().int().nonnegative().default(0),
-})
+}).refine(
+  (s) => (s.at !== undefined) !== (s.interval !== undefined),
+  { message: 'Exactly one of `at` or `interval` must be set' },
+)
 export type Schedule = z.infer<typeof ScheduleSchema>
 
 export const SchedulesFileSchema = z.object({
@@ -77,11 +84,29 @@ export function saveSchedules(file: SchedulesFileShape, path: string = Schedules
 }
 
 /**
- * Compute the next fire time (epoch ms) for a daily HH:MM schedule
- * given a `now` reference. If `now` is past today's slot, the next
- * fire is tomorrow's. Returns wall-clock host time.
+ * Compute the next fire time (epoch ms) for a schedule entry.
+ *
+ * - `at` entries: daily HH:MM, host local zone. If `now` is past today's
+ *   slot, next fire is tomorrow's.
+ * - `interval` entries: `lastRunAt + duration` if `lastRunAt` is set,
+ *   otherwise `now` (fire immediately on first tick).
  */
-export function nextFireMs(at: string, now: Date = new Date()): number {
+export function nextFireMs(
+  entry: Pick<Schedule, 'at' | 'interval' | 'lastRunAt'>,
+  now: Date = new Date(),
+): number {
+  if (entry.interval !== undefined) {
+    const match = entry.interval.match(/^every (\d+)([mh])$/)
+    if (!match) throw new Error(`Invalid interval: ${entry.interval}`)
+    const value = Number(match[1])
+    const unit = match[2] as 'm' | 'h'
+    const durationMs = unit === 'h' ? value * 60 * 60 * 1000 : value * 60 * 1000
+    if (entry.lastRunAt) {
+      return new Date(entry.lastRunAt).getTime() + durationMs
+    }
+    return now.getTime()
+  }
+  const at = entry.at!
   const [h, m] = at.split(':').map((s) => Number(s))
   const target = new Date(now)
   target.setHours(h ?? 0, m ?? 0, 0, 0)
@@ -89,6 +114,14 @@ export function nextFireMs(at: string, now: Date = new Date()): number {
     target.setDate(target.getDate() + 1)
   }
   return target.getTime()
+}
+
+/**
+ * Returns true if `entry.lastRunAt` exists AND `now - lastRunAt < durationMs`.
+ */
+export function hasFiredWithin(entry: Schedule, durationMs: number, now: Date = new Date()): boolean {
+  if (!entry.lastRunAt) return false
+  return now.getTime() - new Date(entry.lastRunAt).getTime() < durationMs
 }
 
 /**
