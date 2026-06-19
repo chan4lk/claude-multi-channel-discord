@@ -12,6 +12,7 @@
  */
 import {
   hasFiredToday,
+  hasFiredWithin,
   loadSchedules,
   nextFireMs,
   saveSchedules,
@@ -122,17 +123,28 @@ export class Scheduler {
 /**
  * Whether a schedule should fire on this tick. Conditions:
  *  - enabled
- *  - daily-at-HH:MM has already passed for today's local-zone day
- *  - and we haven't fired today yet
+ *  - for `at` entries: daily-at-HH:MM has already passed for today's
+ *    local-zone day and we haven't fired today yet
+ *  - for `interval` entries: lastRunAt + duration <= now
  *
  * Cron support (when added) plugs in here.
  */
 function isDue(s: Schedule, now: Date): boolean {
   if (!s.enabled) return false
+  if (s.interval !== undefined) {
+    const match = s.interval.match(/^every (\d+)([mh])$/)
+    if (!match) return false
+    const value = Number(match[1])
+    const unit = match[2] as 'm' | 'h'
+    const durationMs = unit === 'h' ? value * 60 * 60 * 1000 : value * 60 * 1000
+    if (hasFiredWithin(s, durationMs, now)) return false
+    return now.getTime() >= nextFireMs(s, now)
+  }
+  // at-based daily schedule
   if (hasFiredToday(s, now)) return false
   // Today's target time (next-fire returns tomorrow's slot if today's
   // is past, so we have to compute today's slot independently).
-  const [h, m] = s.at.split(':').map((x) => Number(x))
+  const [h, m] = s.at!.split(':').map((x) => Number(x))
   const todayTarget = new Date(now)
   todayTarget.setHours(h ?? 0, m ?? 0, 0, 0)
   return now.getTime() >= todayTarget.getTime()
