@@ -932,7 +932,11 @@ export class ClaudeProjectProcess implements ProjectProcess {
       if (!sessionId || !this.projectCwd) return
       const path = join(homedir(), '.claude', 'projects', encodeProjectCwd(this.projectCwd), `${sessionId}.jsonl`)
       if (path !== this.transcriptWatcherPath) {
-        this.transcriptWatcherOffset = 0
+        // Seek to end of existing transcript so we only emit tool calls from
+        // new turns, not historical ones replayed from a --resume session.
+        let currentSize = 0
+        try { currentSize = statSync(path).size } catch { /* file not created yet */ }
+        this.transcriptWatcherOffset = currentSize
         this.transcriptWatcherPath = path
         this.transcriptPendingTools.clear()
       }
