@@ -163,6 +163,9 @@ function helpText(prefix: string): string {
     `${prefix} clone  <chat_id-or--new-channel NAME> --slug X --repo URL [--branch BR] [--creds NAME] [--provider NAME]`,
     `${prefix} set    <chat_id-or-slug> --prompt "..."                — rewrite CLAUDE.md`,
     `${prefix} set    <chat_id-or-slug> --stuck-threshold-minutes N  — override stuck-watchdog threshold`,
+    `${prefix} set    <chat_id-or-slug> --heartbeat-mode <supervised|autonomous>  — set heartbeat mode`,
+    `${prefix} set    <chat_id-or-slug> --heartbeat-window <HH:MM-HH:MM>          — set active window`,
+    `${prefix} set    <chat_id-or-slug> --heartbeat-stale-minutes N               — set stale threshold`,
     `${prefix} rename <chat_id-or-slug> --slug NEW                    — rename slug + dir`,
     `${prefix} remote <chat_id-or-slug> [--set URL] [--creds NAME]    — show/set git remote`,
     `${prefix} pull   <chat_id-or-slug>                               — git pull --ff-only`,
@@ -477,8 +480,26 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
   const stuckRaw = flags['stuck-threshold-minutes']
   const stuckMinutes = stuckRaw !== undefined ? Number(stuckRaw) : null
 
-  if (prompt === null && stuckMinutes === null) {
-    return '`set` requires `--prompt "..."` or `--stuck-threshold-minutes N`'
+  const heartbeatModeRaw = typeof flags['heartbeat-mode'] === 'string' ? flags['heartbeat-mode'] : null
+  if (heartbeatModeRaw !== null && heartbeatModeRaw !== 'supervised' && heartbeatModeRaw !== 'autonomous') {
+    return '`--heartbeat-mode` must be `supervised` or `autonomous`'
+  }
+  const heartbeatMode = heartbeatModeRaw as 'supervised' | 'autonomous' | null
+
+  const heartbeatWindowRaw = typeof flags['heartbeat-window'] === 'string' ? flags['heartbeat-window'] : null
+  if (heartbeatWindowRaw !== null && !/^\d{2}:\d{2}-\d{2}:\d{2}$/.test(heartbeatWindowRaw)) {
+    return '`--heartbeat-window` must match `HH:MM-HH:MM`'
+  }
+  const heartbeatWindow = heartbeatWindowRaw
+
+  const heartbeatStaleRaw = flags['heartbeat-stale-minutes']
+  const heartbeatStale = heartbeatStaleRaw !== undefined ? Number(heartbeatStaleRaw) : null
+  if (heartbeatStale !== null && (!Number.isInteger(heartbeatStale) || heartbeatStale <= 0)) {
+    return '`--heartbeat-stale-minutes` must be a positive integer'
+  }
+
+  if (prompt === null && stuckMinutes === null && heartbeatMode === null && heartbeatWindow === null && heartbeatStale === null) {
+    return '`set` requires `--prompt "..."`, `--stuck-threshold-minutes N`, `--heartbeat-mode <supervised|autonomous>`, `--heartbeat-window <HH:MM-HH:MM>`, or `--heartbeat-stale-minutes N`'
   }
 
   const results: string[] = []
@@ -495,6 +516,19 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
     const updated = { ...config, projects: { ...config.projects, [entry.chatId]: { ...entry.project, stuckThresholdMinutes: stuckMinutes } } }
     saveConfig(updated)
     results.push(`✅ set \`stuckThresholdMinutes\` = ${stuckMinutes} for **${entry.project.slug}**.`)
+  }
+
+  if (heartbeatMode !== null || heartbeatWindow !== null || heartbeatStale !== null) {
+    const existing: Partial<NonNullable<typeof entry.project.heartbeat>> = entry.project.heartbeat ?? {}
+    const heartbeat = {
+      mode: heartbeatMode ?? existing.mode ?? 'supervised',
+      staleAfterMinutes: heartbeatStale ?? existing.staleAfterMinutes ?? 60,
+      ...(heartbeatWindow !== undefined && heartbeatWindow !== null ? { window: heartbeatWindow } : existing.window ? { window: existing.window } : {}),
+    } as { mode: 'supervised' | 'autonomous'; staleAfterMinutes: number; window?: string }
+    const latest = loadConfig()
+    const updatedEntry = latest.projects[entry.chatId] ?? entry.project
+    saveConfig({ ...latest, projects: { ...latest.projects, [entry.chatId]: { ...updatedEntry, heartbeat } } })
+    results.push(`✅ set \`heartbeat\` for **${entry.project.slug}**: mode=${heartbeat.mode}, staleAfterMinutes=${heartbeat.staleAfterMinutes}${heartbeat.window ? `, window=${heartbeat.window}` : ''}.`)
   }
 
   // Respawn only needed when prompt changed (CLAUDE.md is read at session start).
