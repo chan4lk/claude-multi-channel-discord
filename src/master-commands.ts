@@ -17,7 +17,8 @@ import {
 import { buildGitEnv, gitClone, gitPullFastForward, gitSetRemote, gitStatusSummary } from './git-ops.ts'
 import { getCredential, loadCredentials } from './git-credentials.ts'
 import { accessFile, archiveDir, channelsDir, projectClaudeMd, projectDir } from './paths.ts'
-import { loadSchedules, newScheduleId, saveSchedules, type Schedule } from './schedules-config.ts'
+import { IntervalSchema, loadSchedules, newScheduleId, saveSchedules, type Schedule } from './schedules-config.ts'
+import { scanChannels, classifyChannel } from './heartbeat.ts'
 
 export type MasterCommandResult =
   | { kind: 'no-master-configured' }
@@ -144,6 +145,8 @@ export async function handleMasterCommand(
       return { kind: 'reply', text: await handleProgress(rest, ctx) }
     case 'teams-setup':
       return { kind: 'reply', text: handleTeamsSetup(rest) }
+    case 'heartbeat':
+      return { kind: 'reply', text: handleHeartbeat(rest, ctx) }
     default:
       return {
         kind: 'reply',
@@ -163,12 +166,15 @@ function helpText(prefix: string): string {
     `${prefix} clone  <chat_id-or--new-channel NAME> --slug X --repo URL [--branch BR] [--creds NAME] [--provider NAME]`,
     `${prefix} set    <chat_id-or-slug> --prompt "..."                — rewrite CLAUDE.md`,
     `${prefix} set    <chat_id-or-slug> --stuck-threshold-minutes N  — override stuck-watchdog threshold`,
+    `${prefix} set    <chat_id-or-slug> --heartbeat-mode <supervised|autonomous>  — set heartbeat mode`,
+    `${prefix} set    <chat_id-or-slug> --heartbeat-window <HH:MM-HH:MM>          — set active window`,
+    `${prefix} set    <chat_id-or-slug> --heartbeat-stale-minutes N               — set stale threshold`,
     `${prefix} rename <chat_id-or-slug> --slug NEW                    — rename slug + dir`,
     `${prefix} remote <chat_id-or-slug> [--set URL] [--creds NAME]    — show/set git remote`,
     `${prefix} pull   <chat_id-or-slug>                               — git pull --ff-only`,
     `${prefix} usage                         — resource snapshot of running project subprocesses (alias: ps, top)`,
     `${prefix} stop   <chat_id-or-slug>                               — kill the project's subprocess; lazy-respawns on next message`,
-    `${prefix} schedule add <chat_id-or-slug> --at HH:MM --prompt "..." [--max-runs N]   — daily recurring job`,
+    `${prefix} schedule add <chat_id-or-slug> --at HH:MM|every 30m|every 2h --prompt "..." [--max-runs N]   — daily recurring job`,
     `${prefix} schedule list [<chat_id-or-slug>]      — show all schedules (or just one project's)`,
     `${prefix} schedule pause/resume/rm <id>          — toggle or delete a schedule`,
     `${prefix} provider <chat_id-or-slug> [--set ALIAS | --clear]    — switch a project to a different provider (or back to Claude subscription)`,
@@ -268,25 +274,36 @@ async function handleCreate(rest: string[], ctx: MasterContext): Promise<string>
   const model = typeof flags.model === 'string' ? flags.model : undefined
   if (!prompt) return '`create` requires `--prompt "..."` (use --prompt "" if you really want an empty CLAUDE.md)'
 
-  // --platform flag: 'discord' (default) or 'teams'
+  // --platform flag: 'discord' (default), 'teams', or 'whatsapp'
   const platformRaw = typeof flags.platform === 'string' ? flags.platform : 'discord'
-  if (platformRaw !== 'discord' && platformRaw !== 'teams') {
-    return '`--platform` must be `discord` or `teams`'
+  if (platformRaw !== 'discord' && platformRaw !== 'teams' && platformRaw !== 'whatsapp') {
+    return '`--platform` must be `discord`, `teams`, or `whatsapp`'
   }
-  const platform = platformRaw as 'discord' | 'teams'
+  const platform = platformRaw as 'discord' | 'teams' | 'whatsapp'
+
+  // --whatsapp-jid: required when --platform whatsapp
+  const whatsappJid = typeof flags['whatsapp-jid'] === 'string' ? flags['whatsapp-jid'] : null
+  if (platform === 'whatsapp' && !whatsappJid) {
+    return '`create --platform whatsapp` requires `--whatsapp-jid <jid>` (e.g. `94771234567@s.whatsapp.net`)'
+  }
 
   // Channel id can come from a positional argument OR `--new-channel <name>`
   // which auto-creates a fresh guild text channel using the bot's
   // Manage Channels permission. (Idempotent — reuses an existing channel
   // with the same name if one's there.)
   // When --platform teams, the positional arg is the Teams conversation ID;
-  // Discord channel creation is skipped entirely.
+  // When --platform whatsapp, the JID is used as chatId directly;
+  // Discord channel creation is skipped entirely for non-discord platforms.
   const newChannelName = typeof flags['new-channel'] === 'string' ? flags['new-channel'] : null
   let chatId: string
   let createdChannelNote: string | null = null
   let weCreatedChannel = false
 
-  if (platform === 'teams') {
+  if (platform === 'whatsapp') {
+    // WhatsApp: use the JID as chatId. Positional arg is also accepted as JID
+    // (mirrors Teams pattern) but --whatsapp-jid takes precedence.
+    chatId = whatsappJid!
+  } else if (platform === 'teams') {
     // Teams: positional arg is the conversation ID. --new-channel is not applicable.
     if (positional.length === 0) {
       return '`create --platform teams` requires the Teams conversation ID as the first positional argument'
@@ -389,6 +406,7 @@ async function handleCreate(rest: string[], ctx: MasterContext): Promise<string>
       [chatId]: {
         slug,
         ...(platform === 'teams' ? { platform } : {}),
+        ...(platform === 'whatsapp' ? { platform, whatsappJid: whatsappJid! } : {}),
         ...(model ? { model } : {}),
         ...(provider ? { provider } : {}),
       },
@@ -465,8 +483,26 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
   const stuckRaw = flags['stuck-threshold-minutes']
   const stuckMinutes = stuckRaw !== undefined ? Number(stuckRaw) : null
 
-  if (prompt === null && stuckMinutes === null) {
-    return '`set` requires `--prompt "..."` or `--stuck-threshold-minutes N`'
+  const heartbeatModeRaw = typeof flags['heartbeat-mode'] === 'string' ? flags['heartbeat-mode'] : null
+  if (heartbeatModeRaw !== null && heartbeatModeRaw !== 'supervised' && heartbeatModeRaw !== 'autonomous') {
+    return '`--heartbeat-mode` must be `supervised` or `autonomous`'
+  }
+  const heartbeatMode = heartbeatModeRaw as 'supervised' | 'autonomous' | null
+
+  const heartbeatWindowRaw = typeof flags['heartbeat-window'] === 'string' ? flags['heartbeat-window'] : null
+  if (heartbeatWindowRaw !== null && !/^\d{2}:\d{2}-\d{2}:\d{2}$/.test(heartbeatWindowRaw)) {
+    return '`--heartbeat-window` must match `HH:MM-HH:MM`'
+  }
+  const heartbeatWindow = heartbeatWindowRaw
+
+  const heartbeatStaleRaw = flags['heartbeat-stale-minutes']
+  const heartbeatStale = heartbeatStaleRaw !== undefined ? Number(heartbeatStaleRaw) : null
+  if (heartbeatStale !== null && (!Number.isInteger(heartbeatStale) || heartbeatStale <= 0)) {
+    return '`--heartbeat-stale-minutes` must be a positive integer'
+  }
+
+  if (prompt === null && stuckMinutes === null && heartbeatMode === null && heartbeatWindow === null && heartbeatStale === null) {
+    return '`set` requires `--prompt "..."`, `--stuck-threshold-minutes N`, `--heartbeat-mode <supervised|autonomous>`, `--heartbeat-window <HH:MM-HH:MM>`, or `--heartbeat-stale-minutes N`'
   }
 
   const results: string[] = []
@@ -483,6 +519,19 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
     const updated = { ...config, projects: { ...config.projects, [entry.chatId]: { ...entry.project, stuckThresholdMinutes: stuckMinutes } } }
     saveConfig(updated)
     results.push(`✅ set \`stuckThresholdMinutes\` = ${stuckMinutes} for **${entry.project.slug}**.`)
+  }
+
+  if (heartbeatMode !== null || heartbeatWindow !== null || heartbeatStale !== null) {
+    const existing: Partial<NonNullable<typeof entry.project.heartbeat>> = entry.project.heartbeat ?? {}
+    const heartbeat = {
+      mode: heartbeatMode ?? existing.mode ?? 'supervised',
+      staleAfterMinutes: heartbeatStale ?? existing.staleAfterMinutes ?? 60,
+      ...(heartbeatWindow !== undefined && heartbeatWindow !== null ? { window: heartbeatWindow } : existing.window ? { window: existing.window } : {}),
+    } as { mode: 'supervised' | 'autonomous'; staleAfterMinutes: number; window?: string }
+    const latest = loadConfig()
+    const updatedEntry = latest.projects[entry.chatId] ?? entry.project
+    saveConfig({ ...latest, projects: { ...latest.projects, [entry.chatId]: { ...updatedEntry, heartbeat } } })
+    results.push(`✅ set \`heartbeat\` for **${entry.project.slug}**: mode=${heartbeat.mode}, staleAfterMinutes=${heartbeat.staleAfterMinutes}${heartbeat.window ? `, window=${heartbeat.window}` : ''}.`)
   }
 
   // Respawn only needed when prompt changed (CLAUDE.md is read at session start).
@@ -608,6 +657,19 @@ async function handleClone(rest: string[], ctx: MasterContext): Promise<string> 
   const promptArg = typeof flags.prompt === 'string' ? flags.prompt : null
   const model = typeof flags.model === 'string' ? flags.model : undefined
 
+  // --platform flag for clone: 'discord' (default), 'teams', or 'whatsapp'
+  const clonePlatformRaw = typeof flags.platform === 'string' ? flags.platform : 'discord'
+  if (clonePlatformRaw !== 'discord' && clonePlatformRaw !== 'teams' && clonePlatformRaw !== 'whatsapp') {
+    return '`--platform` must be `discord`, `teams`, or `whatsapp`'
+  }
+  const clonePlatform = clonePlatformRaw as 'discord' | 'teams' | 'whatsapp'
+
+  // --whatsapp-jid: required when --platform whatsapp
+  const cloneWhatsappJid = typeof flags['whatsapp-jid'] === 'string' ? flags['whatsapp-jid'] : null
+  if (clonePlatform === 'whatsapp' && !cloneWhatsappJid) {
+    return '`clone --platform whatsapp` requires `--whatsapp-jid <jid>` (e.g. `94771234567@s.whatsapp.net`)'
+  }
+
   // Channel id (positional or auto-create) — same shape as create.
   const newChannelName = typeof flags['new-channel'] === 'string' ? flags['new-channel'] : null
   let chatId: string
@@ -617,7 +679,10 @@ async function handleClone(rest: string[], ctx: MasterContext): Promise<string> 
   // we roll back by deleting it (so retries don't pile up orphan channels).
   let weCreatedChannel = false
 
-  if (newChannelName !== null) {
+  if (clonePlatform === 'whatsapp') {
+    // WhatsApp: JID is the chatId. No Discord channel needed.
+    chatId = cloneWhatsappJid!
+  } else if (newChannelName !== null) {
     if (!ctx.mutator?.createDiscordChannel) return 'auto-create channel unavailable'
     if (!/^[a-z0-9-]{1,90}$/.test(newChannelName)) return 'channel name must match `[a-z0-9-]{1,90}`'
     try {
@@ -633,7 +698,7 @@ async function handleClone(rest: string[], ctx: MasterContext): Promise<string> 
     chatId = positional[0]!
     if (!/^\d{15,25}$/.test(chatId)) return `chat_id must be a Discord snowflake; got "${chatId}"`
   } else {
-    return '`clone` needs `<chat_id>` (positional) OR `--new-channel <name>`'
+    return '`clone` needs `<chat_id>` (positional), `--new-channel <name>`, or `--platform whatsapp --whatsapp-jid <jid>`'
   }
 
   const rollback = async (reason: string): Promise<string> => {
@@ -705,6 +770,7 @@ async function handleClone(rest: string[], ctx: MasterContext): Promise<string> 
       ...config.projects,
       [chatId]: {
         slug,
+        ...(clonePlatform === 'whatsapp' ? { platform: clonePlatform, whatsappJid: cloneWhatsappJid! } : {}),
         ...(model ? { model } : {}),
         ...(cloneProvider ? { provider: cloneProvider } : {}),
         git: {
@@ -869,7 +935,7 @@ async function handleUsage(ctx: MasterContext): Promise<string> {
  * `!project schedule <subverb> ...` — daily HH:MM scheduler.
  *
  * Shapes:
- *   schedule add <chat_id-or-slug> --at HH:MM --prompt "..." [--max-runs N]
+ *   schedule add <chat_id-or-slug> --at HH:MM|every 30m|every 2h --prompt "..." [--max-runs N]
  *   schedule list [<chat_id-or-slug>]
  *   schedule pause <id>
  *   schedule resume <id>
@@ -901,9 +967,13 @@ async function scheduleAdd(tail: string[]): Promise<string> {
   const { positional, flags } = parseFlags(tail)
   if (positional.length === 0) return '`schedule add` needs a chat_id or slug as the first argument'
 
-  const at = flags.at
-  if (typeof at !== 'string') return '`schedule add` requires `--at HH:MM` (24h, host local time)'
-  if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(at)) return `\`--at\` must be HH:MM, got "${at}"`
+  const atRaw = flags.at
+  if (typeof atRaw !== 'string') return '`schedule add` requires `--at HH:MM` or `--at every Xm/Xh`'
+
+  const isInterval = IntervalSchema.safeParse(atRaw).success
+  const isHHMM = /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(atRaw)
+
+  if (!isHHMM && !isInterval) return `\`--at\` must be HH:MM or "every Xm"/"every Xh", got "${atRaw}"`
 
   const prompt = typeof flags.prompt === 'string' ? flags.prompt : null
   if (!prompt) return '`schedule add` requires `--prompt "..."` — what to ask the agent each fire'
@@ -923,24 +993,37 @@ async function scheduleAdd(tail: string[]): Promise<string> {
 
   const file = loadSchedules()
   const id = newScheduleId()
-  const sched: Schedule = {
-    id,
-    chatId: entry.chatId,
-    at,
-    prompt,
-    enabled: true,
-    lastRunAt: null,
-    createdAt: new Date().toISOString(),
-    maxRuns,
-    runCount: 0,
-  }
+  const sched: Schedule = isInterval
+    ? {
+        id,
+        chatId: entry.chatId,
+        interval: atRaw,
+        prompt,
+        enabled: true,
+        lastRunAt: null,
+        createdAt: new Date().toISOString(),
+        maxRuns,
+        runCount: 0,
+      }
+    : {
+        id,
+        chatId: entry.chatId,
+        at: atRaw,
+        prompt,
+        enabled: true,
+        lastRunAt: null,
+        createdAt: new Date().toISOString(),
+        maxRuns,
+        runCount: 0,
+      }
   file.schedules.push(sched)
   saveSchedules(file)
 
+  const timeLabel = isInterval ? `every: ${atRaw}` : `daily at: ${atRaw} (host local time)`
   return [
     `✅ scheduled job **${id}**`,
     `project: **${entry.project.slug}** (chat \`${entry.chatId}\`)`,
-    `daily at: ${at} (host local time)`,
+    timeLabel,
     `prompt: ${prompt.length > 120 ? prompt.slice(0, 120) + '…' : prompt}`,
     maxRuns ? `max runs: ${maxRuns}` : '_no run cap (use `pause`/`rm` to stop)_',
   ].join('\n')
@@ -960,16 +1043,17 @@ function scheduleList(tail: string[]): string {
   if (rows.length === 0) {
     return filterChatId
       ? `_no schedules for "${positional[0]}"._`
-      : '_no schedules configured. add one with `schedule add <slug> --at HH:MM --prompt "..."`._'
+      : '_no schedules configured. add one with `schedule add <slug> --at HH:MM|every 30m --prompt "..."`._'
   }
 
   const lines = ['**Schedules:**', '```']
   lines.push('id                              slug                 at     enabled  runs   last_run')
-  for (const s of rows.sort((a, b) => a.at.localeCompare(b.at))) {
+  const sortKey = (s: Schedule) => s.at ?? `~${s.interval ?? ''}`
+  for (const s of rows.sort((a, b) => sortKey(a).localeCompare(sortKey(b)))) {
     const project = config.projects[s.chatId]
     const slug = (project?.slug ?? '?').padEnd(20).slice(0, 20)
     const id = s.id.padEnd(30).slice(0, 30)
-    const at = s.at.padEnd(5)
+    const at = (s.at ?? s.interval ?? '?').padEnd(5)
     const en = s.enabled ? 'yes' : 'no '
     const runs = s.maxRuns ? `${s.runCount}/${s.maxRuns}` : `${s.runCount}`
     const last = s.lastRunAt ?? '(never)'
@@ -998,7 +1082,7 @@ function scheduleRemove(tail: string[]): string {
   if (idx < 0) return `no schedule with id \`${id}\``
   const removed = file.schedules.splice(idx, 1)[0]!
   saveSchedules(file)
-  return `🗑 schedule **${removed.id}** removed (was for chat \`${removed.chatId}\` at ${removed.at})`
+  return `🗑 schedule **${removed.id}** removed (was for chat \`${removed.chatId}\` at ${removed.at ?? removed.interval})`
 }
 
 /**
@@ -1249,6 +1333,55 @@ function defaultClonePrompt(slug: string, repo: string, baseBranch: string): str
     '',
     'Other tools (`mcp__mcd__react`, `mcp__mcd__edit_message`, `mcp__mcd__download_attachment`, `mcp__mcd__fetch_messages`) are available when useful — for example `download_attachment` to grab an inbound file, or `react` for a fast acknowledgment before a long task.',
   ].join('\n')
+}
+
+function handleHeartbeat(rest: string[], _ctx: MasterContext): string {
+  const { positional, flags } = parseFlags(rest)
+  const channelSlug = typeof flags.channel === 'string' ? flags.channel : null
+
+  const config = loadConfig()
+  const ts = new Date().toISOString()
+
+  if (channelSlug !== null) {
+    const state = classifyChannel(channelSlug, config)
+    const lines = [`Heartbeat scan — ${ts}`]
+    if (state.state === 'idle') {
+      lines.push(`✅ idle (1): ${state.slug}`)
+    } else {
+      const age = fmtAge(state.ageMins)
+      lines.push(`⏰ stalled (1):`)
+      lines.push(`  • ${state.slug} — ${state.reason}, ${age} ago`)
+      if (state.snippet) lines.push(`    snippet: "${state.snippet}"`)
+    }
+    return lines.join('\n')
+  }
+
+  const report = scanChannels(config)
+  const lines = [`Heartbeat scan — ${ts}`]
+
+  if (report.idle.length > 0) {
+    lines.push(`✅ idle (${report.idle.length}): ${report.idle.join(', ')}`)
+  }
+
+  if (report.stalled.length > 0) {
+    lines.push(`⏰ stalled (${report.stalled.length}):`)
+    for (const s of report.stalled) {
+      const age = fmtAge(s.ageMins)
+      lines.push(`  • ${s.slug} — ${s.reason}, ${age} ago`)
+      if (s.snippet) lines.push(`    snippet: "${s.snippet}"`)
+    }
+  }
+
+  return lines.join('\n')
+}
+
+function fmtAge(ageMins: number): string {
+  if (ageMins >= 60) {
+    const h = Math.floor(ageMins / 60)
+    const m = ageMins % 60
+    return `${h}h ${m}m`
+  }
+  return `${ageMins}m`
 }
 
 function removeChannelFromAccessGroups(chatId: string): void {

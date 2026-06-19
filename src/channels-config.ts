@@ -103,6 +103,11 @@ const ProjectSchema = z.object({
    */
   stuckThresholdMinutes: z.number().int().positive().optional(),
   voice: VoiceProjectConfigSchema.optional(),
+  heartbeat: z.object({
+    mode: z.enum(['supervised', 'autonomous']).default('supervised'),
+    window: z.string().regex(/^\d{2}:\d{2}-\d{2}:\d{2}$/).optional(),
+    staleAfterMinutes: z.number().int().positive().default(60),
+  }).optional(),
 }).superRefine((val, ctx) => {
   if (val.platform === 'whatsapp' && !val.whatsappJid) {
     ctx.addIssue({
