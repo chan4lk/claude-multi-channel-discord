@@ -17,7 +17,7 @@ import {
 import { buildGitEnv, gitClone, gitPullFastForward, gitSetRemote, gitStatusSummary } from './git-ops.ts'
 import { getCredential, loadCredentials } from './git-credentials.ts'
 import { accessFile, archiveDir, channelsDir, projectClaudeMd, projectDir } from './paths.ts'
-import { loadSchedules, newScheduleId, saveSchedules, type Schedule } from './schedules-config.ts'
+import { IntervalSchema, loadSchedules, newScheduleId, saveSchedules, type Schedule } from './schedules-config.ts'
 
 export type MasterCommandResult =
   | { kind: 'no-master-configured' }
@@ -168,7 +168,7 @@ function helpText(prefix: string): string {
     `${prefix} pull   <chat_id-or-slug>                               — git pull --ff-only`,
     `${prefix} usage                         — resource snapshot of running project subprocesses (alias: ps, top)`,
     `${prefix} stop   <chat_id-or-slug>                               — kill the project's subprocess; lazy-respawns on next message`,
-    `${prefix} schedule add <chat_id-or-slug> --at HH:MM --prompt "..." [--max-runs N]   — daily recurring job`,
+    `${prefix} schedule add <chat_id-or-slug> --at HH:MM|every 30m|every 2h --prompt "..." [--max-runs N]   — daily recurring job`,
     `${prefix} schedule list [<chat_id-or-slug>]      — show all schedules (or just one project's)`,
     `${prefix} schedule pause/resume/rm <id>          — toggle or delete a schedule`,
     `${prefix} provider <chat_id-or-slug> [--set ALIAS | --clear]    — switch a project to a different provider (or back to Claude subscription)`,
@@ -268,25 +268,36 @@ async function handleCreate(rest: string[], ctx: MasterContext): Promise<string>
   const model = typeof flags.model === 'string' ? flags.model : undefined
   if (!prompt) return '`create` requires `--prompt "..."` (use --prompt "" if you really want an empty CLAUDE.md)'
 
-  // --platform flag: 'discord' (default) or 'teams'
+  // --platform flag: 'discord' (default), 'teams', or 'whatsapp'
   const platformRaw = typeof flags.platform === 'string' ? flags.platform : 'discord'
-  if (platformRaw !== 'discord' && platformRaw !== 'teams') {
-    return '`--platform` must be `discord` or `teams`'
+  if (platformRaw !== 'discord' && platformRaw !== 'teams' && platformRaw !== 'whatsapp') {
+    return '`--platform` must be `discord`, `teams`, or `whatsapp`'
   }
-  const platform = platformRaw as 'discord' | 'teams'
+  const platform = platformRaw as 'discord' | 'teams' | 'whatsapp'
+
+  // --whatsapp-jid: required when --platform whatsapp
+  const whatsappJid = typeof flags['whatsapp-jid'] === 'string' ? flags['whatsapp-jid'] : null
+  if (platform === 'whatsapp' && !whatsappJid) {
+    return '`create --platform whatsapp` requires `--whatsapp-jid <jid>` (e.g. `94771234567@s.whatsapp.net`)'
+  }
 
   // Channel id can come from a positional argument OR `--new-channel <name>`
   // which auto-creates a fresh guild text channel using the bot's
   // Manage Channels permission. (Idempotent — reuses an existing channel
   // with the same name if one's there.)
   // When --platform teams, the positional arg is the Teams conversation ID;
-  // Discord channel creation is skipped entirely.
+  // When --platform whatsapp, the JID is used as chatId directly;
+  // Discord channel creation is skipped entirely for non-discord platforms.
   const newChannelName = typeof flags['new-channel'] === 'string' ? flags['new-channel'] : null
   let chatId: string
   let createdChannelNote: string | null = null
   let weCreatedChannel = false
 
-  if (platform === 'teams') {
+  if (platform === 'whatsapp') {
+    // WhatsApp: use the JID as chatId. Positional arg is also accepted as JID
+    // (mirrors Teams pattern) but --whatsapp-jid takes precedence.
+    chatId = whatsappJid!
+  } else if (platform === 'teams') {
     // Teams: positional arg is the conversation ID. --new-channel is not applicable.
     if (positional.length === 0) {
       return '`create --platform teams` requires the Teams conversation ID as the first positional argument'
@@ -389,6 +400,7 @@ async function handleCreate(rest: string[], ctx: MasterContext): Promise<string>
       [chatId]: {
         slug,
         ...(platform === 'teams' ? { platform } : {}),
+        ...(platform === 'whatsapp' ? { platform, whatsappJid: whatsappJid! } : {}),
         ...(model ? { model } : {}),
         ...(provider ? { provider } : {}),
       },
@@ -608,6 +620,19 @@ async function handleClone(rest: string[], ctx: MasterContext): Promise<string> 
   const promptArg = typeof flags.prompt === 'string' ? flags.prompt : null
   const model = typeof flags.model === 'string' ? flags.model : undefined
 
+  // --platform flag for clone: 'discord' (default), 'teams', or 'whatsapp'
+  const clonePlatformRaw = typeof flags.platform === 'string' ? flags.platform : 'discord'
+  if (clonePlatformRaw !== 'discord' && clonePlatformRaw !== 'teams' && clonePlatformRaw !== 'whatsapp') {
+    return '`--platform` must be `discord`, `teams`, or `whatsapp`'
+  }
+  const clonePlatform = clonePlatformRaw as 'discord' | 'teams' | 'whatsapp'
+
+  // --whatsapp-jid: required when --platform whatsapp
+  const cloneWhatsappJid = typeof flags['whatsapp-jid'] === 'string' ? flags['whatsapp-jid'] : null
+  if (clonePlatform === 'whatsapp' && !cloneWhatsappJid) {
+    return '`clone --platform whatsapp` requires `--whatsapp-jid <jid>` (e.g. `94771234567@s.whatsapp.net`)'
+  }
+
   // Channel id (positional or auto-create) — same shape as create.
   const newChannelName = typeof flags['new-channel'] === 'string' ? flags['new-channel'] : null
   let chatId: string
@@ -617,7 +642,10 @@ async function handleClone(rest: string[], ctx: MasterContext): Promise<string> 
   // we roll back by deleting it (so retries don't pile up orphan channels).
   let weCreatedChannel = false
 
-  if (newChannelName !== null) {
+  if (clonePlatform === 'whatsapp') {
+    // WhatsApp: JID is the chatId. No Discord channel needed.
+    chatId = cloneWhatsappJid!
+  } else if (newChannelName !== null) {
     if (!ctx.mutator?.createDiscordChannel) return 'auto-create channel unavailable'
     if (!/^[a-z0-9-]{1,90}$/.test(newChannelName)) return 'channel name must match `[a-z0-9-]{1,90}`'
     try {
@@ -633,7 +661,7 @@ async function handleClone(rest: string[], ctx: MasterContext): Promise<string> 
     chatId = positional[0]!
     if (!/^\d{15,25}$/.test(chatId)) return `chat_id must be a Discord snowflake; got "${chatId}"`
   } else {
-    return '`clone` needs `<chat_id>` (positional) OR `--new-channel <name>`'
+    return '`clone` needs `<chat_id>` (positional), `--new-channel <name>`, or `--platform whatsapp --whatsapp-jid <jid>`'
   }
 
   const rollback = async (reason: string): Promise<string> => {
@@ -705,6 +733,7 @@ async function handleClone(rest: string[], ctx: MasterContext): Promise<string> 
       ...config.projects,
       [chatId]: {
         slug,
+        ...(clonePlatform === 'whatsapp' ? { platform: clonePlatform, whatsappJid: cloneWhatsappJid! } : {}),
         ...(model ? { model } : {}),
         ...(cloneProvider ? { provider: cloneProvider } : {}),
         git: {
@@ -869,7 +898,7 @@ async function handleUsage(ctx: MasterContext): Promise<string> {
  * `!project schedule <subverb> ...` — daily HH:MM scheduler.
  *
  * Shapes:
- *   schedule add <chat_id-or-slug> --at HH:MM --prompt "..." [--max-runs N]
+ *   schedule add <chat_id-or-slug> --at HH:MM|every 30m|every 2h --prompt "..." [--max-runs N]
  *   schedule list [<chat_id-or-slug>]
  *   schedule pause <id>
  *   schedule resume <id>
@@ -901,9 +930,13 @@ async function scheduleAdd(tail: string[]): Promise<string> {
   const { positional, flags } = parseFlags(tail)
   if (positional.length === 0) return '`schedule add` needs a chat_id or slug as the first argument'
 
-  const at = flags.at
-  if (typeof at !== 'string') return '`schedule add` requires `--at HH:MM` (24h, host local time)'
-  if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(at)) return `\`--at\` must be HH:MM, got "${at}"`
+  const atRaw = flags.at
+  if (typeof atRaw !== 'string') return '`schedule add` requires `--at HH:MM` or `--at every Xm/Xh`'
+
+  const isInterval = IntervalSchema.safeParse(atRaw).success
+  const isHHMM = /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(atRaw)
+
+  if (!isHHMM && !isInterval) return `\`--at\` must be HH:MM or "every Xm"/"every Xh", got "${atRaw}"`
 
   const prompt = typeof flags.prompt === 'string' ? flags.prompt : null
   if (!prompt) return '`schedule add` requires `--prompt "..."` — what to ask the agent each fire'
@@ -923,24 +956,37 @@ async function scheduleAdd(tail: string[]): Promise<string> {
 
   const file = loadSchedules()
   const id = newScheduleId()
-  const sched: Schedule = {
-    id,
-    chatId: entry.chatId,
-    at,
-    prompt,
-    enabled: true,
-    lastRunAt: null,
-    createdAt: new Date().toISOString(),
-    maxRuns,
-    runCount: 0,
-  }
+  const sched: Schedule = isInterval
+    ? {
+        id,
+        chatId: entry.chatId,
+        interval: atRaw,
+        prompt,
+        enabled: true,
+        lastRunAt: null,
+        createdAt: new Date().toISOString(),
+        maxRuns,
+        runCount: 0,
+      }
+    : {
+        id,
+        chatId: entry.chatId,
+        at: atRaw,
+        prompt,
+        enabled: true,
+        lastRunAt: null,
+        createdAt: new Date().toISOString(),
+        maxRuns,
+        runCount: 0,
+      }
   file.schedules.push(sched)
   saveSchedules(file)
 
+  const timeLabel = isInterval ? `every: ${atRaw}` : `daily at: ${atRaw} (host local time)`
   return [
     `✅ scheduled job **${id}**`,
     `project: **${entry.project.slug}** (chat \`${entry.chatId}\`)`,
-    `daily at: ${at} (host local time)`,
+    timeLabel,
     `prompt: ${prompt.length > 120 ? prompt.slice(0, 120) + '…' : prompt}`,
     maxRuns ? `max runs: ${maxRuns}` : '_no run cap (use `pause`/`rm` to stop)_',
   ].join('\n')
@@ -960,16 +1006,17 @@ function scheduleList(tail: string[]): string {
   if (rows.length === 0) {
     return filterChatId
       ? `_no schedules for "${positional[0]}"._`
-      : '_no schedules configured. add one with `schedule add <slug> --at HH:MM --prompt "..."`._'
+      : '_no schedules configured. add one with `schedule add <slug> --at HH:MM|every 30m --prompt "..."`._'
   }
 
   const lines = ['**Schedules:**', '```']
   lines.push('id                              slug                 at     enabled  runs   last_run')
-  for (const s of rows.sort((a, b) => a.at.localeCompare(b.at))) {
+  const sortKey = (s: Schedule) => s.at ?? `~${s.interval ?? ''}`
+  for (const s of rows.sort((a, b) => sortKey(a).localeCompare(sortKey(b)))) {
     const project = config.projects[s.chatId]
     const slug = (project?.slug ?? '?').padEnd(20).slice(0, 20)
     const id = s.id.padEnd(30).slice(0, 30)
-    const at = s.at.padEnd(5)
+    const at = (s.at ?? s.interval ?? '?').padEnd(5)
     const en = s.enabled ? 'yes' : 'no '
     const runs = s.maxRuns ? `${s.runCount}/${s.maxRuns}` : `${s.runCount}`
     const last = s.lastRunAt ?? '(never)'
@@ -998,7 +1045,7 @@ function scheduleRemove(tail: string[]): string {
   if (idx < 0) return `no schedule with id \`${id}\``
   const removed = file.schedules.splice(idx, 1)[0]!
   saveSchedules(file)
-  return `🗑 schedule **${removed.id}** removed (was for chat \`${removed.chatId}\` at ${removed.at})`
+  return `🗑 schedule **${removed.id}** removed (was for chat \`${removed.chatId}\` at ${removed.at ?? removed.interval})`
 }
 
 /**
