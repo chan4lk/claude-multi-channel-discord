@@ -53,7 +53,7 @@ Add a `/graph` page with a force-directed D3 node graph. Each project is a neon 
 
 ## P3 — Stall Alert Panel
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-20
 
 ### Problem
@@ -196,7 +196,7 @@ Add a `WhatsAppStatus` badge to the Fleet Health Bar. When WhatsApp is enabled, 
 
 ## P9 — Memory-Aware Heartbeat Prompt
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-20
 
 ### Problem
