@@ -59,6 +59,9 @@ export default function ProjectGraph({ showBacklog }: Props) {
   const [projects, setProjects] = useState<FleetProject[]>([])
   const [backlogMap, setBacklogMap] = useState<Map<string, ProjectBacklog>>(new Map())
   const [drawer, setDrawer] = useState<DetailDrawer | null>(null)
+  const [drawerTab, setDrawerTab] = useState<'info' | 'diff'>('info')
+  const [diffData, setDiffData] = useState<{ log: string; diff: string } | null>(null)
+  const [diffLoading, setDiffLoading] = useState(false)
   const [dims, setDims] = useState({ w: 800, h: 500 })
   const simRef = useRef<d3.Simulation<GraphNode, undefined> | null>(null)
   const nodesRef = useRef<GraphNode[]>([])
@@ -300,6 +303,17 @@ export default function ProjectGraph({ showBacklog }: Props) {
       })
   }
 
+  useEffect(() => {
+    if (!drawer || drawerTab !== 'diff') return
+    setDiffLoading(true)
+    setDiffData(null)
+    fetch(`/api/diff/${encodeURIComponent(drawer.slug)}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => setDiffData(data))
+      .catch(() => setDiffData(null))
+      .finally(() => setDiffLoading(false))
+  }, [drawer?.slug, drawerTab])
+
   function formatAge(mins: number): string {
     if (mins >= 60) return `${Math.floor(mins / 60)}h ${mins % 60}m`
     if (mins > 9000) return 'no transcript'
@@ -361,57 +375,120 @@ export default function ProjectGraph({ showBacklog }: Props) {
       {/* Detail Drawer */}
       {drawer && (
         <div
-          className="absolute inset-y-0 right-0 w-64 flex flex-col z-20"
+          className="absolute inset-y-0 right-0 w-72 flex flex-col z-20"
           style={{
-            background: 'rgba(4,10,20,0.96)',
+            background: 'rgba(4,10,20,0.97)',
             borderLeft: `1px solid ${STATE_COLORS[drawer.state]}30`,
             backdropFilter: 'blur(8px)',
           }}
         >
-          <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: `${STATE_COLORS[drawer.state]}20` }}>
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-3 border-b shrink-0" style={{ borderColor: `${STATE_COLORS[drawer.state]}20` }}>
             <span className="text-xs font-bold font-mono text-slate-200">{drawer.slug}</span>
-            <button onClick={() => setDrawer(null)} className="text-slate-500 hover:text-slate-200">×</button>
+            <button onClick={() => { setDrawer(null); setDrawerTab('info') }} className="text-slate-500 hover:text-slate-200">×</button>
           </div>
-          <div className="p-4 flex flex-col gap-3 overflow-y-auto">
-            <div className="flex items-center gap-2">
-              <span
-                className="text-[0.6rem] font-mono font-bold px-1.5 py-0.5 rounded uppercase"
+          {/* Tabs */}
+          <div className="flex border-b shrink-0" style={{ borderColor: `${STATE_COLORS[drawer.state]}15` }}>
+            {(['info', 'diff'] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setDrawerTab(tab)}
+                className="flex-1 py-1.5 text-[0.6rem] font-mono uppercase tracking-wider transition-colors"
                 style={{
-                  color: STATE_COLORS[drawer.state],
-                  background: `${STATE_COLORS[drawer.state]}18`,
-                  border: `1px solid ${STATE_COLORS[drawer.state]}40`,
+                  color: drawerTab === tab ? STATE_COLORS[drawer.state] : '#475569',
+                  borderBottom: drawerTab === tab ? `1px solid ${STATE_COLORS[drawer.state]}` : '1px solid transparent',
                 }}
               >
-                {drawer.state}
-              </span>
-              <span className="text-[0.6rem] font-mono text-slate-500">{formatAge(drawer.ageMins)} ago</span>
-            </div>
-
-            {drawer.backlog && drawer.backlog.items.length > 0 && (
-              <div>
-                <p className="text-[0.6rem] font-mono text-slate-500 uppercase tracking-wider mb-2">
-                  Backlog ({drawer.backlog.pendingCount} pending)
-                </p>
-                <div className="flex flex-col gap-1">
-                  {drawer.backlog.items.slice(0, 10).map((item, i) => (
-                    <div key={i} className="flex items-start gap-1.5">
-                      <span className="text-[0.6rem] mt-0.5" style={{ color: item.status === 'done' ? '#4ADE80' : '#F59E0B' }}>
-                        {item.status === 'done' ? '✓' : '○'}
-                      </span>
-                      <span className="text-[0.6rem] font-mono text-slate-400 leading-tight">{item.title}</span>
-                    </div>
-                  ))}
-                  {drawer.backlog.items.length > 10 && (
-                    <span className="text-[0.55rem] font-mono text-slate-600">+{drawer.backlog.items.length - 10} more</span>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {(!drawer.backlog || drawer.backlog.items.length === 0) && (
-              <p className="text-[0.6rem] font-mono text-slate-600">No backlog items found</p>
-            )}
+                {tab}
+              </button>
+            ))}
           </div>
+
+          {/* Info tab */}
+          {drawerTab === 'info' && (
+            <div className="p-4 flex flex-col gap-3 overflow-y-auto">
+              <div className="flex items-center gap-2">
+                <span
+                  className="text-[0.6rem] font-mono font-bold px-1.5 py-0.5 rounded uppercase"
+                  style={{
+                    color: STATE_COLORS[drawer.state],
+                    background: `${STATE_COLORS[drawer.state]}18`,
+                    border: `1px solid ${STATE_COLORS[drawer.state]}40`,
+                  }}
+                >
+                  {drawer.state}
+                </span>
+                <span className="text-[0.6rem] font-mono text-slate-500">{formatAge(drawer.ageMins)} ago</span>
+              </div>
+
+              {drawer.backlog && drawer.backlog.items.length > 0 && (
+                <div>
+                  <p className="text-[0.6rem] font-mono text-slate-500 uppercase tracking-wider mb-2">
+                    Backlog ({drawer.backlog.pendingCount} pending)
+                  </p>
+                  <div className="flex flex-col gap-1">
+                    {drawer.backlog.items.slice(0, 10).map((item, i) => (
+                      <div key={i} className="flex items-start gap-1.5">
+                        <span className="text-[0.6rem] mt-0.5" style={{ color: item.status === 'done' ? '#4ADE80' : '#F59E0B' }}>
+                          {item.status === 'done' ? '✓' : '○'}
+                        </span>
+                        <span className="text-[0.6rem] font-mono text-slate-400 leading-tight">{item.title}</span>
+                      </div>
+                    ))}
+                    {drawer.backlog.items.length > 10 && (
+                      <span className="text-[0.55rem] font-mono text-slate-600">+{drawer.backlog.items.length - 10} more</span>
+                    )}
+                  </div>
+                </div>
+              )}
+              {(!drawer.backlog || drawer.backlog.items.length === 0) && (
+                <p className="text-[0.6rem] font-mono text-slate-600">No backlog items found</p>
+              )}
+            </div>
+          )}
+
+          {/* Diff tab */}
+          {drawerTab === 'diff' && (
+            <div className="flex flex-col gap-2 p-3 overflow-y-auto flex-1">
+              {diffLoading && (
+                <p className="text-[0.6rem] font-mono text-slate-500 text-center py-4">Loading diff…</p>
+              )}
+              {!diffLoading && diffData && (
+                <>
+                  {diffData.log && (
+                    <div className="mb-2">
+                      <p className="text-[0.55rem] font-mono text-slate-600 uppercase tracking-wider mb-1">Recent commits</p>
+                      <pre className="text-[0.55rem] font-mono text-slate-400 whitespace-pre-wrap break-all leading-relaxed">
+                        {diffData.log}
+                      </pre>
+                    </div>
+                  )}
+                  {diffData.diff ? (
+                    <div>
+                      <p className="text-[0.55rem] font-mono text-slate-600 uppercase tracking-wider mb-1">Diff (HEAD~5..HEAD)</p>
+                      <pre className="text-[0.5rem] font-mono whitespace-pre-wrap break-all leading-relaxed">
+                        {diffData.diff.split('\n').map((line, i) => {
+                          let color = '#475569'
+                          if (line.startsWith('+') && !line.startsWith('+++')) color = '#4ADE80'
+                          else if (line.startsWith('-') && !line.startsWith('---')) color = '#EF4444'
+                          else if (line.startsWith('@@')) color = '#A855F7'
+                          else if (line.startsWith('diff ') || line.startsWith('index ') || line.startsWith('+++') || line.startsWith('---')) color = '#00F5FF'
+                          return <span key={i} style={{ color, display: 'block' }}>{line || ' '}</span>
+                        })}
+                      </pre>
+                    </div>
+                  ) : (
+                    <p className="text-[0.6rem] font-mono text-slate-600 text-center py-4">
+                      {diffData.log ? 'No changes in last 5 commits' : 'Not a git repository or no commits'}
+                    </p>
+                  )}
+                </>
+              )}
+              {!diffLoading && !diffData && (
+                <p className="text-[0.6rem] font-mono text-cyber-crimson/70 text-center py-4">Failed to load diff</p>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
