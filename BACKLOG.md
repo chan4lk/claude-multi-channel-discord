@@ -218,7 +218,7 @@ Update the recommended heartbeat schedule prompt template in `templates/master.C
 
 ## P10 — Cross-Channel Timeline
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-20
 
 ### Problem
