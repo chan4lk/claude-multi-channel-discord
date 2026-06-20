@@ -458,7 +458,7 @@ Add a `/search` page with a unified full-text search across: (1) memory records 
 
 ## P20 — Stall Inject Upgrade
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-20
 
 ### Problem
@@ -530,7 +530,7 @@ Add a "View Diff" button to the `/pipeline` detail drawer for cards in `build`, 
 
 ## P23 — Metrics CSV Export
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-20
 
 ### Problem

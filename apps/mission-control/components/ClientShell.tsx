@@ -5,18 +5,22 @@ import { AnimatePresence } from 'framer-motion'
 import CommandPalette, { type InjectRequest } from './CommandPalette'
 import InjectTerminal from './InjectTerminal'
 
+interface InjectState {
+  slug: string
+  initialMessage?: string
+}
+
 export default function ClientShell({ children }: { children: React.ReactNode }) {
-  const [injectSlug, setInjectSlug] = useState<string | null>(null)
+  const [injectState, setInjectState] = useState<InjectState | null>(null)
 
   function handleInject(req: InjectRequest) {
-    setInjectSlug(req.slug)
+    setInjectState({ slug: req.slug })
   }
 
-  // Listen for inject events dispatched from anywhere (e.g. InstanceGrid slug buttons)
   useEffect(() => {
     function onInjectEvent(e: Event) {
-      const slug = (e as CustomEvent<{ slug: string }>).detail?.slug
-      if (slug) setInjectSlug(slug)
+      const detail = (e as CustomEvent<{ slug: string; initialMessage?: string }>).detail
+      if (detail?.slug) setInjectState({ slug: detail.slug, initialMessage: detail.initialMessage })
     }
     window.addEventListener('mc:inject', onInjectEvent)
     return () => window.removeEventListener('mc:inject', onInjectEvent)
@@ -27,11 +31,12 @@ export default function ClientShell({ children }: { children: React.ReactNode })
       {children}
       <CommandPalette onInject={handleInject} />
       <AnimatePresence>
-        {injectSlug !== null && (
+        {injectState !== null && (
           <InjectTerminal
             key="inject-terminal"
-            initialSlug={injectSlug}
-            onClose={() => setInjectSlug(null)}
+            initialSlug={injectState.slug}
+            initialMessage={injectState.initialMessage}
+            onClose={() => setInjectState(null)}
           />
         )}
       </AnimatePresence>
