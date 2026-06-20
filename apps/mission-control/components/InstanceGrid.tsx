@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import GlassCard from './ui/GlassCard'
 import PulseRing from './ui/PulseRing'
 import Sparkline from './ui/Sparkline'
+import TokenBudgetGauge from './TokenBudgetGauge'
 import type { FleetProject } from '../app/api/fleet/route'
 
 interface InstanceEntry {
@@ -196,6 +197,16 @@ export default function InstanceGrid({ events = [], filterSlugs = null, fleetPro
                           {fleetProjects.length > 0 && (
                             <WatchdogBadge slug={slug} fleetProjects={fleetProjects} />
                           )}
+                          {(() => {
+                            const fleetProject = fleetProjects.find((p) => p.slug === slug)
+                            return fleetProject?.monthlyTokenBudget ? (
+                              <TokenBudgetGauge
+                                used={fleetProject.monthlyTokensUsed ?? 0}
+                                budget={fleetProject.monthlyTokenBudget}
+                                size={28}
+                              />
+                            ) : null
+                          })()}
                         </div>
                       ))}
                       {inst.activeSlugs.length > 3 && (

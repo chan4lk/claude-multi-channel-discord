@@ -11,6 +11,8 @@ export interface FleetProject {
   state: ProjectState
   ageMins: number
   stuckThresholdMinutes: number
+  monthlyTokenBudget?: number
+  monthlyTokensUsed?: number
 }
 
 export interface FleetResponse {
@@ -31,6 +33,47 @@ function readJson<T>(filePath: string): T | null {
 
 function encodeProjectCwd(realPath: string): string {
   return realPath.replace(/[^a-zA-Z0-9]/g, '-')
+}
+
+function findAllJsonl(slug: string, mcdDir: string): string[] {
+  const projectPath = path.join(mcdDir, 'projects', slug)
+  let realPath = projectPath
+  try { realPath = fs.realpathSync(projectPath) } catch { return [] }
+  const encoded = encodeProjectCwd(realPath)
+  const transcriptDir = path.join(os.homedir(), '.claude', 'projects', encoded)
+  try {
+    return fs.readdirSync(transcriptDir)
+      .filter((f) => f.endsWith('.jsonl'))
+      .map((f) => path.join(transcriptDir, f))
+  } catch { return [] }
+}
+
+function computeMonthlyTokensUsed(slug: string, mcdDir: string): number {
+  const now = new Date()
+  const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+
+  const files = findAllJsonl(slug, mcdDir)
+  let total = 0
+
+  for (const file of files) {
+    let raw = ''
+    try { raw = fs.readFileSync(file, 'utf-8') } catch { continue }
+    for (const line of raw.trim().split('\n').filter(Boolean)) {
+      let rec: Record<string, unknown>
+      try { rec = JSON.parse(line) } catch { continue }
+      if (rec.type !== 'assistant') continue
+
+      const ts = typeof rec.timestamp === 'string' ? rec.timestamp : null
+      if (!ts) continue
+      // Only count entries from the current calendar month
+      if (!ts.startsWith(currentYearMonth)) continue
+
+      const usage = (rec as { message?: { usage?: { input_tokens?: number; output_tokens?: number } } }).message?.usage
+      total += (usage?.input_tokens ?? 0) + (usage?.output_tokens ?? 0)
+    }
+  }
+
+  return total
 }
 
 function getTranscriptMtime(slug: string, mcdDir: string): number | null {
@@ -69,7 +112,8 @@ function classifyState(
   slug: string,
   mcdDir: string,
   scheduledSlugs: Set<string>,
-  stuckThresholdMinutes: number
+  stuckThresholdMinutes: number,
+  monthlyTokenBudget?: number
 ): FleetProject {
   const mtime = getTranscriptMtime(slug, mcdDir)
   const ageMs = mtime ? Date.now() - mtime : Infinity
@@ -87,7 +131,14 @@ function classifyState(
     state = hasSchedule ? 'autonomous' : 'idle'
   }
 
-  return { slug, state, ageMins, stuckThresholdMinutes }
+  const result: FleetProject = { slug, state, ageMins, stuckThresholdMinutes }
+
+  if (monthlyTokenBudget != null) {
+    result.monthlyTokenBudget = monthlyTokenBudget
+    result.monthlyTokensUsed = computeMonthlyTokensUsed(slug, mcdDir)
+  }
+
+  return result
 }
 
 export async function GET(): Promise<Response> {
@@ -97,7 +148,7 @@ export async function GET(): Promise<Response> {
   }
 
   const channels = readJson<{
-    projects?: Record<string, { slug?: string; stuckThresholdMinutes?: number }>
+    projects?: Record<string, { slug?: string; stuckThresholdMinutes?: number; monthlyTokenBudget?: number }>
     defaults?: { stuckThresholdMinutes?: number }
   }>(path.join(mcdDir, 'channels.json'))
 
@@ -108,7 +159,7 @@ export async function GET(): Promise<Response> {
   const defaultThreshold = channels?.defaults?.stuckThresholdMinutes ?? 5
 
   const chatIdToSlug = new Map<string, string>()
-  const projectEntries: Array<{ slug: string; stuckThresholdMinutes: number }> = []
+  const projectEntries: Array<{ slug: string; stuckThresholdMinutes: number; monthlyTokenBudget?: number }> = []
 
   if (channels?.projects) {
     for (const [chatId, proj] of Object.entries(channels.projects)) {
@@ -117,6 +168,7 @@ export async function GET(): Promise<Response> {
         projectEntries.push({
           slug: proj.slug,
           stuckThresholdMinutes: proj.stuckThresholdMinutes ?? defaultThreshold,
+          monthlyTokenBudget: proj.monthlyTokenBudget,
         })
       }
     }
@@ -130,8 +182,8 @@ export async function GET(): Promise<Response> {
     }
   }
 
-  const projects: FleetProject[] = projectEntries.map(({ slug, stuckThresholdMinutes }) =>
-    classifyState(slug, mcdDir, scheduledSlugs, stuckThresholdMinutes)
+  const projects: FleetProject[] = projectEntries.map(({ slug, stuckThresholdMinutes, monthlyTokenBudget }) =>
+    classifyState(slug, mcdDir, scheduledSlugs, stuckThresholdMinutes, monthlyTokenBudget)
   )
 
   const counts = { idle: 0, active: 0, stalled: 0, autonomous: 0 }

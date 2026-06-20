@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import * as d3 from 'd3'
 import type { FleetProject, ProjectState } from '../app/api/fleet/route'
 import type { ProjectBacklog } from '../app/api/backlog/route'
+import TokenBudgetGauge from './TokenBudgetGauge'
 
 const STATE_COLORS: Record<ProjectState, string> = {
   idle: '#00F5FF',
@@ -65,6 +66,8 @@ export default function ProjectGraph({ showBacklog }: Props) {
   const [dims, setDims] = useState({ w: 800, h: 500 })
   const simRef = useRef<d3.Simulation<GraphNode, undefined> | null>(null)
   const nodesRef = useRef<GraphNode[]>([])
+  const [budgetInput, setBudgetInput] = useState('')
+  const [budgetSaving, setBudgetSaving] = useState(false)
 
   // Measure container
   useEffect(() => {
@@ -444,6 +447,65 @@ export default function ProjectGraph({ showBacklog }: Props) {
               {(!drawer.backlog || drawer.backlog.items.length === 0) && (
                 <p className="text-[0.6rem] font-mono text-slate-600">No backlog items found</p>
               )}
+
+              {/* Monthly Budget section */}
+              {(() => {
+                const drawerFleetProject = projects.find((p) => p.slug === drawer.slug)
+                return (
+                  <div>
+                    <p className="text-[0.55rem] font-mono text-slate-600 uppercase tracking-wider mb-1">Monthly Budget</p>
+                    {drawerFleetProject?.monthlyTokenBudget ? (
+                      <div className="flex items-center gap-3">
+                        <TokenBudgetGauge
+                          used={drawerFleetProject.monthlyTokensUsed ?? 0}
+                          budget={drawerFleetProject.monthlyTokenBudget}
+                          size={48}
+                        />
+                        <div className="text-xs font-mono text-slate-500">
+                          <p>{(drawerFleetProject.monthlyTokensUsed ?? 0).toLocaleString()} / {drawerFleetProject.monthlyTokenBudget.toLocaleString()} tokens</p>
+                          <p className="text-[0.55rem] text-slate-600">Resets 1st of each month</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-xs font-mono text-slate-700 italic">no budget configured</p>
+                    )}
+                    {/* Set / clear budget */}
+                    <div className="flex items-center gap-1.5 mt-2">
+                      <input
+                        type="number"
+                        min={0}
+                        placeholder="tokens"
+                        value={budgetInput}
+                        onChange={(e) => setBudgetInput(e.target.value)}
+                        className="w-24 text-[0.6rem] font-mono bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-slate-300 focus:outline-none focus:border-slate-500"
+                      />
+                      <button
+                        disabled={budgetSaving}
+                        onClick={async () => {
+                          const val = budgetInput.trim() === '' ? null : Number(budgetInput)
+                          if (val !== null && (isNaN(val) || val < 0)) return
+                          setBudgetSaving(true)
+                          try {
+                            await fetch(`/api/projects/${encodeURIComponent(drawer.slug)}/budget`, {
+                              method: 'PATCH',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ budget: val }),
+                            })
+                            setBudgetInput('')
+                            // Refresh fleet data to update gauge
+                            fetchFleet()
+                          } finally {
+                            setBudgetSaving(false)
+                          }
+                        }}
+                        className="text-[0.6rem] font-mono px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500 transition-colors disabled:opacity-50"
+                      >
+                        {budgetSaving ? '…' : budgetInput.trim() === '' ? 'Clear' : 'Set'}
+                      </button>
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
           )}
 
