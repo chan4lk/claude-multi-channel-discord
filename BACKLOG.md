@@ -6,7 +6,7 @@ Standalone, independently-shippable proposals for the Mission Control UI at `app
 
 ## P1 — Fleet Health Bar
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-20
 
 ### Problem
@@ -149,7 +149,7 @@ Add a `MemoryPanel` component and `/api/memories` endpoint to the mission contro
 
 ## P7 — Schedule Timeline
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-20
 
 ### Problem
