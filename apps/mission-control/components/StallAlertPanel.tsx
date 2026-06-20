@@ -28,167 +28,69 @@ function formatAge(mins: number): string {
   return `${mins}m`
 }
 
-interface InjectDialogProps {
-  stall: StallEntry
-  onClose: () => void
-  onCopied: () => void
-}
-
-function InjectDialog({ stall, onClose, onCopied }: InjectDialogProps) {
-  const [prompt, setPrompt] = useState(() => suggestPrompt(stall.stallReason, stall.snippet))
-  const [copied, setCopied] = useState(false)
-
-  const command = `!project inject ${stall.slug} "${prompt.replace(/"/g, '\\"')}"`
-
-  async function handleCopy() {
-    try {
-      await navigator.clipboard.writeText(command)
-      setCopied(true)
-      setTimeout(() => {
-        onCopied()
-        onClose()
-      }, 800)
-    } catch {
-      // fallback: select text
-    }
-  }
-
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <motion.div
-        initial={{ scale: 0.95, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        exit={{ scale: 0.95, opacity: 0 }}
-        transition={{ duration: 0.15 }}
-        className="w-full max-w-lg"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <GlassCard className="p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-bold text-cyber-cyan font-mono uppercase tracking-widest">
-              Inject — {stall.slug}
-            </h3>
-            <button
-              onClick={onClose}
-              className="text-slate-500 hover:text-slate-300 text-lg leading-none"
-            >
-              ×
-            </button>
-          </div>
-
-          <p className="text-xs text-slate-400 mb-3">
-            Edit the continuation prompt, then copy the command and paste it in the master Discord channel.
-          </p>
-
-          <textarea
-            className="w-full bg-[#060d1a] border border-cyber-cyan/20 rounded p-3 text-xs text-slate-200 font-mono resize-y min-h-[80px] focus:outline-none focus:border-cyber-cyan/50"
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-          />
-
-          <div className="mt-3 bg-[#060d1a] border border-cyber-cyan/10 rounded p-2 text-xs text-slate-400 font-mono break-all">
-            {command}
-          </div>
-
-          <div className="flex justify-end gap-2 mt-4">
-            <button
-              onClick={onClose}
-              className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 border border-slate-700 rounded transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleCopy}
-              className="px-4 py-1.5 text-xs font-bold font-mono uppercase tracking-wider rounded transition-colors"
-              style={{
-                background: copied ? '#4ADE8033' : '#A855F733',
-                border: `1px solid ${copied ? '#4ADE80' : '#A855F7'}`,
-                color: copied ? '#4ADE80' : '#A855F7',
-              }}
-            >
-              {copied ? '✓ Copied' : 'Copy Command'}
-            </button>
-          </div>
-        </GlassCard>
-      </motion.div>
-    </motion.div>
-  )
-}
-
 interface StallRowProps {
   stall: StallEntry
   onDismiss: (slug: string) => void
 }
 
 function StallRow({ stall, onDismiss }: StallRowProps) {
-  const [showDialog, setShowDialog] = useState(false)
   const isOld = stall.stallAgeMins > 30
 
-  return (
-    <>
-      <motion.div
-        layout
-        initial={{ opacity: 0, x: -8 }}
-        animate={{ opacity: 1, x: 0 }}
-        exit={{ opacity: 0, x: 8 }}
-        className={`flex flex-col gap-1.5 p-3 rounded border transition-colors ${
-          isOld
-            ? 'border-red-500/30 bg-red-500/5'
-            : 'border-amber-500/20 bg-amber-500/5'
-        }`}
-      >
-        <div className="flex items-center gap-2">
-          <span
-            className={`w-1.5 h-1.5 rounded-full shrink-0 ${isOld ? 'bg-red-400 animate-pulse' : 'bg-amber-400'}`}
-          />
-          <span className="text-xs font-bold font-mono text-slate-200">{stall.slug}</span>
-          <span
-            className="text-[0.6rem] font-mono px-1.5 py-0.5 rounded"
-            style={{
-              color: isOld ? '#F87171' : '#FCD34D',
-              background: isOld ? '#EF444420' : '#F59E0B20',
-              border: `1px solid ${isOld ? '#EF444440' : '#F59E0B40'}`,
-            }}
-          >
-            {formatAge(stall.stallAgeMins)} stalled
-          </span>
-          <div className="flex-1" />
-          <button
-            onClick={() => setShowDialog(true)}
-            className="text-[0.6rem] px-2 py-0.5 rounded font-mono font-bold uppercase tracking-wider transition-colors"
-            style={{
-              color: '#A855F7',
-              border: '1px solid #A855F740',
-              background: '#A855F712',
-            }}
-          >
-            Inject
-          </button>
-        </div>
-        <p className="text-[0.65rem] text-slate-400 pl-3.5">{stall.stallReason}</p>
-        {stall.snippet && (
-          <p className="text-[0.6rem] text-slate-500 pl-3.5 font-mono truncate" title={stall.snippet}>
-            &ldquo;{stall.snippet}&rdquo;
-          </p>
-        )}
-      </motion.div>
+  function handleInject() {
+    const initialMessage = suggestPrompt(stall.stallReason, stall.snippet)
+    window.dispatchEvent(
+      new CustomEvent('mc:inject', { detail: { slug: stall.slug, initialMessage } })
+    )
+    onDismiss(stall.slug)
+  }
 
-      <AnimatePresence>
-        {showDialog && (
-          <InjectDialog
-            stall={stall}
-            onClose={() => setShowDialog(false)}
-            onCopied={() => onDismiss(stall.slug)}
-          />
-        )}
-      </AnimatePresence>
-    </>
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, x: -8 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: 8 }}
+      className={`flex flex-col gap-1.5 p-3 rounded border transition-colors ${
+        isOld
+          ? 'border-red-500/30 bg-red-500/5'
+          : 'border-amber-500/20 bg-amber-500/5'
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <span
+          className={`w-1.5 h-1.5 rounded-full shrink-0 ${isOld ? 'bg-red-400 animate-pulse' : 'bg-amber-400'}`}
+        />
+        <span className="text-xs font-bold font-mono text-slate-200">{stall.slug}</span>
+        <span
+          className="text-[0.6rem] font-mono px-1.5 py-0.5 rounded"
+          style={{
+            color: isOld ? '#F87171' : '#FCD34D',
+            background: isOld ? '#EF444420' : '#F59E0B20',
+            border: `1px solid ${isOld ? '#EF444440' : '#F59E0B40'}`,
+          }}
+        >
+          {formatAge(stall.stallAgeMins)} stalled
+        </span>
+        <div className="flex-1" />
+        <button
+          onClick={handleInject}
+          className="text-[0.6rem] px-2 py-0.5 rounded font-mono font-bold uppercase tracking-wider transition-colors"
+          style={{
+            color: '#A855F7',
+            border: '1px solid #A855F740',
+            background: '#A855F712',
+          }}
+        >
+          Inject
+        </button>
+      </div>
+      <p className="text-[0.65rem] text-slate-400 pl-3.5">{stall.stallReason}</p>
+      {stall.snippet && (
+        <p className="text-[0.6rem] text-slate-500 pl-3.5 font-mono truncate" title={stall.snippet}>
+          &ldquo;{stall.snippet}&rdquo;
+        </p>
+      )}
+    </motion.div>
   )
 }
 
