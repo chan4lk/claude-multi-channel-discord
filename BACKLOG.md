@@ -290,7 +290,7 @@ Add a `/api/transcript/[slug]` endpoint that reads the latest `.jsonl` transcrip
 
 ## P13 — Memory Graph
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-20
 
 ### Problem
@@ -314,7 +314,7 @@ Add a `/memory-graph` page. Force-directed graph where each node is a memory (co
 
 ## P14 — Command Palette
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-20
 
 ### Problem
