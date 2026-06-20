@@ -161,6 +161,14 @@ export default function CommandPalette({ onInject }: Props) {
         category: 'navigate',
         action: () => router.push('/pipeline'),
       },
+      {
+        id: 'nav:search',
+        label: 'Go to Search',
+        description: 'Full-text search across memories and transcripts',
+        icon: '⌕',
+        category: 'navigate',
+        action: () => router.push('/search'),
+      },
     ]
 
     const projects: Command[] = (fleet?.projects ?? []).flatMap((p) => [

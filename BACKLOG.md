@@ -410,7 +410,7 @@ Add an "Inject" panel accessible from the Command Palette and the Instance Grid 
 
 ## P18 — Token Budget Gauge
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-20
 
 ### Problem
@@ -434,7 +434,7 @@ Add a `TokenBudgetGauge` component to the Instance Grid row and Project Graph de
 
 ## P19 — Cross-Channel Semantic Search
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-20
 
 ### Problem
