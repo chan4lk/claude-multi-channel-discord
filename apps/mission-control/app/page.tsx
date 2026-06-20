@@ -214,6 +214,12 @@ function DashboardClient() {
               >
                 ◫ Timeline →
               </Link>
+              <Link
+                href="/memory-graph"
+                className="text-[0.6rem] font-mono text-slate-500 hover:text-cyber-cyan transition-colors uppercase tracking-wider border border-transparent hover:border-cyber-cyan/30 px-1.5 py-0.5 rounded"
+              >
+                ✦ Memory →
+              </Link>
             </div>
           </div>
 

@@ -2,11 +2,13 @@ interface GlassCardProps {
   children: React.ReactNode
   className?: string
   glow?: boolean
+  style?: React.CSSProperties
 }
 
-export default function GlassCard({ children, className = '', glow = false }: GlassCardProps) {
+export default function GlassCard({ children, className = '', glow = false, style }: GlassCardProps) {
   return (
     <div
+      style={style}
       className={`
         relative overflow-hidden rounded-lg
         bg-gradient-to-br from-cyber-surface/95 to-[#0a1020]/90
