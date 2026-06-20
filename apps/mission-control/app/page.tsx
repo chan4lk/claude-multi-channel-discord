@@ -11,6 +11,7 @@ import SpecclawPipeline from '../components/SpecclawPipeline'
 import StallAlertPanel from '../components/StallAlertPanel'
 import CountBadge from '../components/ui/CountBadge'
 import type { FleetResponse, ProjectState } from './api/fleet/route'
+import type { WhatsAppResponse } from './api/whatsapp/route'
 
 interface McEventEntry {
   id: string
@@ -92,6 +93,7 @@ function DashboardClient() {
   const [events, setEvents] = useState<McEventEntry[]>([])
   const [instances, setInstances] = useState<InstanceRow[]>([])
   const [fleet, setFleet] = useState<FleetResponse>({ idle: 0, active: 0, stalled: 0, autonomous: 0, projects: [] })
+  const [whatsapp, setWhatsapp] = useState<WhatsAppResponse | null>(null)
   const [fleetFilter, setFleetFilter] = useState<ProjectState | null>(null)
   const [scheduleView, setScheduleView] = useState<'table' | 'timeline'>('timeline')
   const [eventsPerMin, setEventsPerMin] = useState(0)
@@ -120,6 +122,18 @@ function DashboardClient() {
     }
     fetchFleet()
     const interval = setInterval(fetchFleet, 30_000)
+    return () => clearInterval(interval)
+  }, [])
+
+  useEffect(() => {
+    async function fetchWhatsApp() {
+      try {
+        const res = await fetch('/api/whatsapp')
+        if (res.ok) setWhatsapp(await res.json())
+      } catch {}
+    }
+    fetchWhatsApp()
+    const interval = setInterval(fetchWhatsApp, 60_000)
     return () => clearInterval(interval)
   }, [])
 
@@ -199,6 +213,36 @@ function DashboardClient() {
                 />
               ))}
             </div>
+            {/* WhatsApp badge — only when configured */}
+            {whatsapp?.enabled && (
+              <div
+                className="flex flex-col items-center gap-0.5 cursor-pointer rounded px-1"
+                title={`WhatsApp: ${whatsapp.status} · ${whatsapp.projectCount} project${whatsapp.projectCount !== 1 ? 's' : ''}`}
+                onClick={() => {
+                  const url = new URL(window.location.href)
+                  url.searchParams.set('platform', 'whatsapp')
+                  window.history.pushState({}, '', url.toString())
+                }}
+              >
+                <span
+                  className={`text-xl font-bold font-mono tabular-nums ${whatsapp.status === 'pairing' ? 'animate-pulse' : ''}`}
+                  style={{
+                    color: whatsapp.status === 'connected' ? '#4ADE80' : whatsapp.status === 'pairing' ? '#F59E0B' : '#EF4444',
+                  }}
+                >
+                  {whatsapp.projectCount}
+                </span>
+                <span
+                  className="text-[0.6rem] uppercase tracking-widest font-semibold"
+                  style={{
+                    color: whatsapp.status === 'connected' ? '#4ADE80' : whatsapp.status === 'pairing' ? '#F59E0B' : '#EF4444',
+                    opacity: 0.8,
+                  }}
+                >
+                  WA
+                </span>
+              </div>
+            )}
             {/* MC instance counters */}
             <CountBadge value={instances.length} label="Instances" color="#00F5FF" />
             <CountBadge value={eventsPerMin} label="Events/min" color="#00F5FF" />
