@@ -333,3 +333,123 @@ Add a command palette (⌘K / Ctrl+K) that opens a searchable modal with instant
 - AC4: Project-slug results show state badge (color) and age
 - AC5: Recent commands (last 5) shown at top when input is empty
 - AC6: Palette closes on backdrop click or Escape
+
+---
+
+## P15 — Agent Performance Metrics
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-20
+
+### Problem
+
+Operators have no visibility into per-agent token usage, turn latency, or cost trends. Expensive or slow agents are invisible until they cause problems. There is no way to compare cost-per-turn across projects or spot regressions after model changes.
+
+### Proposed Solution
+
+Add a `/metrics` page with a per-project performance dashboard. A `/api/metrics/[slug]` endpoint scans the project's `.jsonl` transcript files and extracts `usage` blocks to compute: total input/output tokens, cost estimate (at current model pricing), avg turn latency, p95 turn latency, and turns per day. Render as neon sparklines (7-day trend) plus a summary table. Global view aggregates across all projects.
+
+### Acceptance Criteria
+
+- AC1: `/metrics` page lists all projects with token totals, cost estimate, avg latency
+- AC2: Clicking a project expands a sparkline panel showing 7-day token and latency trends
+- AC3: Cost estimate uses hardcoded per-model rates (Sonnet/Haiku/Opus) from CLAUDE.md
+- AC4: `/api/metrics/[slug]` reads `.jsonl` files; returns `{ slug, totalTokens, estimatedCostUsd, avgLatencyMs, p95LatencyMs, turnsPerDay }`
+- AC5: Global aggregation row shown at top of table
+- AC6: Data cached for 60s; stale indicator shown while refreshing
+
+---
+
+## P16 — Specclaw Pipeline Kanban
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-20
+
+### Problem
+
+Operators have no cross-project view of specclaw pipeline progress. Changes in `propose → plan → build → verify → pr` state are invisible except per-project. It is impossible to see which projects are blocked at which stage without SSHing in.
+
+### Proposed Solution
+
+Add a `/pipeline` page with a kanban board. Five columns: Propose, Plan, Build, Verify, PR. A `/api/pipeline` endpoint scans all project `.specclaw/changes/` directories, reads each `proposal.md`/`spec.md`/`tasks.md`/`verify-report.md` to classify stage, and returns cards. Each card shows: change name, project slug, days in current stage, last-modified timestamp. Drag-and-drop is read-only (display only); clicking a card opens a detail drawer with the full spec.
+
+### Acceptance Criteria
+
+- AC1: All active specclaw changes across all projects appear as kanban cards within 2s
+- AC2: Stage inferred from files present: proposal only → Propose; +spec.md → Plan; +tasks.md → Build; +verify-report.md → Verify; PR URL in verify-report → PR
+- AC3: Cards show: change name, slug badge, days-in-stage, last-modified age
+- AC4: Stalled cards (> 24h in Build or Verify) highlighted amber
+- AC5: Detail drawer shows proposal.md content and, if present, tasks.md checklist with done/pending counts
+- AC6: Refresh every 60s; manual refresh button in page header
+
+---
+
+## P17 — Inject Terminal
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-20
+
+### Problem
+
+Injecting messages into a project channel requires either typing `!project inject` in the master Discord channel or switching to the project's Discord channel. There is no dashboard-native way to inject a prompt or check-in message.
+
+### Proposed Solution
+
+Add an "Inject" panel accessible from the Command Palette and the Instance Grid row action menu. The panel is a neon-styled terminal input: project slug selector (auto-filled from context), a multiline textarea, and a "Send Inject" button. On submit, calls a `/api/inject` POST endpoint that writes the message to the master MCD process via the `!project inject` verb. Inject history (last 20 per project) stored in localStorage.
+
+### Acceptance Criteria
+
+- AC1: Inject panel opens from Command Palette ("inject into <slug>") and from Instance Grid row kebab menu
+- AC2: `/api/inject` POST `{ slug, message }` → runs `!project inject <slug> <message>` via the MCD HTTP MCP server
+- AC3: Success shows a confirmation flash ("Injected ✓"); error shows red banner with message
+- AC4: Inject history (last 20) shown as collapsible list below textarea; clicking re-populates textarea
+- AC5: Textarea supports multi-line; Ctrl+Enter submits; Escape closes panel
+- AC6: Slug selector shows live state badge (color) for each project
+
+---
+
+## P18 — Token Budget Gauge
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-20
+
+### Problem
+
+Operators running cost-sensitive projects have no live view of how close a project is to its monthly token budget. Overages are discovered after the fact via billing, not from the dashboard.
+
+### Proposed Solution
+
+Add a `TokenBudgetGauge` component to the Instance Grid row and Project Graph detail drawer. Each project can have an optional `monthlyTokenBudget` field in `channels.json`. The gauge is a neon arc (0–100%) showing tokens used this calendar month vs budget. Color: green < 70%, amber 70–90%, red > 90%. The `/api/metrics/[slug]` endpoint (from P15) provides the token total. Projects without a budget show no gauge.
+
+### Acceptance Criteria
+
+- AC1: Gauge visible in Instance Grid row when `monthlyTokenBudget` is set on the project
+- AC2: Arc color transitions: green → amber → red at 70% and 90% thresholds
+- AC3: Tooltip shows exact tokens used, budget, and % remaining
+- AC4: Budget field editable via `/api/projects/[slug]/budget` PATCH endpoint; updates `channels.json`
+- AC5: Projects without budget show a dim "no budget" placeholder (not blank space)
+- AC6: Month resets on the 1st; gauge reads 0% at reset
+
+---
+
+## P19 — Cross-Channel Semantic Search
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-20
+
+### Problem
+
+Operators cannot search across all project transcripts and memories from the dashboard. Finding which channel discussed a particular topic, error, or decision requires manually reading channel histories or running grep on the server.
+
+### Proposed Solution
+
+Add a `/search` page with a unified full-text search across: (1) memory records in `memory.db` (content field); (2) last 500 lines of each project's latest `.jsonl` transcript (assistant text blocks only). A `/api/search?q=<term>` endpoint runs SQLite FTS on memories and line-based substring match on transcripts. Results grouped by source (Memory / Transcript) and project slug. Clicking a result opens the Memory Panel or Transcript Panel pinned to that entry.
+
+### Acceptance Criteria
+
+- AC1: Search input on `/search` page; results appear within 500ms for ≤ 20 projects
+- AC2: Results grouped into Memory and Transcript sections; each result shows: slug, snippet (hit highlighted), timestamp
+- AC3: Memory results link to Memory Panel filtered to that record
+- AC4: Transcript results link to Transcript Panel scrolled to that entry
+- AC5: Empty results show "No matches across memories or transcripts" with dim styling
+- AC6: Search term persisted in URL query param (`?q=`); shareable link works
