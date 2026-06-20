@@ -27,6 +27,7 @@ interface EventEntry {
 
 interface Props {
   events?: EventEntry[]
+  filterSlugs?: Set<string> | null
 }
 
 type Status = 'active' | 'stale' | 'stuck'
@@ -59,7 +60,7 @@ function getSparklineData(instanceId: string, events: EventEntry[]): number[] {
   return buckets
 }
 
-export default function InstanceGrid({ events = [] }: Props) {
+export default function InstanceGrid({ events = [], filterSlugs = null }: Props) {
   const [instances, setInstances] = useState<InstanceEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -94,10 +95,18 @@ export default function InstanceGrid({ events = [] }: Props) {
   if (error) return <div className="text-cyber-crimson text-sm py-4 text-center">Error: {error}</div>
   if (instances.length === 0) return <div className="text-slate-500 text-sm py-4 text-center">No instances registered.</div>
 
+  const visibleInstances = filterSlugs
+    ? instances.filter((inst) => inst.activeSlugs?.some((slug) => filterSlugs.has(slug)))
+    : instances
+
+  if (visibleInstances.length === 0 && filterSlugs) {
+    return <div className="text-slate-500 text-sm py-4 text-center">No instances active for this fleet state.</div>
+  }
+
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
       <AnimatePresence>
-        {instances.map((inst) => {
+        {visibleInstances.map((inst) => {
           const status = getStatus(inst.last_seen, stuckInstances, inst.instance_id)
           const sparkData = getSparklineData(inst.instance_id, events)
           return (
