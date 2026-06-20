@@ -6,6 +6,7 @@ import EventFeed from '../components/EventFeed'
 import InstanceGrid from '../components/InstanceGrid'
 import MemoryPanel from '../components/MemoryPanel'
 import SchedulerTable from '../components/SchedulerTable'
+import ScheduleTimeline from '../components/ScheduleTimeline'
 import SpecclawPipeline from '../components/SpecclawPipeline'
 import CountBadge from '../components/ui/CountBadge'
 import type { FleetResponse, ProjectState } from './api/fleet/route'
@@ -91,6 +92,7 @@ function DashboardClient() {
   const [instances, setInstances] = useState<InstanceRow[]>([])
   const [fleet, setFleet] = useState<FleetResponse>({ idle: 0, active: 0, stalled: 0, autonomous: 0, projects: [] })
   const [fleetFilter, setFleetFilter] = useState<ProjectState | null>(null)
+  const [scheduleView, setScheduleView] = useState<'table' | 'timeline'>('timeline')
   const [eventsPerMin, setEventsPerMin] = useState(0)
   const [uptime, setUptime] = useState(0)
   const mountTime = useRef(Date.now())
@@ -237,8 +239,30 @@ function DashboardClient() {
 
           {/* Middle column */}
           <section className="lg:col-span-1">
-            <SectionLabel label="Scheduler" />
-            <SchedulerTable events={events} />
+            <div className="flex items-center gap-2 mb-3">
+              <span className="w-2 h-2 rounded-sm bg-cyber-cyan/60 shrink-0" style={{ clipPath: 'polygon(0 0,100% 0,100% 100%,0 100%)' }} />
+              <h2 className="section-label">Scheduler</h2>
+              <div className="flex-1 h-px bg-gradient-to-r from-cyber-cyan/20 to-transparent" />
+              <div className="flex rounded overflow-hidden border border-cyber-cyan/20 shrink-0">
+                {(['timeline', 'table'] as const).map((v) => (
+                  <button
+                    key={v}
+                    onClick={() => setScheduleView(v)}
+                    className={`text-[10px] px-2 py-0.5 font-mono uppercase tracking-wider transition-colors ${
+                      scheduleView === v
+                        ? 'bg-cyber-cyan/20 text-cyber-cyan'
+                        : 'text-slate-500 hover:text-slate-300'
+                    }`}
+                  >
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {scheduleView === 'timeline'
+              ? <ScheduleTimeline events={events} />
+              : <SchedulerTable events={events} />
+            }
           </section>
 
           {/* Right column — event feed */}

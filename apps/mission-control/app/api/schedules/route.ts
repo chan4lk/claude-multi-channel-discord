@@ -3,11 +3,12 @@ import * as path from 'path'
 
 export const dynamic = 'force-dynamic'
 
-interface ScheduleRow {
+export interface ScheduleRow {
   id: string
   chatId: string
   slug: string
   at: string
+  interval: string | null
   prompt: string
   enabled: boolean
   lastRunAt: string | null
@@ -53,6 +54,7 @@ export async function GET(): Promise<Response> {
       chatId,
       slug: chatIdToSlug.get(chatId) ?? chatId,
       at: String(s['at'] ?? ''),
+      interval: s['interval'] != null ? String(s['interval']) : null,
       prompt: String(s['prompt'] ?? ''),
       enabled: s['enabled'] === true,
       lastRunAt: s['lastRunAt'] != null ? String(s['lastRunAt']) : null,
