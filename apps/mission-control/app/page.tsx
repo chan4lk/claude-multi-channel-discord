@@ -10,6 +10,7 @@ import SchedulerTable from '../components/SchedulerTable'
 import ScheduleTimeline from '../components/ScheduleTimeline'
 import SpecclawPipeline from '../components/SpecclawPipeline'
 import StallAlertPanel from '../components/StallAlertPanel'
+import TranscriptPanel from '../components/TranscriptPanel'
 import CountBadge from '../components/ui/CountBadge'
 import type { FleetResponse, ProjectState } from './api/fleet/route'
 import type { WhatsAppResponse } from './api/whatsapp/route'
@@ -97,6 +98,7 @@ function DashboardClient() {
   const [whatsapp, setWhatsapp] = useState<WhatsAppResponse | null>(null)
   const [fleetFilter, setFleetFilter] = useState<ProjectState | null>(null)
   const [scheduleView, setScheduleView] = useState<'table' | 'timeline'>('timeline')
+  const [showTranscript, setShowTranscript] = useState(false)
   const [eventsPerMin, setEventsPerMin] = useState(0)
   const [uptime, setUptime] = useState(0)
   const mountTime = useRef(Date.now())
@@ -284,9 +286,29 @@ function DashboardClient() {
           {/* Left column */}
           <div className="flex flex-col gap-5">
             <section>
-              <SectionLabel label={fleetFilter ? `Instances — ${fleetFilter}` : 'Instances'} />
+              <div className="flex items-center gap-2 mb-3">
+                <span className="w-2 h-2 rounded-sm bg-cyber-cyan/60 shrink-0" style={{ clipPath: 'polygon(0 0,100% 0,100% 100%,0 100%)' }} />
+                <h2 className="section-label">{fleetFilter ? `Instances — ${fleetFilter}` : 'Instances'}</h2>
+                <div className="flex-1 h-px bg-gradient-to-r from-cyber-cyan/20 to-transparent" />
+                <button
+                  onClick={() => setShowTranscript((v) => !v)}
+                  className="text-[0.55rem] font-mono px-1.5 py-0.5 rounded border transition-colors"
+                  style={{
+                    color: showTranscript ? '#00F5FF' : '#475569',
+                    borderColor: showTranscript ? '#00F5FF40' : '#334155',
+                    background: showTranscript ? '#00F5FF12' : 'transparent',
+                  }}
+                >
+                  ◈ Transcript
+                </button>
+              </div>
               <InstanceGrid events={events} filterSlugs={filteredSlugs} />
             </section>
+            {showTranscript && fleet.projects.length > 0 && (
+              <section>
+                <TranscriptPanel slugs={fleet.projects.map((p) => p.slug)} />
+              </section>
+            )}
             <section>
               <StallAlertPanel />
             </section>
