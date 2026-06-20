@@ -6,6 +6,13 @@ import GlassCard from './ui/GlassCard'
 import PulseRing from './ui/PulseRing'
 import Sparkline from './ui/Sparkline'
 
+interface FleetProjectData {
+  slug: string
+  state: string
+  lastReplyMs: number | null
+  stuckThresholdMinutes: number
+}
+
 interface InstanceEntry {
   instance_id: string
   host: string
@@ -31,6 +38,41 @@ interface Props {
 }
 
 type Status = 'active' | 'stale' | 'stuck'
+
+function WatchdogBadge({ lastReplyMs, stuckThresholdMinutes }: { lastReplyMs: number; stuckThresholdMinutes: number }) {
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  const thresholdMs = stuckThresholdMinutes * 60_000
+  const remaining = thresholdMs - (now - lastReplyMs)
+  if (remaining <= 0) return null
+
+  const pct = remaining / thresholdMs
+  const totalSecs = Math.ceil(remaining / 1000)
+  const mins = Math.floor(totalSecs / 60)
+  const secs = totalSecs % 60
+  const label = `${mins}:${String(secs).padStart(2, '0')}`
+
+  const color =
+    pct < 0.2
+      ? 'text-cyber-crimson animate-pulse'
+      : pct < 0.5
+      ? 'text-amber-400'
+      : 'text-cyber-cyan/60'
+
+  return (
+    <span
+      className={`text-[9px] font-mono shrink-0 ${color}`}
+      title={`Watchdog: ${label} remaining`}
+    >
+      ⏱{label}
+    </span>
+  )
+}
 
 function getStatus(lastSeen: string | null, stuckInstances: Set<string>, instanceId: string): Status {
   if (stuckInstances.has(instanceId)) return 'stuck'
@@ -64,6 +106,7 @@ export default function InstanceGrid({ events = [], filterSlugs = null }: Props)
   const [instances, setInstances] = useState<InstanceEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [fleetMap, setFleetMap] = useState<Map<string, FleetProjectData>>(new Map())
 
   // Track instances that received watchdog/kill events
   const stuckInstances = new Set<string>(
@@ -71,6 +114,19 @@ export default function InstanceGrid({ events = [], filterSlugs = null }: Props)
       .filter((e) => e.type === 'watchdog' && typeof e.payload['killed'] === 'boolean' && e.payload['killed'])
       .map((e) => e.instance_id)
   )
+
+  async function fetchFleet() {
+    try {
+      const res = await fetch('/api/fleet')
+      if (!res.ok) return
+      const data = await res.json()
+      const map = new Map<string, FleetProjectData>()
+      for (const p of (data.projects ?? []) as FleetProjectData[]) {
+        map.set(p.slug, p)
+      }
+      setFleetMap(map)
+    } catch {}
+  }
 
   async function fetchInstances() {
     try {
@@ -87,7 +143,8 @@ export default function InstanceGrid({ events = [], filterSlugs = null }: Props)
 
   useEffect(() => {
     fetchInstances()
-    const interval = setInterval(fetchInstances, 30_000)
+    fetchFleet()
+    const interval = setInterval(() => { fetchInstances(); fetchFleet() }, 30_000)
     return () => clearInterval(interval)
   }, [])
 
@@ -141,16 +198,24 @@ export default function InstanceGrid({ events = [], filterSlugs = null }: Props)
                   </div>
                   {inst.activeSlugs && inst.activeSlugs.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-0.5">
-                      {inst.activeSlugs.slice(0, 3).map((slug) => (
-                        <button
-                          key={slug}
-                          title={`Inject into ${slug}`}
-                          onClick={() => window.dispatchEvent(new CustomEvent('mc:inject', { detail: { slug } }))}
-                          className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyber-cyan/10 text-cyber-cyan/70 border border-cyber-cyan/20 hover:bg-cyber-cyan/20 hover:text-cyber-cyan transition-colors cursor-pointer"
-                        >
-                          {slug} ⟳
-                        </button>
-                      ))}
+                      {inst.activeSlugs.slice(0, 3).map((slug) => {
+                        const fp = fleetMap.get(slug)
+                        const showBadge = fp?.state === 'active' && fp.lastReplyMs !== null
+                        return (
+                          <div key={slug} className="flex items-center gap-1">
+                            <button
+                              title={`Inject into ${slug}`}
+                              onClick={() => window.dispatchEvent(new CustomEvent('mc:inject', { detail: { slug } }))}
+                              className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyber-cyan/10 text-cyber-cyan/70 border border-cyber-cyan/20 hover:bg-cyber-cyan/20 hover:text-cyber-cyan transition-colors cursor-pointer"
+                            >
+                              {slug} ⟳
+                            </button>
+                            {showBadge && (
+                              <WatchdogBadge lastReplyMs={fp!.lastReplyMs!} stuckThresholdMinutes={fp!.stuckThresholdMinutes} />
+                            )}
+                          </div>
+                        )
+                      })}
                       {inst.activeSlugs.length > 3 && (
                         <span className="text-[10px] text-slate-600">
                           +{inst.activeSlugs.length - 3}

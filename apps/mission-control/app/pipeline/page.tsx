@@ -47,6 +47,19 @@ interface DrawerProps {
 
 function DetailDrawer({ card, onClose }: DrawerProps) {
   const color = STAGE_COLORS[card.stage]
+  const [diffPreview, setDiffPreview] = useState<{ log: string; diff: string } | null>(null)
+  const [diffLoading, setDiffLoading] = useState(false)
+
+  useEffect(() => {
+    if (!['build', 'verify', 'pr'].includes(card.stage)) return
+    setDiffLoading(true)
+    setDiffPreview(null)
+    fetch(`/api/diff/${encodeURIComponent(card.slug)}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => setDiffPreview(data))
+      .catch(() => setDiffPreview(null))
+      .finally(() => setDiffLoading(false))
+  }, [card.slug, card.stage])
 
   return (
     <motion.div
@@ -168,6 +181,53 @@ function DetailDrawer({ card, onClose }: DrawerProps) {
             <div>
               <div className="text-[0.6rem] text-slate-500 uppercase tracking-wider font-semibold mb-2">Proposal</div>
               <p className="text-xs text-slate-400 leading-relaxed">{card.proposalSnippet}</p>
+            </div>
+          )}
+
+          {/* Diff preview for build/verify/pr */}
+          {['build', 'verify', 'pr'].includes(card.stage) && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-[0.6rem] text-slate-500 uppercase tracking-wider font-semibold">Diff Preview</div>
+                <a
+                  href={`/graph?diff=${encodeURIComponent(card.slug)}`}
+                  className="text-[0.6rem] font-mono text-cyber-cyan hover:underline"
+                >
+                  View Diff →
+                </a>
+              </div>
+              {diffLoading && (
+                <p className="text-[0.6rem] font-mono text-slate-600">Loading…</p>
+              )}
+              {!diffLoading && diffPreview && (
+                <div className="rounded border border-cyber-cyan/8 p-2" style={{ background: 'rgba(0,245,255,0.02)' }}>
+                  {diffPreview.log ? (
+                    <pre className="text-[0.55rem] font-mono text-slate-500 whitespace-pre-wrap break-all mb-2">
+                      {diffPreview.log.split('\n').slice(0, 5).join('\n')}
+                      {diffPreview.log.split('\n').length > 5 ? '\n…' : ''}
+                    </pre>
+                  ) : null}
+                  {diffPreview.diff ? (
+                    <pre className="text-[0.5rem] font-mono whitespace-pre-wrap break-all">
+                      {diffPreview.diff.split('\n').slice(0, 20).map((line, i) => {
+                        let color = '#475569'
+                        if (line.startsWith('+') && !line.startsWith('+++')) color = '#4ADE80'
+                        else if (line.startsWith('-') && !line.startsWith('---')) color = '#EF4444'
+                        else if (line.startsWith('@@')) color = '#A855F7'
+                        return <span key={i} style={{ color, display: 'block' }}>{line || ' '}</span>
+                      })}
+                      {diffPreview.diff.split('\n').length > 20 && (
+                        <span style={{ color: '#475569', display: 'block' }}>…{diffPreview.diff.split('\n').length - 20} more lines — View Diff for full patch</span>
+                      )}
+                    </pre>
+                  ) : (
+                    <p className="text-[0.55rem] font-mono text-slate-600">No diff yet</p>
+                  )}
+                </div>
+              )}
+              {!diffLoading && !diffPreview && (
+                <p className="text-[0.6rem] font-mono text-slate-600">No diff available</p>
+              )}
             </div>
           )}
 

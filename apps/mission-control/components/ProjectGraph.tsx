@@ -34,6 +34,7 @@ interface DetailDrawer {
 interface Props {
   showBacklog: boolean
   onNodeClick?: (slug: string) => void
+  initialDiffSlug?: string
 }
 
 const STORAGE_KEY = 'mc_graph_positions'
@@ -54,7 +55,7 @@ function savePositions(nodes: GraphNode[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(pos))
 }
 
-export default function ProjectGraph({ showBacklog }: Props) {
+export default function ProjectGraph({ showBacklog, initialDiffSlug }: Props) {
   const svgRef = useRef<SVGSVGElement>(null)
   const [projects, setProjects] = useState<FleetProject[]>([])
   const [backlogMap, setBacklogMap] = useState<Map<string, ProjectBacklog>>(new Map())
@@ -65,6 +66,7 @@ export default function ProjectGraph({ showBacklog }: Props) {
   const [dims, setDims] = useState({ w: 800, h: 500 })
   const simRef = useRef<d3.Simulation<GraphNode, undefined> | null>(null)
   const nodesRef = useRef<GraphNode[]>([])
+  const initialDiffHandled = useRef(false)
 
   // Measure container
   useEffect(() => {
@@ -112,6 +114,17 @@ export default function ProjectGraph({ showBacklog }: Props) {
     const i2 = setInterval(fetchBacklog, 30_000)
     return () => { clearInterval(i1); clearInterval(i2) }
   }, [fetchFleet, fetchBacklog])
+
+  // Auto-open drawer + diff tab when initialDiffSlug is set
+  useEffect(() => {
+    if (!initialDiffSlug || initialDiffHandled.current || projects.length === 0) return
+    const found = projects.find((p) => p.slug === initialDiffSlug)
+    if (!found) return
+    initialDiffHandled.current = true
+    const b = backlogMap.get(found.slug) ?? null
+    setDrawer({ slug: found.slug, state: found.state, ageMins: found.ageMins, backlog: b })
+    setDrawerTab('diff')
+  }, [projects, initialDiffSlug, backlogMap])
 
   // Build / update D3 simulation
   useEffect(() => {

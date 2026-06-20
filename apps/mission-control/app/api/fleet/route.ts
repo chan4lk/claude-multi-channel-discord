@@ -10,6 +10,8 @@ export interface FleetProject {
   slug: string
   state: ProjectState
   ageMins: number
+  lastReplyMs: number | null
+  stuckThresholdMinutes: number
 }
 
 export interface FleetResponse {
@@ -64,7 +66,7 @@ function getTranscriptMtime(slug: string, mcdDir: string): number | null {
   return latestMtime || null
 }
 
-function classifyState(slug: string, mcdDir: string, scheduledSlugs: Set<string>): FleetProject {
+function classifyState(slug: string, mcdDir: string, scheduledSlugs: Set<string>, stuckThresholdMinutes: number): FleetProject {
   const mtime = getTranscriptMtime(slug, mcdDir)
   const ageMs = mtime ? Date.now() - mtime : Infinity
   const ageMins = Math.min(Math.floor(ageMs / 60_000), 9999)
@@ -84,7 +86,7 @@ function classifyState(slug: string, mcdDir: string, scheduledSlugs: Set<string>
     state = hasSchedule ? 'autonomous' : 'idle'
   }
 
-  return { slug, state, ageMins }
+  return { slug, state, ageMins, lastReplyMs: mtime, stuckThresholdMinutes }
 }
 
 export async function GET(): Promise<Response> {
@@ -93,7 +95,7 @@ export async function GET(): Promise<Response> {
     return Response.json({ idle: 0, active: 0, stalled: 0, autonomous: 0, projects: [] } satisfies FleetResponse)
   }
 
-  const channels = readJson<{ projects?: Record<string, { slug?: string }> }>(
+  const channels = readJson<{ projects?: Record<string, { slug?: string; stuckThresholdMinutes?: number }> }>(
     path.join(mcdDir, 'channels.json')
   )
   const schedules = readJson<{ schedules?: Array<{ chatId?: string; enabled?: boolean }> }>(
@@ -102,11 +104,15 @@ export async function GET(): Promise<Response> {
 
   const chatIdToSlug = new Map<string, string>()
   const projectSlugs: string[] = []
+  const slugToStuck = new Map<string, number>()
   if (channels?.projects) {
     for (const [chatId, proj] of Object.entries(channels.projects)) {
       if (proj.slug) {
         chatIdToSlug.set(chatId, proj.slug)
         projectSlugs.push(proj.slug)
+        if (proj.stuckThresholdMinutes) {
+          slugToStuck.set(proj.slug, proj.stuckThresholdMinutes)
+        }
       }
     }
   }
@@ -120,7 +126,7 @@ export async function GET(): Promise<Response> {
   }
 
   const projects: FleetProject[] = projectSlugs.map((slug) =>
-    classifyState(slug, mcdDir, scheduledSlugs)
+    classifyState(slug, mcdDir, scheduledSlugs, slugToStuck.get(slug) ?? 5)
   )
 
   const counts = { idle: 0, active: 0, stalled: 0, autonomous: 0 }

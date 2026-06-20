@@ -1,14 +1,16 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 
-// Load D3 graph client-only (no SSR)
 const ProjectGraph = dynamic(() => import('../../components/ProjectGraph'), { ssr: false })
 
-export default function GraphPage() {
+function GraphPageInner() {
   const [showBacklog, setShowBacklog] = useState(false)
+  const searchParams = useSearchParams()
+  const initialDiffSlug = searchParams.get('diff') ?? undefined
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -55,7 +57,7 @@ export default function GraphPage() {
 
       {/* Graph fills remaining space */}
       <main className="flex-1 relative overflow-hidden">
-        <ProjectGraph showBacklog={showBacklog} />
+        <ProjectGraph showBacklog={showBacklog} initialDiffSlug={initialDiffSlug} />
       </main>
 
       <footer className="border-t border-cyber-cyan/8 px-6 py-2">
@@ -64,5 +66,13 @@ export default function GraphPage() {
         </p>
       </footer>
     </div>
+  )
+}
+
+export default function GraphPage() {
+  return (
+    <Suspense fallback={<div className="min-h-dvh" style={{ background: '#060d1a' }} />}>
+      <GraphPageInner />
+    </Suspense>
   )
 }
