@@ -77,7 +77,7 @@ Add a `StallAlertPanel` component shown as a collapsible panel (or dedicated tab
 
 ## P4 — Live Activity Feed (enhancement)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-20
 
 ### Problem
@@ -173,7 +173,7 @@ Replace or complement `SchedulerTable` with a horizontal swimlane timeline showi
 
 ## P8 — WhatsApp Fleet Status
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-20
 
 ### Problem
