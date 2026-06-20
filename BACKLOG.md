@@ -213,3 +213,123 @@ Update the recommended heartbeat schedule prompt template in `templates/master.C
 - AC2: Injected prompt from the example includes saving `coordination` memory post-inject
 - AC3: `bin/setup-new-instance.sh` optionally bootstraps a heartbeat schedule with the updated prompt
 - AC4: Existing scheduled jobs are not modified by this change (template only)
+
+---
+
+## P10 — Cross-Channel Timeline
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-20
+
+### Problem
+
+Operators have no way to see how activity across all channels correlates over time. Events in the feed are ordered by arrival with no temporal axis, making it impossible to see whether a spike in one channel triggered stalls in others.
+
+### Proposed Solution
+
+Add a `/timeline` page with a horizontal multi-channel timeline. One swimlane per project. Events (spawns, replies, injects, stalls, specclaw completions) rendered as colored tick marks on a 24h or 6h scrollable axis. Axis is live — the right edge is "now" and scrolls automatically. Hovering a tick shows event details. Clicking jumps to that project's node in the Graph View.
+
+### Acceptance Criteria
+
+- AC1: All projects shown as swimlanes; events from `/api/events` rendered as ticks within 2s of page load
+- AC2: Time axis spans last 6h by default; 24h toggle available
+- AC3: Right edge tracks "now" with a live cursor line; auto-scrolls
+- AC4: Event types use the same color scheme as EventFeed
+- AC5: Hovering a tick shows: type, timestamp, payload excerpt
+- AC6: Empty swimlane (no events for project) shown as a dim line, not hidden
+
+---
+
+## P11 — Agent Diff Viewer
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-20
+
+### Problem
+
+Operators cannot see what code changes a project agent has made between heartbeat cycles without SSHing into the server or opening the project channel. There is no quick way to review recent git diffs from the dashboard.
+
+### Proposed Solution
+
+Add a `/api/diff/[slug]` endpoint that runs `git diff HEAD~5..HEAD --stat` and `git log --oneline -10` on the project working directory. Add a "Diff" tab to the Project Graph detail drawer. Syntax-highlight the diff output (added/removed lines in green/red). Include commit log above the diff. Auto-refresh on drawer open.
+
+### Acceptance Criteria
+
+- AC1: Diff tab appears in graph node detail drawer
+- AC2: Shows last 10 commits as a log above the diff
+- AC3: Added lines highlighted green; removed lines highlighted red; context lines dim
+- AC4: `/api/diff/[slug]` returns `{ log: string; diff: string; slug: string }`
+- AC5: Empty diff ("nothing changed") shown with neutral message
+- AC6: Diff truncated at 500 lines with a count of omitted lines
+
+---
+
+## P12 — Live Transcript Tail
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-20
+
+### Problem
+
+Operators must open the tmux pane or the project's Discord channel to read what an agent is currently thinking or doing. The dashboard has no way to show a live or recent view of a project's transcript.
+
+### Proposed Solution
+
+Add a `/api/transcript/[slug]` endpoint that reads the latest `.jsonl` transcript file and returns the last N assistant/tool entries. Add a "Transcript" panel that can be pinned below the Instance Grid: shows last 20 assistant text blocks and tool calls in a neon-framed terminal-style box, auto-scrolling on new data. Polls every 5s when visible.
+
+### Acceptance Criteria
+
+- AC1: Transcript panel toggleable from the Instance Grid header
+- AC2: Shows last 20 entries (assistant text + tool name + result snippet)
+- AC3: Auto-scrolls to bottom on new entries; pauses if operator scrolls up
+- AC4: Endpoint reads the most-recently-modified `.jsonl` in the project's transcript dir
+- AC5: Tool calls shown with tool name badge (color-coded by category)
+- AC6: Empty or missing transcript shown with "No transcript yet" placeholder
+
+---
+
+## P13 — Memory Graph
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-20
+
+### Problem
+
+The Memory Panel shows memories as a flat list but gives no sense of how memories relate to each other or which channels contribute most. There is no way to see memory density or patterns at a glance.
+
+### Proposed Solution
+
+Add a `/memory-graph` page. Force-directed graph where each node is a memory (colored by type). Edges connect memories that share the same `channel_slug`. Node size scales with `access_count`. Cluster by type using D3 force grouping. Clicking a memory node shows full content. Includes a type filter strip identical to the Memory Panel. Graph re-renders on 60s poll.
+
+### Acceptance Criteria
+
+- AC1: All memories from `memory.db` appear as nodes within 2s
+- AC2: Node color matches memory type (reuse Memory Panel palette)
+- AC3: Node size scales with access_count (min r=6, max r=20)
+- AC4: Edges connect same-channel memories; edge opacity scales with shared access count
+- AC5: Clicking a node opens a detail card with full content, type, slug, timestamps
+- AC6: Type filter chips hide/show nodes without rebuilding simulation
+
+---
+
+## P14 — Command Palette
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-20
+
+### Problem
+
+Navigating the dashboard requires clicking through multiple sections. Operators who know what they want (view a project, jump to a transcript, filter by state) must use the mouse. There is no keyboard-first navigation.
+
+### Proposed Solution
+
+Add a command palette (⌘K / Ctrl+K) that opens a searchable modal with instant results. Commands include: navigate to `/graph`, `/timeline`, `/memory-graph`; filter InstanceGrid by project slug; open a project's transcript panel; copy inject command for a slug. Results are fuzzy-matched against project slugs and command names. Recent commands shown when search is empty.
+
+### Acceptance Criteria
+
+- AC1: Palette opens on Ctrl+K (or Cmd+K on Mac) from anywhere in the dashboard
+- AC2: Typing filters commands and project slugs with fuzzy match; results update in <50ms
+- AC3: Arrow keys navigate results; Enter executes; Escape closes
+- AC4: Project-slug results show state badge (color) and age
+- AC5: Recent commands (last 5) shown at top when input is empty
+- AC6: Palette closes on backdrop click or Escape
