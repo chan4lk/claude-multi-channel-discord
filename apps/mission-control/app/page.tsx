@@ -314,7 +314,7 @@ function DashboardClient() {
                   ◈ Transcript
                 </button>
               </div>
-              <InstanceGrid events={events} filterSlugs={filteredSlugs} />
+              <InstanceGrid events={events} filterSlugs={filteredSlugs} fleetProjects={fleet.projects} />
             </section>
             {showTranscript && fleet.projects.length > 0 && (
               <section>

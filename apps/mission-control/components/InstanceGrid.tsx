@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import GlassCard from './ui/GlassCard'
 import PulseRing from './ui/PulseRing'
 import Sparkline from './ui/Sparkline'
+import type { FleetProject } from '../app/api/fleet/route'
 
 interface InstanceEntry {
   instance_id: string
@@ -28,6 +29,7 @@ interface EventEntry {
 interface Props {
   events?: EventEntry[]
   filterSlugs?: Set<string> | null
+  fleetProjects?: FleetProject[]
 }
 
 type Status = 'active' | 'stale' | 'stuck'
@@ -60,12 +62,53 @@ function getSparklineData(instanceId: string, events: EventEntry[]): number[] {
   return buckets
 }
 
-export default function InstanceGrid({ events = [], filterSlugs = null }: Props) {
+interface WatchdogBadgeProps {
+  slug: string
+  fleetProjects: FleetProject[]
+}
+
+function WatchdogBadge({ slug, fleetProjects }: WatchdogBadgeProps) {
+  const [now, setNow] = useState(Date.now())
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 10_000)
+    return () => clearInterval(id)
+  }, [])
+
+  const project = fleetProjects.find((p) => p.slug === slug)
+  if (!project || project.state !== 'active') return null
+
+  const thresholdMs = project.stuckThresholdMinutes * 60_000
+  const ageMs = project.ageMins * 60_000
+  const remainingMs = thresholdMs - ageMs
+  if (remainingMs <= 0) return null
+
+  const remainingMins = Math.ceil(remainingMs / 60_000)
+  const pct = remainingMs / thresholdMs
+
+  let color: string
+  if (pct > 0.5) color = '#4ADE80'
+  else if (pct > 0.2) color = '#F59E0B'
+  else color = '#EF4444'
+
+  const pulse = pct < 0.2
+
+  return (
+    <span
+      className={`text-[0.55rem] font-mono px-1 py-0.5 rounded shrink-0 ${pulse ? 'animate-pulse' : ''}`}
+      style={{ color, border: `1px solid ${color}40`, background: `${color}15` }}
+      title={`Watchdog fires in ~${remainingMins}m (threshold: ${project.stuckThresholdMinutes}m)`}
+    >
+      ⏱{remainingMins}m
+    </span>
+  )
+}
+
+export default function InstanceGrid({ events = [], filterSlugs = null, fleetProjects = [] }: Props) {
   const [instances, setInstances] = useState<InstanceEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // Track instances that received watchdog/kill events
   const stuckInstances = new Set<string>(
     events
       .filter((e) => e.type === 'watchdog' && typeof e.payload['killed'] === 'boolean' && e.payload['killed'])
@@ -142,14 +185,18 @@ export default function InstanceGrid({ events = [], filterSlugs = null }: Props)
                   {inst.activeSlugs && inst.activeSlugs.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-0.5">
                       {inst.activeSlugs.slice(0, 3).map((slug) => (
-                        <button
-                          key={slug}
-                          title={`Inject into ${slug}`}
-                          onClick={() => window.dispatchEvent(new CustomEvent('mc:inject', { detail: { slug } }))}
-                          className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyber-cyan/10 text-cyber-cyan/70 border border-cyber-cyan/20 hover:bg-cyber-cyan/20 hover:text-cyber-cyan transition-colors cursor-pointer"
-                        >
-                          {slug} ⟳
-                        </button>
+                        <div key={slug} className="flex items-center gap-1">
+                          <button
+                            title={`Inject into ${slug}`}
+                            onClick={() => window.dispatchEvent(new CustomEvent('mc:inject', { detail: { slug } }))}
+                            className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyber-cyan/10 text-cyber-cyan/70 border border-cyber-cyan/20 hover:bg-cyber-cyan/20 hover:text-cyber-cyan transition-colors cursor-pointer"
+                          >
+                            {slug} ⟳
+                          </button>
+                          {fleetProjects.length > 0 && (
+                            <WatchdogBadge slug={slug} fleetProjects={fleetProjects} />
+                          )}
+                        </div>
                       ))}
                       {inst.activeSlugs.length > 3 && (
                         <span className="text-[10px] text-slate-600">

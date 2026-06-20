@@ -10,6 +10,7 @@ export interface FleetProject {
   slug: string
   state: ProjectState
   ageMins: number
+  stuckThresholdMinutes: number
 }
 
 export interface FleetResponse {
@@ -64,7 +65,12 @@ function getTranscriptMtime(slug: string, mcdDir: string): number | null {
   return latestMtime || null
 }
 
-function classifyState(slug: string, mcdDir: string, scheduledSlugs: Set<string>): FleetProject {
+function classifyState(
+  slug: string,
+  mcdDir: string,
+  scheduledSlugs: Set<string>,
+  stuckThresholdMinutes: number
+): FleetProject {
   const mtime = getTranscriptMtime(slug, mcdDir)
   const ageMs = mtime ? Date.now() - mtime : Infinity
   const ageMins = Math.min(Math.floor(ageMs / 60_000), 9999)
@@ -74,17 +80,14 @@ function classifyState(slug: string, mcdDir: string, scheduledSlugs: Set<string>
   if (ageMs < 30_000) {
     state = 'active'
   } else if (ageMs < 5 * 60_000) {
-    // Recently finished — treat as idle (or autonomous if scheduled)
     state = hasSchedule ? 'autonomous' : 'idle'
   } else if (ageMs < 2 * 60 * 60_000) {
-    // 5min–2h: stalled window
     state = hasSchedule ? 'autonomous' : 'stalled'
   } else {
-    // Very old or no transcript
     state = hasSchedule ? 'autonomous' : 'idle'
   }
 
-  return { slug, state, ageMins }
+  return { slug, state, ageMins, stuckThresholdMinutes }
 }
 
 export async function GET(): Promise<Response> {
@@ -93,20 +96,28 @@ export async function GET(): Promise<Response> {
     return Response.json({ idle: 0, active: 0, stalled: 0, autonomous: 0, projects: [] } satisfies FleetResponse)
   }
 
-  const channels = readJson<{ projects?: Record<string, { slug?: string }> }>(
-    path.join(mcdDir, 'channels.json')
-  )
+  const channels = readJson<{
+    projects?: Record<string, { slug?: string; stuckThresholdMinutes?: number }>
+    defaults?: { stuckThresholdMinutes?: number }
+  }>(path.join(mcdDir, 'channels.json'))
+
   const schedules = readJson<{ schedules?: Array<{ chatId?: string; enabled?: boolean }> }>(
     path.join(mcdDir, 'schedules.json')
   )
 
+  const defaultThreshold = channels?.defaults?.stuckThresholdMinutes ?? 5
+
   const chatIdToSlug = new Map<string, string>()
-  const projectSlugs: string[] = []
+  const projectEntries: Array<{ slug: string; stuckThresholdMinutes: number }> = []
+
   if (channels?.projects) {
     for (const [chatId, proj] of Object.entries(channels.projects)) {
       if (proj.slug) {
         chatIdToSlug.set(chatId, proj.slug)
-        projectSlugs.push(proj.slug)
+        projectEntries.push({
+          slug: proj.slug,
+          stuckThresholdMinutes: proj.stuckThresholdMinutes ?? defaultThreshold,
+        })
       }
     }
   }
@@ -119,8 +130,8 @@ export async function GET(): Promise<Response> {
     }
   }
 
-  const projects: FleetProject[] = projectSlugs.map((slug) =>
-    classifyState(slug, mcdDir, scheduledSlugs)
+  const projects: FleetProject[] = projectEntries.map(({ slug, stuckThresholdMinutes }) =>
+    classifyState(slug, mcdDir, scheduledSlugs, stuckThresholdMinutes)
   )
 
   const counts = { idle: 0, active: 0, stalled: 0, autonomous: 0 }
