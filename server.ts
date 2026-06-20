@@ -47,7 +47,9 @@ import { handleMasterCommand } from './src/master-commands.ts'
 import { MasterMcpServer } from './src/master-mcp-server.ts'
 import { ProjectPool } from './src/project-pool.ts'
 import type { OutboundReply, ToolProgressEvent } from './src/project-process.ts'
-import { projectDir } from './src/paths.ts'
+import { projectDir, memoryDbFile, channelsDir } from './src/paths.ts'
+import { MemoryStore } from './src/memory-store.ts'
+import { backupMemory, type R2Config } from './src/memory-backup.ts'
 import { Scheduler } from './src/scheduler.ts'
 import { VoicePipeline } from './src/voice-pipeline.ts'
 import { voiceSlashCommands, handleVoiceInteraction } from './src/voice-commands.ts'
@@ -918,6 +920,7 @@ function shutdown(): void {
     } catch (err) {
       process.stderr.write(`discord: master MCP stop error: ${err}\n`)
     }
+    if (memoryStore) { try { memoryStore.close() } catch {} }
     try {
       await Promise.resolve(client.destroy())
     } catch {}
@@ -1023,6 +1026,7 @@ client.on('interactionCreate', async (interaction: Interaction) => {
 // the upstream single-session behavior unchanged.
 let projectPool: ProjectPool | null = null
 let masterMcp: MasterMcpServer | null = null
+let memoryStore: MemoryStore | null = null
 let scheduler: Scheduler | null = null
 let voicePipeline: VoicePipeline | null = null
 const specclawWatchers = new Map<string, { watcher: FSWatcher; slug: string; chatId: string; debounce: ReturnType<typeof setTimeout> | null }>()
@@ -1136,6 +1140,25 @@ async function maybeInitProjectsBackend(): Promise<void> {
     return
   }
 
+  const embModelDir = join(channelsDir(), '.embedding-model')
+  memoryStore = new MemoryStore(memoryDbFile(), embModelDir)
+
+  const memoryCfg = config.defaults.memory
+  if (memoryCfg?.backupIntervalHours && memoryCfg.backupIntervalHours > 0 && memoryCfg.r2) {
+    const r2Env = memoryCfg.r2
+    const r2Interval = memoryCfg.backupIntervalHours * 60 * 60 * 1000
+    setInterval(() => {
+      const accessKeyId = process.env[r2Env.accessKeyIdEnv] ?? ''
+      const secretAccessKey = process.env[r2Env.secretAccessKeyEnv] ?? ''
+      if (!accessKeyId || !secretAccessKey) return
+      const r2: R2Config = { bucket: r2Env.bucket, endpoint: r2Env.endpoint, accessKeyId, secretAccessKey }
+      try { memoryStore?.checkpoint() } catch {}
+      backupMemory(r2, memoryDbFile()).catch((err: Error) => {
+        process.stderr.write(`[memory] R2 backup failed: ${err.message}\n`)
+      })
+    }, r2Interval).unref()
+  }
+
   const master = new MasterMcpServer({
     port: process.env.MCD_MCP_PORT ? parseInt(process.env.MCD_MCP_PORT, 10) : undefined,
     onReply: (reply) => {
@@ -1152,6 +1175,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
     getMasterChatId: () => loadChannelsConfig().master?.chatId,
     teamsAdapter: teamsAdapter ?? undefined,
     getPool: () => projectPool,
+    memoryStore: memoryStore ?? undefined,
     // Master-only privileged path. Claude in the master channel can
     // execute the same `!project ...` verbs the operator would type, so
     // natural-language asks like "create a project for keyflow at <url>"
@@ -1170,6 +1194,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
         config: cfg,
         authorizedUsers: ['__mcd_master_self__'],
         mutator: projectPool ? buildMutator() : undefined,
+        memoryStore: memoryStore ?? undefined,
       })
       if (result.kind === 'reply') return result.text
       return `[${result.kind}]`
@@ -1661,6 +1686,7 @@ async function tryMasterCommand(msg: Message, access: Access): Promise<boolean> 
     config,
     authorizedUsers: access.allowFrom,
     mutator: projectPool ? buildMutator() : undefined,
+    memoryStore: memoryStore ?? undefined,
   })
 
   switch (result.kind) {

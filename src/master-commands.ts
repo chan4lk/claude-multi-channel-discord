@@ -2,6 +2,8 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, statSync, s
 import { isAbsolute, join, resolve } from 'node:path'
 
 import { parseFlags, splitArgv } from './argv.ts'
+import { type MemoryStore, type MemoryType } from './memory-store.ts'
+import { backupMemory, type R2Config } from './memory-backup.ts'
 import {
   commandPrefix,
   findProjectByChatId,
@@ -37,6 +39,7 @@ export interface MasterContext {
    * read-only verbs (or unit tests of the parser) can omit it.
    */
   mutator?: MasterMutator
+  memoryStore?: MemoryStore
 }
 
 export interface MasterMutator {
@@ -74,7 +77,7 @@ export interface MasterMutator {
 }
 
 const READ_VERBS = ['list', 'show', 'status', 'help'] as const
-const MUTATION_VERBS = ['create', 'set', 'rename', 'rm'] as const
+const MUTATION_VERBS = ['create', 'set', 'rename', 'rm', 'memory'] as const
 const PHASE_5_VERBS = ['clone', 'remote', 'pull'] as const
 
 export async function handleMasterCommand(
@@ -147,6 +150,8 @@ export async function handleMasterCommand(
       return { kind: 'reply', text: handleTeamsSetup(rest) }
     case 'heartbeat':
       return { kind: 'reply', text: handleHeartbeat(rest, ctx) }
+    case 'memory':
+      return { kind: 'reply', text: await handleMemory(rest, ctx) }
     default:
       return {
         kind: 'reply',
@@ -181,6 +186,9 @@ function helpText(prefix: string): string {
     `${prefix} model    <chat_id-or-slug> [--set NAME | --clear]    — set or clear the project's --model arg`,
     `${prefix} progress <chat_id-or-slug> [--set off|edit|post | --clear]    — show/set live tool-call progress mode`,
     `${prefix} teams-setup <APP_ID> <APP_SECRET>                      — write Teams bot credentials to .env (run without args for instructions)`,
+    `${prefix} memory stats                     — show memory counts by type and channel`,
+    `${prefix} memory backup                    — trigger immediate R2 backup`,
+    `${prefix} memory clear [--slug S] [--type T] --yes — delete matching memories`,
     `${prefix} rm     <chat_id-or-slug> --yes                         — archive + remove`,
     `${prefix} help                          — this message`,
     '```',
@@ -1333,6 +1341,54 @@ function defaultClonePrompt(slug: string, repo: string, baseBranch: string): str
     '',
     'Other tools (`mcp__mcd__react`, `mcp__mcd__edit_message`, `mcp__mcd__download_attachment`, `mcp__mcd__fetch_messages`) are available when useful — for example `download_attachment` to grab an inbound file, or `react` for a fast acknowledgment before a long task.',
   ].join('\n')
+}
+
+async function handleMemory(rest: string[], ctx: MasterContext): Promise<string> {
+  const { positional, flags } = parseFlags(rest)
+  const sub = positional[0] ?? 'stats'
+
+  if (sub === 'stats') {
+    if (!ctx.memoryStore) return 'memory store not configured'
+    const s = ctx.memoryStore.stats()
+    const lines = [`**Memory stats** — ${s.total} total`]
+    if (s.total > 5000) lines.push('⚠️ store has >5K entries — consider clearing old memories')
+    lines.push('**By type:**')
+    for (const [type, count] of Object.entries(s.byType)) lines.push(`  • ${type}: ${count}`)
+    lines.push('**By channel:**')
+    for (const [slug, count] of Object.entries(s.bySlug)) lines.push(`  • ${slug}: ${count}`)
+    return lines.join('\n')
+  }
+
+  if (sub === 'backup') {
+    if (!ctx.memoryStore) return 'memory store not configured'
+    const cfg = loadConfig()
+    const r2Cfg = cfg.defaults.memory?.r2
+    if (!r2Cfg) return 'no R2 config in `defaults.memory.r2` — backup skipped'
+    const accessKeyId = process.env[r2Cfg.accessKeyIdEnv] ?? ''
+    const secretAccessKey = process.env[r2Cfg.secretAccessKeyEnv] ?? ''
+    if (!accessKeyId || !secretAccessKey) return `missing env vars: ${r2Cfg.accessKeyIdEnv}, ${r2Cfg.secretAccessKeyEnv}`
+    const r2: R2Config = { bucket: r2Cfg.bucket, endpoint: r2Cfg.endpoint, accessKeyId, secretAccessKey }
+    try {
+      const { memoryDbFile } = await import('./paths.ts')
+      ctx.memoryStore.checkpoint()
+      const key = await backupMemory(r2, memoryDbFile())
+      return key ? `✅ backed up to \`${key}\`` : 'backup skipped (no config)'
+    } catch (err) {
+      return `❌ backup failed: ${(err as Error).message}`
+    }
+  }
+
+  if (sub === 'clear') {
+    if (!ctx.memoryStore) return 'memory store not configured'
+    if (!flags.yes) return '`memory clear` requires `--yes`'
+    const slug = typeof flags.slug === 'string' ? flags.slug : null
+    const type = typeof flags.type === 'string' ? flags.type : null
+    const results = await ctx.memoryStore.recall('', { slug: slug ?? undefined, type: type as MemoryType ?? undefined, limit: 10000 })
+    for (const m of results) ctx.memoryStore.forget(m.id)
+    return `✅ cleared ${results.length} memories${slug ? ` for slug \`${slug}\`` : ''}${type ? ` of type \`${type}\`` : ''}`
+  }
+
+  return `unknown memory subverb \`${sub}\`. valid: stats, backup, clear`
 }
 
 function handleHeartbeat(rest: string[], _ctx: MasterContext): string {

@@ -151,11 +151,19 @@ WhatsApp support uses **Baileys** (unofficial WhatsApp Web client — ToS risk; 
 3. Scan the QR in WhatsApp → Linked Devices → Link a Device within 60 seconds
 4. Auth credentials are saved to `whatsapp-auth/` and survive restarts
 
-**Creating a WhatsApp project:**
+**Creating a WhatsApp project (new project):**
 ```
-!project create --platform whatsapp <CHAT_ID> --slug <slug> --prompt "..."
+!project create --platform whatsapp <JID> --whatsapp-jid <JID> --slug <slug> --prompt "..."
 ```
-`CHAT_ID` can be any string you choose (it's internal — WhatsApp routing uses `whatsappJid`). After creating, manually add `"whatsappJid": "<e164>@s.whatsapp.net"` to the project entry in `channels.json` (e.g. `"15551234567@s.whatsapp.net"`).
+Use the contact's JID as both the `<CHAT_ID>` and `--whatsapp-jid` value. For a 1-on-1 contact: `94771234567@s.whatsapp.net`. For a group: the `<id>@g.us` from the server drop log.
+
+**Binding an existing project to WhatsApp:**
+```
+!project set <slug-or-chat_id> --whatsapp-jid <JID>
+```
+Sets `platform=whatsapp` and `whatsappJid` on an existing project entry. No restart needed — routing is live-read on each message.
+
+**Finding the JID:** Send a message from the target contact, then check the MCD tmux logs for: `whatsapp: drop — no project for jid <JID>`. That JID is the one to use.
 
 Messages from that contact route to the project's Claude subprocess; replies go back over WhatsApp. Access control reuses `access.allowFrom`.
 
@@ -212,3 +220,34 @@ The `mcp__mcd__inject` MCP tool lets you inject a message directly into a projec
 - The subprocess wakes and processes `text` as if the user sent it
 - Only callable from the master channel — calling from a non-master channel returns an error
 - Use this for autonomous continuation: compose a context-aware prompt from the heartbeat report, then inject it
+
+# Memory
+
+Cross-channel persistent memory. Use the MCP tools below to save and retrieve context across Discord channels and bot restarts.
+
+## MCP tools
+
+| Tool | Parameters | Purpose |
+|------|-----------|---------|
+| `mcp__mcd__remember` | `slug?` (channel slug), `type` (one of types below), `content` | Save a memory |
+| `mcp__mcd__recall` | `query`, `slug?`, `type?`, `limit?` (default 10) | Retrieve relevant memories |
+| `mcp__mcd__forget` | `id` (memory id) | Delete a memory |
+| `mcp__mcd__memory_stats` | — | Count memories by type and channel |
+
+Memory types: `channel_summary`, `decision`, `pattern`, `coordination`, `general`
+
+## When to use
+
+- **After heartbeat scan**: save a short `channel_summary` memory per channel with current state and any blockers
+- **After inject**: save a `coordination` memory describing what was injected and why
+- **Before coordinating a channel**: recall its `channel_summary` and `coordination` history to stay in context
+- **Recurring decisions**: save `decision` memories (e.g. "we use bun test, not jest") so future turns don't re-derive them
+- **Observed patterns**: save `pattern` memories for cross-channel regularities (e.g. "channels stall on PR reviews on Fridays")
+
+## Operator commands
+
+```
+!project memory stats                          — show memory counts by type and channel
+!project memory backup                         — trigger immediate R2 backup
+!project memory clear [--slug S] [--type T] --yes  — delete matching memories
+```

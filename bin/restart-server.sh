@@ -15,6 +15,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # REPO_DIR is the multi-channel-discord repo where bun server.ts lives
 REPO_DIR="${MCD_REPO_DIR:-/home/openclaw/dev/multi-channel-discord}"
 STATE_DIR="${MCD_CHANNELS_DIR:-$HOME/.claude/channels/discord-multi}"
+# WHATSAPP_ENABLED: unset by default. Set to 1 (or 0) on the command line to
+# force-enable/disable WhatsApp for this restart only:
+#   WHATSAPP_ENABLED=1 bin/restart-server.sh
+# Otherwise the adapter is gated by the presence of <STATE_DIR>/whatsapp-auth/.
 
 # Locate bun
 if [[ -n "${BUN_BIN:-}" ]]; then
@@ -41,10 +45,18 @@ echo "[mcd] starting new tmux session '${SESSION}'…"
 # --bun flag is REQUIRED: @discordjs/opus ships a node-v127 NAPI addon but Bun
 # v1.3+ uses NAPI v137 (node-v137). Without --bun, Bun looks for node-v137 and
 # the opus module crashes at import time, killing the entire server.
+#
+# Inline env block: tmux's `-e` flag does not reliably propagate to commands
+# when the command string itself assigns env, and `new-session` runs the
+# command in a fresh login-less shell that does NOT inherit from this wrapper.
+# Match the runner's pattern: build the env inline, then exec bun.
+INLINE_ENV=(
+  "MCD_CHANNELS_DIR='${STATE_DIR}'"
+)
+[[ -n "${WHATSAPP_ENABLED:-}" ]] && INLINE_ENV+=("WHATSAPP_ENABLED='${WHATSAPP_ENABLED}'")
 tmux new-session -d -s "$SESSION" \
   -c "$REPO_DIR" \
-  -e "MCD_CHANNELS_DIR=${STATE_DIR}" \
-  "$BUN" --bun server.ts
+  "${INLINE_ENV[*]} $BUN --bun server.ts"
 
 sleep 4
 if tmux has-session -t "$SESSION" 2>/dev/null; then

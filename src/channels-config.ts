@@ -125,6 +125,16 @@ const DefaultsGitSchema = z.object({
   branchPrefix: z.string().default('claude/'),
 })
 
+const MemoryConfigSchema = z.object({
+  backupIntervalHours: z.number().int().nonnegative().default(6),
+  r2: z.object({
+    bucket: z.string(),
+    endpoint: z.string().url(),
+    accessKeyIdEnv: z.string(),
+    secretAccessKeyEnv: z.string(),
+  }).optional(),
+}).optional()
+
 const DefaultsSchema = z.object({
   model: z.string().default('sonnet'),
   idleEvictMinutes: z.number().int().positive().default(15),
@@ -151,6 +161,7 @@ const DefaultsSchema = z.object({
   provider: z.string().optional(),
   /** Global default for progressMode. Projects can override per-channel. */
   progressMode: ProgressModeSchema.default('off'),
+  memory: MemoryConfigSchema,
 })
 
 const MasterSchema = z.object({
