@@ -13,6 +13,8 @@ export interface SlugMetrics {
   avgLatencyMs: number
   p95LatencyMs: number
   turnsPerDay: number
+  monthlyTokens: number
+  monthlyTokenBudget?: number
   dayBuckets: { date: string; tokens: number }[]
   stale: boolean
   checkedAt: string
@@ -59,16 +61,18 @@ function isoToDate(ts: string): string {
   return ts.slice(0, 10)
 }
 
-function parseMetrics(jsonlFiles: string[], model: string): Omit<SlugMetrics, 'slug' | 'stale' | 'checkedAt'> {
+function parseMetrics(jsonlFiles: string[], model: string): Omit<SlugMetrics, 'slug' | 'stale' | 'checkedAt' | 'monthlyTokenBudget'> {
   const [inputRate, outputRate] = pricingForModel(model)
 
   let totalInput = 0
   let totalOutput = 0
+  let monthlyTokens = 0
   const latencies: number[] = []
   const dayMap: Map<string, number> = new Map()
 
   const now = Date.now()
   const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000
+  const currentMonth = new Date().toISOString().slice(0, 7)
 
   // Build 7-day bucket keys
   for (let d = 6; d >= 0; d--) {
@@ -107,6 +111,11 @@ function parseMetrics(jsonlFiles: string[], model: string): Omit<SlugMetrics, 's
         totalInput += inTok
         totalOutput += outTok
 
+        const recordMonth = ts ? new Date(ts).toISOString().slice(0, 7) : null
+        if (recordMonth === currentMonth) {
+          monthlyTokens += inTok + outTok
+        }
+
         if (ts && ts >= sevenDaysAgo) {
           const date = isoToDate(new Date(ts).toISOString())
           dayMap.set(date, (dayMap.get(date) ?? 0) + inTok + outTok)
@@ -141,6 +150,7 @@ function parseMetrics(jsonlFiles: string[], model: string): Omit<SlugMetrics, 's
     avgLatencyMs: Math.round(avgLatency),
     p95LatencyMs: Math.round(p95Latency),
     turnsPerDay: Math.round(turnsPerDay * 10) / 10,
+    monthlyTokens,
     dayBuckets,
   }
 }
@@ -155,7 +165,7 @@ export async function GET(
     return Response.json({ error: 'MCD_CHANNELS_DIR not set' }, { status: 500 })
   }
 
-  let channels: { projects?: Record<string, { slug?: string; model?: string }> } | null = null
+  let channels: { projects?: Record<string, { slug?: string; model?: string; monthlyTokenBudget?: number }> } | null = null
   try {
     channels = JSON.parse(fs.readFileSync(path.join(mcdDir, 'channels.json'), 'utf-8'))
   } catch {}
@@ -167,11 +177,15 @@ export async function GET(
 
   const projectDir = resolveProjectDir(slug, mcdDir)
   const model = projectEntry.model ?? 'claude-sonnet'
+  const monthlyTokenBudget = typeof (projectEntry as Record<string, unknown>)['monthlyTokenBudget'] === 'number'
+    ? (projectEntry as Record<string, unknown>)['monthlyTokenBudget'] as number
+    : undefined
 
   if (!projectDir) {
     return Response.json({
       slug, totalInputTokens: 0, totalOutputTokens: 0, estimatedCostUsd: 0,
-      avgLatencyMs: 0, p95LatencyMs: 0, turnsPerDay: 0,
+      avgLatencyMs: 0, p95LatencyMs: 0, turnsPerDay: 0, monthlyTokens: 0,
+      ...(monthlyTokenBudget !== undefined ? { monthlyTokenBudget } : {}),
       dayBuckets: [], stale: false, checkedAt: new Date().toISOString(),
     } satisfies SlugMetrics)
   }
@@ -182,6 +196,7 @@ export async function GET(
   return Response.json({
     slug,
     ...metrics,
+    ...(monthlyTokenBudget !== undefined ? { monthlyTokenBudget } : {}),
     stale: false,
     checkedAt: new Date().toISOString(),
   } satisfies SlugMetrics)

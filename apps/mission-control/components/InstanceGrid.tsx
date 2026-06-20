@@ -528,6 +528,7 @@ export default function InstanceGrid({ events = [], filterSlugs = null, fleetPro
     return () => clearInterval(interval)
   }, [])
 
+
   if (loading) return <div className="text-slate-500 text-sm py-4 text-center">Loading instances…</div>
   if (error) return <div className="text-cyber-crimson text-sm py-4 text-center">Error: {error}</div>
   if (instances.length === 0) return <div className="text-slate-500 text-sm py-4 text-center">No instances registered.</div>

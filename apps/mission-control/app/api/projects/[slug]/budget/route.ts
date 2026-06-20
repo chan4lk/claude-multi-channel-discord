@@ -11,8 +11,9 @@ type ChannelsJson = {
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { slug: string } }
+  { params }: { params: Promise<{ slug: string }> }
 ): Promise<Response> {
+  const { slug: targetSlug } = await params
   const mcdDir = process.env.MCD_CHANNELS_DIR
   if (!mcdDir) {
     return Response.json({ error: 'MCD_CHANNELS_DIR not set' }, { status: 500 })
@@ -38,10 +39,7 @@ export async function PATCH(
     return Response.json({ error: 'Failed to read channels.json' }, { status: 500 })
   }
 
-  // Find the project entry by slug
-  const targetSlug = params.slug
   let foundChatId: string | null = null
-
   for (const [chatId, proj] of Object.entries(channels.projects ?? {})) {
     if (proj.slug === targetSlug) {
       foundChatId = chatId
@@ -53,19 +51,17 @@ export async function PATCH(
     return Response.json({ error: `Project '${targetSlug}' not found` }, { status: 404 })
   }
 
-  // Update or delete the budget field
   if (budget === null) {
     delete channels.projects![foundChatId]!.monthlyTokenBudget
   } else {
     channels.projects![foundChatId]!.monthlyTokenBudget = budget
   }
 
-  // Atomic write: write to .tmp then rename
   const tmpPath = channelsPath + '.tmp'
   try {
     fs.writeFileSync(tmpPath, JSON.stringify(channels, null, 2) + '\n', 'utf-8')
     fs.renameSync(tmpPath, channelsPath)
-  } catch (err) {
+  } catch {
     try { fs.unlinkSync(tmpPath) } catch {}
     return Response.json({ error: 'Failed to write channels.json' }, { status: 500 })
   }
