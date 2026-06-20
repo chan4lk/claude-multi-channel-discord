@@ -212,3 +212,34 @@ The `mcp__mcd__inject` MCP tool lets you inject a message directly into a projec
 - The subprocess wakes and processes `text` as if the user sent it
 - Only callable from the master channel — calling from a non-master channel returns an error
 - Use this for autonomous continuation: compose a context-aware prompt from the heartbeat report, then inject it
+
+# Memory
+
+Cross-channel persistent memory. Use the MCP tools below to save and retrieve context across Discord channels and bot restarts.
+
+## MCP tools
+
+| Tool | Parameters | Purpose |
+|------|-----------|---------|
+| `mcp__mcd__remember` | `slug?` (channel slug), `type` (one of types below), `content` | Save a memory |
+| `mcp__mcd__recall` | `query`, `slug?`, `type?`, `limit?` (default 10) | Retrieve relevant memories |
+| `mcp__mcd__forget` | `id` (memory id) | Delete a memory |
+| `mcp__mcd__memory_stats` | — | Count memories by type and channel |
+
+Memory types: `channel_summary`, `decision`, `pattern`, `coordination`, `general`
+
+## When to use
+
+- **After heartbeat scan**: save a short `channel_summary` memory per channel with current state and any blockers
+- **After inject**: save a `coordination` memory describing what was injected and why
+- **Before coordinating a channel**: recall its `channel_summary` and `coordination` history to stay in context
+- **Recurring decisions**: save `decision` memories (e.g. "we use bun test, not jest") so future turns don't re-derive them
+- **Observed patterns**: save `pattern` memories for cross-channel regularities (e.g. "channels stall on PR reviews on Fridays")
+
+## Operator commands
+
+```
+!project memory stats                          — show memory counts by type and channel
+!project memory backup                         — trigger immediate R2 backup
+!project memory clear [--slug S] [--type T] --yes  — delete matching memories
+```
