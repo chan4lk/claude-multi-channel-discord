@@ -4,6 +4,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { FleetResponse, ProjectState } from '../app/api/fleet/route'
 
+export interface InjectRequest {
+  slug: string
+}
+
 const STATE_COLORS: Record<ProjectState, string> = {
   idle: '#00F5FF',
   active: '#4ADE80',
@@ -57,7 +61,11 @@ function formatAge(ageMins: number): string {
   return `${Math.floor(ageMins / 1440)}d`
 }
 
-export default function CommandPalette() {
+interface Props {
+  onInject?: (req: InjectRequest) => void
+}
+
+export default function CommandPalette({ onInject }: Props) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -145,6 +153,14 @@ export default function CommandPalette() {
         category: 'navigate',
         action: () => router.push('/metrics'),
       },
+      {
+        id: 'nav:pipeline',
+        label: 'Go to Pipeline',
+        description: 'Specclaw kanban board — all changes across projects',
+        icon: '⬒',
+        category: 'navigate',
+        action: () => router.push('/pipeline'),
+      },
     ]
 
     const projects: Command[] = (fleet?.projects ?? []).flatMap((p) => [
@@ -168,13 +184,17 @@ export default function CommandPalette() {
       },
       {
         id: `project:inject:${p.slug}`,
-        label: `Copy inject: ${p.slug}`,
-        description: 'Copy inject command to clipboard',
+        label: `Inject into: ${p.slug}`,
+        description: 'Open inject terminal for this project',
         icon: '⟳',
         category: 'project' as const,
         badge: { text: p.state, color: STATE_COLORS[p.state] },
         action: () => {
-          navigator.clipboard.writeText(`!project inject ${p.slug} `).catch(() => {})
+          if (onInject) {
+            onInject({ slug: p.slug })
+          } else {
+            navigator.clipboard.writeText(`!project inject ${p.slug} `).catch(() => {})
+          }
         },
       },
     ])
