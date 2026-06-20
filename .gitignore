@@ -5,3 +5,7 @@ bun.lock
 !.env.example
 git-credentials.json
 projects/
+.session-id*
+.claude/
+.specclaw/
+memory/
