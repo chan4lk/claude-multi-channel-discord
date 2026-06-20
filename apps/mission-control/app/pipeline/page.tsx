@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Link from 'next/link'
 import GlassCard from '../../components/ui/GlassCard'
@@ -45,8 +45,41 @@ interface DrawerProps {
   onClose: () => void
 }
 
+const DIFF_STAGES: PipelineStage[] = ['build', 'verify', 'pr']
+
+interface DiffData {
+  log: string
+  stat: string
+  error?: string
+}
+
 function DetailDrawer({ card, onClose }: DrawerProps) {
   const color = STAGE_COLORS[card.stage]
+  const [diff, setDiff] = useState<DiffData | null>(null)
+  const [diffLoading, setDiffLoading] = useState(false)
+  const fetchedRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!DIFF_STAGES.includes(card.stage)) return
+    const key = `${card.slug}::${card.name}`
+    if (fetchedRef.current === key) return
+    fetchedRef.current = key
+    setDiffLoading(true)
+    fetch(`/api/diff/${encodeURIComponent(card.slug)}`)
+      .then((r) => r.json())
+      .then((d: { log?: string; diff?: string; error?: string }) => {
+        // Use --stat style: just the log; full diff would be too long in a drawer
+        const log = d.log ?? ''
+        // Extract stat summary: lines starting with file names (not +/- patch lines)
+        const statLines = (d.diff ?? '')
+          .split('\n')
+          .filter((l) => /^\s*([\w./].+\||\d+ file)/.test(l))
+          .slice(0, 20)
+        setDiff({ log, stat: statLines.join('\n'), error: d.error })
+      })
+      .catch(() => setDiff({ log: '', stat: '', error: 'Failed to fetch diff' }))
+      .finally(() => setDiffLoading(false))
+  }, [card.slug, card.stage, card.name])
 
   return (
     <motion.div
@@ -168,6 +201,28 @@ function DetailDrawer({ card, onClose }: DrawerProps) {
             <div>
               <div className="text-[0.6rem] text-slate-500 uppercase tracking-wider font-semibold mb-2">Proposal</div>
               <p className="text-xs text-slate-400 leading-relaxed">{card.proposalSnippet}</p>
+            </div>
+          )}
+
+          {/* Git diff preview for build/verify/pr */}
+          {DIFF_STAGES.includes(card.stage) && (
+            <div>
+              <div className="text-[0.6rem] text-slate-500 uppercase tracking-wider font-semibold mb-2 flex items-center gap-2">
+                Recent Commits
+                {diffLoading && <span className="animate-pulse text-slate-600">…</span>}
+              </div>
+              {diff?.error ? (
+                <p className="text-[0.6rem] text-slate-600 font-mono">{diff.error}</p>
+              ) : diff?.log ? (
+                <div className="bg-[#060d1a] border border-cyber-cyan/10 rounded p-2 overflow-x-auto">
+                  <pre className="text-[0.6rem] font-mono text-slate-400 leading-relaxed whitespace-pre">{diff.log}</pre>
+                  {diff.stat && (
+                    <pre className="text-[0.6rem] font-mono text-slate-600 leading-relaxed whitespace-pre mt-2 pt-2 border-t border-white/5">{diff.stat}</pre>
+                  )}
+                </div>
+              ) : !diffLoading ? (
+                <p className="text-[0.6rem] text-slate-600 font-mono">No commits yet</p>
+              ) : null}
             </div>
           )}
 
