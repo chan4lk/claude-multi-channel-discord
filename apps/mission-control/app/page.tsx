@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
+import Link from 'next/link'
 import EventFeed from '../components/EventFeed'
 import InstanceGrid from '../components/InstanceGrid'
 import MemoryPanel from '../components/MemoryPanel'
@@ -195,9 +196,17 @@ function DashboardClient() {
             >
               MISSION CONTROL
             </h1>
-            <p className="text-[0.6rem] text-slate-500 mt-0.5 uppercase tracking-[0.25em]">
-              MCD Observability Dashboard
-            </p>
+            <div className="flex items-center gap-3 mt-0.5">
+              <p className="text-[0.6rem] text-slate-500 uppercase tracking-[0.25em]">
+                MCD Observability Dashboard
+              </p>
+              <Link
+                href="/graph"
+                className="text-[0.6rem] font-mono text-slate-500 hover:text-cyber-cyan transition-colors uppercase tracking-wider border border-transparent hover:border-cyber-cyan/30 px-1.5 py-0.5 rounded"
+              >
+                ⬡ Graph →
+              </Link>
+            </div>
           </div>
 
           <div className="flex items-center gap-4 sm:gap-6 flex-wrap">

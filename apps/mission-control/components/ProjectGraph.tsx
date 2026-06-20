@@ -1,0 +1,419 @@
+'use client'
+
+import { useCallback, useEffect, useRef, useState } from 'react'
+import * as d3 from 'd3'
+import type { FleetProject, ProjectState } from '../app/api/fleet/route'
+import type { ProjectBacklog } from '../app/api/backlog/route'
+
+const STATE_COLORS: Record<ProjectState, string> = {
+  idle: '#00F5FF',
+  active: '#4ADE80',
+  stalled: '#EF4444',
+  autonomous: '#A855F7',
+}
+
+const NODE_RADIUS = 22
+const HALO_OFFSET = 8
+
+interface GraphNode extends FleetProject {
+  x: number
+  y: number
+  vx?: number
+  vy?: number
+  fx?: number | null
+  fy?: number | null
+}
+
+interface DetailDrawer {
+  slug: string
+  state: ProjectState
+  ageMins: number
+  backlog: ProjectBacklog | null
+}
+
+interface Props {
+  showBacklog: boolean
+  onNodeClick?: (slug: string) => void
+}
+
+const STORAGE_KEY = 'mc_graph_positions'
+
+function loadPositions(): Record<string, { x: number; y: number }> {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}')
+  } catch {
+    return {}
+  }
+}
+
+function savePositions(nodes: GraphNode[]) {
+  const pos: Record<string, { x: number; y: number }> = {}
+  for (const n of nodes) {
+    if (n.x && n.y) pos[n.slug] = { x: n.x, y: n.y }
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(pos))
+}
+
+export default function ProjectGraph({ showBacklog }: Props) {
+  const svgRef = useRef<SVGSVGElement>(null)
+  const [projects, setProjects] = useState<FleetProject[]>([])
+  const [backlogMap, setBacklogMap] = useState<Map<string, ProjectBacklog>>(new Map())
+  const [drawer, setDrawer] = useState<DetailDrawer | null>(null)
+  const [dims, setDims] = useState({ w: 800, h: 500 })
+  const simRef = useRef<d3.Simulation<GraphNode, undefined> | null>(null)
+  const nodesRef = useRef<GraphNode[]>([])
+
+  // Measure container
+  useEffect(() => {
+    const el = svgRef.current?.parentElement
+    if (!el) return
+    const obs = new ResizeObserver((entries) => {
+      const { width, height } = entries[0]!.contentRect
+      setDims({ w: Math.floor(width), h: Math.max(400, Math.floor(height)) })
+    })
+    obs.observe(el)
+    setDims({ w: Math.floor(el.clientWidth), h: Math.max(400, Math.floor(el.clientHeight || 500)) })
+    return () => obs.disconnect()
+  }, [])
+
+  // Fetch fleet data
+  const fetchFleet = useCallback(async () => {
+    try {
+      const res = await fetch('/api/fleet')
+      if (res.ok) {
+        const data = await res.json()
+        setProjects(data.projects ?? [])
+      }
+    } catch {}
+  }, [])
+
+  // Fetch backlog data
+  const fetchBacklog = useCallback(async () => {
+    try {
+      const res = await fetch('/api/backlog')
+      if (res.ok) {
+        const data = await res.json()
+        const map = new Map<string, ProjectBacklog>()
+        for (const p of data.projects ?? []) {
+          map.set(p.slug, p)
+        }
+        setBacklogMap(map)
+      }
+    } catch {}
+  }, [])
+
+  useEffect(() => {
+    fetchFleet()
+    fetchBacklog()
+    const i1 = setInterval(fetchFleet, 30_000)
+    const i2 = setInterval(fetchBacklog, 30_000)
+    return () => { clearInterval(i1); clearInterval(i2) }
+  }, [fetchFleet, fetchBacklog])
+
+  // Build / update D3 simulation
+  useEffect(() => {
+    if (!svgRef.current || projects.length === 0) return
+
+    const saved = loadPositions()
+
+    // Merge incoming projects with existing node positions
+    const prevMap = new Map(nodesRef.current.map((n) => [n.slug, n]))
+    const nodes: GraphNode[] = projects.map((p) => {
+      const prev = prevMap.get(p.slug)
+      const s = saved[p.slug]
+      return {
+        ...p,
+        x: prev?.x ?? s?.x ?? dims.w / 2 + (Math.random() - 0.5) * 200,
+        y: prev?.y ?? s?.y ?? dims.h / 2 + (Math.random() - 0.5) * 200,
+        vx: prev?.vx ?? 0,
+        vy: prev?.vy ?? 0,
+      }
+    })
+    nodesRef.current = nodes
+
+    // Stop old simulation
+    simRef.current?.stop()
+
+    const sim = d3
+      .forceSimulation(nodes)
+      .force('charge', d3.forceManyBody().strength(-220))
+      .force('center', d3.forceCenter(dims.w / 2, dims.h / 2).strength(0.08))
+      .force('collision', d3.forceCollide(NODE_RADIUS + HALO_OFFSET + 12))
+      .alphaDecay(0.04)
+      .on('tick', () => {
+        // Clamp to bounds
+        for (const n of nodes) {
+          n.x = Math.max(NODE_RADIUS + 20, Math.min(dims.w - NODE_RADIUS - 20, n.x))
+          n.y = Math.max(NODE_RADIUS + 20, Math.min(dims.h - NODE_RADIUS - 20, n.y))
+        }
+        renderFrame(nodes)
+      })
+      .on('end', () => {
+        savePositions(nodes)
+      })
+
+    simRef.current = sim
+
+    // Drag behavior
+    const svg = d3.select(svgRef.current)
+    svg.selectAll<SVGCircleElement, GraphNode>('.node-hit')
+      .data(nodes, (d) => d.slug)
+      .call(
+        d3.drag<SVGCircleElement, GraphNode>()
+          .on('start', (event, d) => {
+            if (!event.active) sim.alphaTarget(0.3).restart()
+            d.fx = d.x
+            d.fy = d.y
+          })
+          .on('drag', (event, d) => {
+            d.fx = event.x
+            d.fy = event.y
+          })
+          .on('end', (event, d) => {
+            if (!event.active) sim.alphaTarget(0)
+            d.fx = null
+            d.fy = null
+            savePositions(nodes)
+          })
+      )
+
+    return () => { sim.stop() }
+  }, [projects, dims])
+
+  function renderFrame(nodes: GraphNode[]) {
+    const svg = d3.select(svgRef.current!)
+
+    // Halos (P5)
+    svg.selectAll<SVGCircleElement, GraphNode>('.node-halo')
+      .data(nodes, (d) => d.slug)
+      .join(
+        (enter) => enter.append('circle').attr('class', 'node-halo'),
+        (update) => update,
+        (exit) => exit.remove()
+      )
+      .attr('cx', (d) => d.x)
+      .attr('cy', (d) => d.y)
+      .attr('r', (d) => {
+        const b = backlogMap.get(d.slug)
+        if (!showBacklog || !b || b.pendingCount === 0) return 0
+        return NODE_RADIUS + HALO_OFFSET + Math.min(b.pendingCount * 2, 12)
+      })
+      .attr('fill', 'none')
+      .attr('stroke', (d) => {
+        const b = backlogMap.get(d.slug)
+        const count = b?.pendingCount ?? 0
+        if (count >= 5) return '#F59E0B'
+        if (count >= 2) return '#A855F780'
+        return '#A855F740'
+      })
+      .attr('stroke-width', (d) => {
+        const b = backlogMap.get(d.slug)
+        const count = b?.pendingCount ?? 0
+        return count >= 5 ? 2.5 : 1.5
+      })
+
+    // Node circles
+    svg.selectAll<SVGCircleElement, GraphNode>('.node-circle')
+      .data(nodes, (d) => d.slug)
+      .join(
+        (enter) => enter.append('circle').attr('class', 'node-circle').attr('cursor', 'pointer'),
+        (update) => update,
+        (exit) => exit.remove()
+      )
+      .attr('cx', (d) => d.x)
+      .attr('cy', (d) => d.y)
+      .attr('r', NODE_RADIUS)
+      .attr('fill', (d) => `${STATE_COLORS[d.state]}18`)
+      .attr('stroke', (d) => STATE_COLORS[d.state])
+      .attr('stroke-width', 2)
+      .on('click', (_, d) => {
+        const b = backlogMap.get(d.slug) ?? null
+        setDrawer({ slug: d.slug, state: d.state, ageMins: d.ageMins, backlog: b })
+      })
+
+    // Pulse ring for stalled
+    svg.selectAll<SVGCircleElement, GraphNode>('.node-pulse')
+      .data(nodes.filter((n) => n.state === 'stalled'), (d) => d.slug)
+      .join(
+        (enter) => enter.append('circle').attr('class', 'node-pulse').attr('pointer-events', 'none'),
+        (update) => update,
+        (exit) => exit.remove()
+      )
+      .attr('cx', (d) => d.x)
+      .attr('cy', (d) => d.y)
+      .attr('r', NODE_RADIUS + 4)
+      .attr('fill', 'none')
+      .attr('stroke', '#EF4444')
+      .attr('stroke-width', 1.5)
+      .attr('opacity', 0.5)
+
+    // Labels
+    svg.selectAll<SVGTextElement, GraphNode>('.node-label')
+      .data(nodes, (d) => d.slug)
+      .join(
+        (enter) => enter.append('text').attr('class', 'node-label').attr('pointer-events', 'none'),
+        (update) => update,
+        (exit) => exit.remove()
+      )
+      .attr('x', (d) => d.x)
+      .attr('y', (d) => d.y + NODE_RADIUS + 14)
+      .attr('text-anchor', 'middle')
+      .attr('fill', (d) => STATE_COLORS[d.state])
+      .attr('font-size', '9px')
+      .attr('font-family', 'JetBrains Mono, monospace')
+      .attr('opacity', 0.85)
+      .text((d) => d.slug.length > 12 ? d.slug.slice(0, 10) + '…' : d.slug)
+
+    // State letter inside node
+    svg.selectAll<SVGTextElement, GraphNode>('.node-state')
+      .data(nodes, (d) => d.slug)
+      .join(
+        (enter) => enter.append('text').attr('class', 'node-state').attr('pointer-events', 'none'),
+        (update) => update,
+        (exit) => exit.remove()
+      )
+      .attr('x', (d) => d.x)
+      .attr('y', (d) => d.y + 5)
+      .attr('text-anchor', 'middle')
+      .attr('fill', (d) => STATE_COLORS[d.state])
+      .attr('font-size', '11px')
+      .attr('font-family', 'JetBrains Mono, monospace')
+      .attr('font-weight', 'bold')
+      .text((d) => d.state[0]!.toUpperCase())
+
+    // Hit-area for drag (transparent, on top)
+    svg.selectAll<SVGCircleElement, GraphNode>('.node-hit')
+      .data(nodes, (d) => d.slug)
+      .join(
+        (enter) => enter.append('circle').attr('class', 'node-hit').attr('cursor', 'grab'),
+        (update) => update,
+        (exit) => exit.remove()
+      )
+      .attr('cx', (d) => d.x)
+      .attr('cy', (d) => d.y)
+      .attr('r', NODE_RADIUS)
+      .attr('fill', 'transparent')
+      .attr('stroke', 'none')
+      .on('click', (_, d) => {
+        const b = backlogMap.get(d.slug) ?? null
+        setDrawer({ slug: d.slug, state: d.state, ageMins: d.ageMins, backlog: b })
+      })
+  }
+
+  function formatAge(mins: number): string {
+    if (mins >= 60) return `${Math.floor(mins / 60)}h ${mins % 60}m`
+    if (mins > 9000) return 'no transcript'
+    return `${mins}m`
+  }
+
+  return (
+    <div className="relative w-full h-full min-h-[400px]">
+      {/* Legend */}
+      <div className="absolute top-3 left-3 flex flex-col gap-1 z-10">
+        {(Object.entries(STATE_COLORS) as [ProjectState, string][]).map(([state, color]) => (
+          <div key={state} className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-full border" style={{ borderColor: color, background: `${color}20` }} />
+            <span className="text-[0.6rem] font-mono uppercase tracking-wider" style={{ color, opacity: 0.8 }}>{state}</span>
+          </div>
+        ))}
+        {showBacklog && (
+          <div className="flex items-center gap-1.5 mt-1">
+            <span className="w-2.5 h-2.5 rounded-full border border-purple-400/60" style={{ background: 'transparent' }} />
+            <span className="text-[0.6rem] font-mono uppercase tracking-wider text-purple-400/70">backlog</span>
+          </div>
+        )}
+      </div>
+
+      {projects.length === 0 ? (
+        <div className="flex items-center justify-center h-full min-h-[400px] text-slate-600 flex-col gap-2">
+          <div className="text-3xl opacity-20">⬡</div>
+          <span className="text-xs font-mono">No projects to display</span>
+        </div>
+      ) : (
+        <svg
+          ref={svgRef}
+          width={dims.w}
+          height={dims.h}
+          className="w-full h-full"
+          style={{ background: 'transparent' }}
+        >
+          <defs>
+            <filter id="glow-cyan">
+              <feGaussianBlur stdDeviation="3" result="blur" />
+              <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+            </filter>
+            <filter id="glow-red">
+              <feGaussianBlur stdDeviation="4" result="blur" />
+              <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+            </filter>
+          </defs>
+          {/* Pulse animation via CSS keyframe injected inline */}
+          <style>{`
+            .node-pulse { animation: graph-pulse 1.5s ease-in-out infinite; }
+            @keyframes graph-pulse {
+              0%, 100% { opacity: 0.15; r: ${NODE_RADIUS + 4}; }
+              50% { opacity: 0.6; r: ${NODE_RADIUS + 9}; }
+            }
+          `}</style>
+        </svg>
+      )}
+
+      {/* Detail Drawer */}
+      {drawer && (
+        <div
+          className="absolute inset-y-0 right-0 w-64 flex flex-col z-20"
+          style={{
+            background: 'rgba(4,10,20,0.96)',
+            borderLeft: `1px solid ${STATE_COLORS[drawer.state]}30`,
+            backdropFilter: 'blur(8px)',
+          }}
+        >
+          <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: `${STATE_COLORS[drawer.state]}20` }}>
+            <span className="text-xs font-bold font-mono text-slate-200">{drawer.slug}</span>
+            <button onClick={() => setDrawer(null)} className="text-slate-500 hover:text-slate-200">×</button>
+          </div>
+          <div className="p-4 flex flex-col gap-3 overflow-y-auto">
+            <div className="flex items-center gap-2">
+              <span
+                className="text-[0.6rem] font-mono font-bold px-1.5 py-0.5 rounded uppercase"
+                style={{
+                  color: STATE_COLORS[drawer.state],
+                  background: `${STATE_COLORS[drawer.state]}18`,
+                  border: `1px solid ${STATE_COLORS[drawer.state]}40`,
+                }}
+              >
+                {drawer.state}
+              </span>
+              <span className="text-[0.6rem] font-mono text-slate-500">{formatAge(drawer.ageMins)} ago</span>
+            </div>
+
+            {drawer.backlog && drawer.backlog.items.length > 0 && (
+              <div>
+                <p className="text-[0.6rem] font-mono text-slate-500 uppercase tracking-wider mb-2">
+                  Backlog ({drawer.backlog.pendingCount} pending)
+                </p>
+                <div className="flex flex-col gap-1">
+                  {drawer.backlog.items.slice(0, 10).map((item, i) => (
+                    <div key={i} className="flex items-start gap-1.5">
+                      <span className="text-[0.6rem] mt-0.5" style={{ color: item.status === 'done' ? '#4ADE80' : '#F59E0B' }}>
+                        {item.status === 'done' ? '✓' : '○'}
+                      </span>
+                      <span className="text-[0.6rem] font-mono text-slate-400 leading-tight">{item.title}</span>
+                    </div>
+                  ))}
+                  {drawer.backlog.items.length > 10 && (
+                    <span className="text-[0.55rem] font-mono text-slate-600">+{drawer.backlog.items.length - 10} more</span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {(!drawer.backlog || drawer.backlog.items.length === 0) && (
+              <p className="text-[0.6rem] font-mono text-slate-600">No backlog items found</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
