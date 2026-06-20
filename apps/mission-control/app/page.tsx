@@ -8,6 +8,7 @@ import MemoryPanel from '../components/MemoryPanel'
 import SchedulerTable from '../components/SchedulerTable'
 import ScheduleTimeline from '../components/ScheduleTimeline'
 import SpecclawPipeline from '../components/SpecclawPipeline'
+import StallAlertPanel from '../components/StallAlertPanel'
 import CountBadge from '../components/ui/CountBadge'
 import type { FleetResponse, ProjectState } from './api/fleet/route'
 
@@ -226,6 +227,9 @@ function DashboardClient() {
             <section>
               <SectionLabel label={fleetFilter ? `Instances — ${fleetFilter}` : 'Instances'} />
               <InstanceGrid events={events} filterSlugs={filteredSlugs} />
+            </section>
+            <section>
+              <StallAlertPanel />
             </section>
             <section>
               <SectionLabel label="Specclaw Pipeline" />
