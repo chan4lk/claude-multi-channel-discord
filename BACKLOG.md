@@ -242,7 +242,7 @@ Add a `/timeline` page with a horizontal multi-channel timeline. One swimlane pe
 
 ## P11 — Agent Diff Viewer
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-20
 
 ### Problem
@@ -266,7 +266,7 @@ Add a `/api/diff/[slug]` endpoint that runs `git diff HEAD~5..HEAD --stat` and `
 
 ## P12 — Live Transcript Tail
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-20
 
 ### Problem
