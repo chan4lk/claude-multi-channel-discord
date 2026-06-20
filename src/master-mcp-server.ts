@@ -365,6 +365,16 @@ export class MasterMcpServer {
             }
             this.log(`inject tool: delivering to ${targetChatId}: ${JSON.stringify(text).slice(0, 60)}`)
             await pool.deliver(targetChatId, envelope)
+            // Post the injected prompt to the target channel so the operator
+            // can see what was injected without reading tmux logs.
+            if (this.client) {
+              try {
+                const ch = await this.fetchTextChannel(targetChatId)
+                await (ch as any).send({ content: `🤖 **Heartbeat injected:**\n> ${text.replace(/\n/g, '\n> ')}` })
+              } catch (err) {
+                this.log(`inject tool: failed to post visibility message: ${(err as Error).message}`)
+              }
+            }
             return okResult(JSON.stringify({ ok: true }))
           }
           case 'run_master_command': {
