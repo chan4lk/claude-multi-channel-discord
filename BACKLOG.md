@@ -549,3 +549,123 @@ Add an "Export CSV" button to the `/metrics` page header. Clicking it triggers a
 - AC4: Global totals row included as slug `__total__`
 - AC5: CSV generated client-side from in-memory data; no network request on export
 - AC6: Button disabled and shows "Loading…" while metrics are still fetching
+
+---
+
+## P24 — Project Health Score Ring
+
+**Status:** `[x] done`
+**Created:** 2026-06-20
+
+### Problem
+
+Operators have no single composite signal to judge overall project health. Fleet Health Bar shows state counts; metrics shows token totals — but no view rolls stall rate, token efficiency, memory freshness, and message recency into one glanceable score per project.
+
+### Proposed Solution
+
+Add a `HealthScoreRing` component (neon arc gauge, 0–100) to the Instance Grid row and Project Graph detail drawer. Score is computed server-side at `/api/health/[slug]` from four sub-scores: (1) **Recency** — exponential decay on hours-since-last-message; (2) **Stall rate** — fraction of recent sessions that ended stalled (read from transcript `stop_reason`); (3) **Token efficiency** — inverse of average tokens-per-turn vs fleet median; (4) **Memory freshness** — days since last memory file write under `memory/`. Weights: 40% recency, 30% stall, 20% efficiency, 10% freshness. Ring color: green ≥ 80, amber 50–79, red < 50. A `/api/health` aggregate endpoint returns scores for all projects for the grid view.
+
+### Acceptance Criteria
+
+- AC1: `HealthScoreRing` renders a neon arc 0–100 in Instance Grid row; color transitions at 80/50
+- AC2: Tooltip shows score breakdown: recency, stall rate, efficiency, freshness sub-scores
+- AC3: `/api/health/[slug]` returns `{ score, recency, stallRate, efficiency, freshness, computedAt }`
+- AC4: `/api/health` aggregate returns scores for all active projects in one request
+- AC5: Projects with < 2 sessions show a dim "insufficient data" state (not 0)
+- AC6: Score updates on same 30s poll cycle as fleet endpoint; no extra request needed in grid
+
+---
+
+## P25 — Git Branch Dashboard
+
+**Status:** `[x] done`
+**Created:** 2026-06-20
+
+### Problem
+
+Operators cannot see each project's git state from the dashboard. Stale branches, unmerged commits, or diverged-from-main projects accumulate silently. Discovering them requires SSHing into the server and running git commands per project.
+
+### Proposed Solution
+
+Add a `/branches` page showing a table of all projects with git repositories. A `/api/branches` endpoint runs `git status --porcelain`, `git log --oneline origin/main..HEAD`, and `git log --oneline HEAD..origin/main` in each project's working directory. Table columns: slug, current branch, commits ahead of main, commits behind main, uncommitted changes count, last commit message + SHA (truncated). Row color: red if behind > 0 and ahead > 0 (diverged), amber if behind only, green if ahead-only or clean. A "Pull" button calls `/api/projects/[slug]/pull` to run `git pull`. A "View Diff" button deep-links to the Pipeline Diff Preview.
+
+### Acceptance Criteria
+
+- AC1: `/branches` page renders table within 2s; slugs without a `.git` dir show a "–" in git columns
+- AC2: Commits ahead/behind computed relative to `origin/main` (or the repo's default remote branch)
+- AC3: Uncommitted changes count = number of modified+untracked lines from `git status --porcelain`
+- AC4: Pull button calls existing `/api/projects/[slug]/pull`; row shows spinner then refreshes
+- AC5: "View Diff" button links to `/pipeline?slug=<slug>`; only shown when commits-ahead > 0
+- AC6: Table sortable by any column; default sort by commits-behind desc
+
+---
+
+## P26 — Multi-Project Broadcast
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-20
+
+### Problem
+
+Injecting the same message into multiple stalled projects (e.g. "please summarize your progress and stop") requires repeated manual actions — one inject per channel in the Inject Terminal. There is no batch operation for fleet-wide interventions.
+
+### Proposed Solution
+
+Add a "Broadcast" action to the Command Palette and a dedicated `/broadcast` page. The page has: (1) a project multi-select with state-based presets (All Stalled, All Active, All); (2) a message composer with a `{{slug}}` template variable; (3) a recipient preview listing each selected slug; (4) a "Send to N projects" confirm button. Sending calls `/api/inject/[slug]` in parallel for each selected project. A delivery status column updates as each responds: queued → sent → error. Post-send, a summary toast shows success/fail counts.
+
+### Acceptance Criteria
+
+- AC1: `/broadcast` page reachable from Command Palette ("Broadcast…") and nav sidebar
+- AC2: Preset filters: All, All Stalled, All Active, All Idle; multi-select for custom subsets
+- AC3: `{{slug}}` in message body replaced per-project at send time
+- AC4: Delivery status column shows per-project sent/error state in real time
+- AC5: Send button disabled until ≥ 1 project selected and message non-empty
+- AC6: Confirmation dialog shown before send when recipient count ≥ 5
+
+---
+
+## P27 — Scheduler Heatmap
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-20
+
+### Problem
+
+Operators can view scheduled jobs in the Schedule Timeline but have no historical view of whether jobs are actually running and succeeding. A job can be "scheduled" but silently skipped or failing with no indication in the dashboard.
+
+### Proposed Solution
+
+Add a Scheduler Heatmap section to the `/timeline` page (or as a new tab). Display a GitHub-style contribution grid: rows = projects with schedules, columns = last 30 days (1 cell per day), cells colored by execution outcome (green=ran OK, red=failed, amber=skipped/stalled, gray=no job that day). A `/api/scheduler/history` endpoint reads a new `schedule-log.jsonl` file appended by the scheduler on each run. Each log entry: `{ slug, scheduledAt, firedAt, status: 'ok'|'stalled'|'skipped', durationMs }`. The heatmap uses `classifyChannel` state at job completion to determine outcome.
+
+### Acceptance Criteria
+
+- AC1: Heatmap grid renders in `/timeline`; rows = projects with schedules, cols = last 30 days
+- AC2: Cell color: green=ok, red=failed, amber=stalled, gray=no schedule that day
+- AC3: Hover tooltip shows: scheduled time, actual fire time, duration, status
+- AC4: `/api/scheduler/history` reads `schedule-log.jsonl` from `MCD_CHANNELS_DIR`
+- AC5: Scheduler writes an entry to `schedule-log.jsonl` on each job fire (append-only)
+- AC6: Empty state (no log file) shows placeholder row per scheduled project with gray cells
+
+---
+
+## P28 — SSE Live Event Stream
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-20
+
+### Problem
+
+The dashboard makes N×2 polling requests per minute (EventFeed, InstanceGrid, StallAlertPanel, Fleet Health Bar each poll independently every 30s). With many browser tabs or many projects, this generates significant redundant load on the server and `channels.json` reads.
+
+### Proposed Solution
+
+Add a `/api/events/stream` Server-Sent Events endpoint that pushes fleet-state diffs every 5s. The SSE payload type: `{ type: 'fleet-update' | 'tool-event' | 'stall-alert', data: ... }`. `ClientShell.tsx` subscribes with a single `EventSource` per tab and distributes events via a React context (`FleetContext`). `InstanceGrid`, `FleetHealthBar`, `StallAlertPanel`, and `EventFeed` read from context instead of polling. Polling endpoints remain as fallback (fetch-on-mount + manual refresh button). Reconnect with exponential back-off on disconnect.
+
+### Acceptance Criteria
+
+- AC1: `/api/events/stream` returns `text/event-stream` with 5s heartbeat
+- AC2: `FleetContext` distributes SSE events; `InstanceGrid` re-renders on fleet-update events
+- AC3: `EventFeed` receives `tool-event` events in real time without polling
+- AC4: `StallAlertPanel` receives `stall-alert` events; no separate 30s poll needed
+- AC5: On disconnect, `EventSource` reconnects with exponential back-off (1s→2s→4s… cap 30s)
+- AC6: Existing poll endpoints (`/api/fleet`, `/api/stalls`) retained; components fall back to polling if SSE unavailable

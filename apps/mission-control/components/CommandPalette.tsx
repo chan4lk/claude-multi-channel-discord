@@ -169,6 +169,14 @@ export default function CommandPalette({ onInject }: Props) {
         category: 'navigate',
         action: () => router.push('/search'),
       },
+      {
+        id: 'nav:branches',
+        label: 'Go to Branch Dashboard',
+        description: 'Git branch state — ahead/behind/diverged across all projects',
+        icon: '⎇',
+        category: 'navigate',
+        action: () => router.push('/branches'),
+      },
     ]
 
     const projects: Command[] = (fleet?.projects ?? []).flatMap((p) => [
