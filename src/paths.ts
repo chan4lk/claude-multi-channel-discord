@@ -22,6 +22,10 @@ export function credsFile(): string {
   return join(channelsDir(), 'git-credentials.json')
 }
 
+export function memoryDbFile(): string {
+  return join(channelsDir(), 'memory.db')
+}
+
 export function projectsDir(): string {
   return join(channelsDir(), 'projects')
 }

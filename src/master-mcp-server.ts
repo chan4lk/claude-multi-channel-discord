@@ -27,6 +27,7 @@ import { z } from 'zod'
 import { channelsDir } from './paths.ts'
 import type { InboundEnvelope, OutboundReply } from './project-process.ts'
 import type { ProjectPool } from './project-pool.ts'
+import { MemoryStore, type MemoryType } from './memory-store.ts'
 
 const ChatIdRoute = /^\/mcp\/([A-Za-z0-9:_\-\.%+@]{3,300})\/?$/
 
@@ -71,6 +72,11 @@ export interface MasterMcpServerOptions {
    * avoid importing TeamsAdapter directly.
    */
   teamsAdapter?: { handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> }
+  /**
+   * Optional memory store. When set, the master channel's Claude session
+   * gains four tools: `remember`, `recall`, `forget`, and `memory_stats`.
+   */
+  memoryStore?: MemoryStore
 }
 
 export class MasterMcpServer {
@@ -85,6 +91,7 @@ export class MasterMcpServer {
   private readonly log: (msg: string) => void
   private readonly teamsAdapter: { handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> } | undefined
   private readonly getPool: (() => ProjectPool | null) | undefined
+  private readonly memoryStore: MemoryStore | null
 
   constructor(opts: MasterMcpServerOptions) {
     this.host = opts.host ?? '127.0.0.1'
@@ -96,6 +103,7 @@ export class MasterMcpServer {
     this.log = opts.log ?? ((m) => process.stderr.write(`[mcp-master] ${m}\n`))
     this.teamsAdapter = opts.teamsAdapter
     this.getPool = opts.getPool
+    this.memoryStore = opts.memoryStore ?? null
   }
 
   async start(): Promise<{ host: string; port: number }> {
@@ -325,6 +333,51 @@ export class MasterMcpServer {
           },
         )
       }
+      if (this.memoryStore && chatId === this.getMasterChatId()) {
+        tools.push(
+          {
+            name: 'remember',
+            description: 'Save a memory about a channel or coordination decision. Only available in the master channel.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                slug: { type: 'string', description: 'Channel slug this memory is about. Omit for global memories.' },
+                type: { type: 'string', enum: ['channel_summary', 'decision', 'pattern', 'coordination', 'general'], description: 'Memory type.' },
+                content: { type: 'string', description: 'The memory content to store.' },
+              },
+              required: ['type', 'content'],
+            },
+          },
+          {
+            name: 'recall',
+            description: 'Retrieve relevant memories by keyword or semantic query. Only available in the master channel.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                query: { type: 'string', description: 'Search query.' },
+                slug: { type: 'string', description: 'Filter by channel slug.' },
+                type: { type: 'string', enum: ['channel_summary', 'decision', 'pattern', 'coordination', 'general'], description: 'Filter by memory type.' },
+                limit: { type: 'number', description: 'Max results (default 10, max 50).' },
+              },
+              required: ['query'],
+            },
+          },
+          {
+            name: 'forget',
+            description: 'Delete a memory by id. Only available in the master channel.',
+            inputSchema: {
+              type: 'object',
+              properties: { id: { type: 'string', description: 'Memory id to delete.' } },
+              required: ['id'],
+            },
+          },
+          {
+            name: 'memory_stats',
+            description: 'Show memory counts by type and channel slug. Only available in the master channel.',
+            inputSchema: { type: 'object', properties: {} },
+          },
+        )
+      }
       return { tools }
     })
 
@@ -365,6 +418,16 @@ export class MasterMcpServer {
             }
             this.log(`inject tool: delivering to ${targetChatId}: ${JSON.stringify(text).slice(0, 60)}`)
             await pool.deliver(targetChatId, envelope)
+            // Post the injected prompt to the target channel so the operator
+            // can see what was injected without reading tmux logs.
+            if (this.client) {
+              try {
+                const ch = await this.fetchTextChannel(targetChatId)
+                await (ch as any).send({ content: `🤖 **Heartbeat injected:**\n> ${text.replace(/\n/g, '\n> ')}` })
+              } catch (err) {
+                this.log(`inject tool: failed to post visibility message: ${(err as Error).message}`)
+              }
+            }
             return okResult(JSON.stringify({ ok: true }))
           }
           case 'run_master_command': {
@@ -386,6 +449,43 @@ export class MasterMcpServer {
             return await this.callDownloadAttachment(chatId, args)
           case 'fetch_messages':
             return await this.callFetchMessages(chatId, args)
+          case 'remember': {
+            if (!this.memoryStore) return errorResult('memory store not configured')
+            if (this.getMasterChatId() !== chatId) return errorResult('remember is only available in the master channel')
+            const slug = typeof args.slug === 'string' ? args.slug : null
+            const type = String(args.type ?? '') as MemoryType
+            const content = String(args.content ?? '').trim()
+            if (!content) return errorResult('content is required')
+            const id = await this.memoryStore.remember(slug, type, content)
+            return okResult(JSON.stringify({ ok: true, id }))
+          }
+          case 'recall': {
+            if (!this.memoryStore) return errorResult('memory store not configured')
+            if (this.getMasterChatId() !== chatId) return errorResult('recall is only available in the master channel')
+            const query = String(args.query ?? '').trim()
+            if (!query) return errorResult('query is required')
+            const limit = typeof args.limit === 'number' ? Math.min(args.limit, 50) : 10
+            const results = await this.memoryStore.recall(query, {
+              slug: typeof args.slug === 'string' ? args.slug : undefined,
+              type: typeof args.type === 'string' ? args.type as MemoryType : undefined,
+              limit,
+            })
+            return okResult(JSON.stringify(results))
+          }
+          case 'forget': {
+            if (!this.memoryStore) return errorResult('memory store not configured')
+            if (this.getMasterChatId() !== chatId) return errorResult('forget is only available in the master channel')
+            const id = String(args.id ?? '').trim()
+            if (!id) return errorResult('id is required')
+            this.memoryStore.forget(id)
+            return okResult(JSON.stringify({ ok: true }))
+          }
+          case 'memory_stats': {
+            if (!this.memoryStore) return errorResult('memory store not configured')
+            if (this.getMasterChatId() !== chatId) return errorResult('memory_stats is only available in the master channel')
+            const stats = this.memoryStore.stats()
+            return okResult(JSON.stringify(stats))
+          }
           default:
             return errorResult(`unknown tool: ${name}`)
         }
