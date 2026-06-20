@@ -482,7 +482,7 @@ Replace the `InjectDialog` inside `StallAlertPanel` with a call to the global `I
 
 ## P21 — Watchdog Countdown in Instance Grid
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-20
 
 ### Problem
@@ -506,7 +506,7 @@ Add a per-project watchdog countdown badge to `InstanceGrid`. When a project has
 
 ## P22 — Pipeline-to-Diff Deep Link
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-20
 
 ### Problem
