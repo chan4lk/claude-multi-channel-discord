@@ -362,7 +362,7 @@ Add a `/metrics` page with a per-project performance dashboard. A `/api/metrics/
 
 ## P16 — Specclaw Pipeline Kanban
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-20
 
 ### Problem
@@ -386,7 +386,7 @@ Add a `/pipeline` page with a kanban board. Five columns: Propose, Plan, Build, 
 
 ## P17 — Inject Terminal
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-20
 
 ### Problem

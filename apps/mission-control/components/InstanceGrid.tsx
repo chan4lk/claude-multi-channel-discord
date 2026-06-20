@@ -142,12 +142,14 @@ export default function InstanceGrid({ events = [], filterSlugs = null }: Props)
                   {inst.activeSlugs && inst.activeSlugs.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-0.5">
                       {inst.activeSlugs.slice(0, 3).map((slug) => (
-                        <span
+                        <button
                           key={slug}
-                          className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyber-cyan/10 text-cyber-cyan/70 border border-cyber-cyan/20"
+                          title={`Inject into ${slug}`}
+                          onClick={() => window.dispatchEvent(new CustomEvent('mc:inject', { detail: { slug } }))}
+                          className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyber-cyan/10 text-cyber-cyan/70 border border-cyber-cyan/20 hover:bg-cyber-cyan/20 hover:text-cyber-cyan transition-colors cursor-pointer"
                         >
-                          {slug}
-                        </span>
+                          {slug} ⟳
+                        </button>
                       ))}
                       {inst.activeSlugs.length > 3 && (
                         <span className="text-[10px] text-slate-600">
