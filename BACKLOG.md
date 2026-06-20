@@ -338,7 +338,7 @@ Add a command palette (⌘K / Ctrl+K) that opens a searchable modal with instant
 
 ## P15 — Agent Performance Metrics
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-20
 
 ### Problem

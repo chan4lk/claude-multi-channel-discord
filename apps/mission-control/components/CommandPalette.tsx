@@ -137,6 +137,14 @@ export default function CommandPalette() {
         category: 'navigate',
         action: () => router.push('/memory-graph'),
       },
+      {
+        id: 'nav:metrics',
+        label: 'Go to Metrics',
+        description: 'Per-agent token usage, cost, and latency',
+        icon: '◈',
+        category: 'navigate',
+        action: () => router.push('/metrics'),
+      },
     ]
 
     const projects: Command[] = (fleet?.projects ?? []).flatMap((p) => [

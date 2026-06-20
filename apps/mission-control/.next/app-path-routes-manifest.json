@@ -1,0 +1,16 @@
+{
+  "/_not-found/page": "/_not-found",
+  "/api/auth/[...all]/route": "/api/auth/[...all]",
+  "/api/admin/users/route": "/api/admin/users",
+  "/api/admin/users/[id]/route": "/api/admin/users/[id]",
+  "/api/instances/route": "/api/instances",
+  "/api/events/stream/route": "/api/events/stream",
+  "/api/events/route": "/api/events",
+  "/api/memories/[id]/route": "/api/memories/[id]",
+  "/api/schedules/route": "/api/schedules",
+  "/api/memories/route": "/api/memories",
+  "/api/specclaw/route": "/api/specclaw",
+  "/admin/users/page": "/admin/users",
+  "/page": "/",
+  "/login/page": "/login"
+}
