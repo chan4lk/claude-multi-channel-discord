@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import EventFeed from '../components/EventFeed'
 import InstanceGrid from '../components/InstanceGrid'
+import MemoryPanel from '../components/MemoryPanel'
 import SchedulerTable from '../components/SchedulerTable'
 import SpecclawPipeline from '../components/SpecclawPipeline'
 import CountBadge from '../components/ui/CountBadge'
@@ -140,6 +141,10 @@ function DashboardClient() {
             <section>
               <SectionLabel label="Specclaw Pipeline" />
               <SpecclawPipeline events={events} />
+            </section>
+            <section>
+              <SectionLabel label="Memories" />
+              <MemoryPanel />
             </section>
           </div>
 
