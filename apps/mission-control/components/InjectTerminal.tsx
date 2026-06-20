@@ -34,12 +34,13 @@ function saveHistory(entry: HistoryEntry) {
 
 interface Props {
   initialSlug?: string
+  initialMessage?: string
   onClose: () => void
 }
 
-export default function InjectTerminal({ initialSlug = '', onClose }: Props) {
+export default function InjectTerminal({ initialSlug = '', initialMessage = '', onClose }: Props) {
   const [slug, setSlug] = useState(initialSlug)
-  const [message, setMessage] = useState('')
+  const [message, setMessage] = useState(initialMessage)
   const [fleet, setFleet] = useState<FleetResponse | null>(null)
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [historyOpen, setHistoryOpen] = useState(false)

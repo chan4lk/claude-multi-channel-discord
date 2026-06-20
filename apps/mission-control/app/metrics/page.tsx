@@ -105,6 +105,40 @@ function MetricsRow({ project, expanded, onToggle }: {
   )
 }
 
+function exportCsv(data: MetricsResponse) {
+  const headers = ['slug', 'totalInputTokens', 'totalOutputTokens', 'estimatedCostUsd', 'avgLatencyMs', 'p95LatencyMs', 'turnsPerDay']
+  const rows: string[][] = data.projects.map((p) => [
+    p.slug,
+    String(p.totalInputTokens),
+    String(p.totalOutputTokens),
+    p.estimatedCostUsd.toFixed(4),
+    String(p.avgLatencyMs),
+    String(p.p95LatencyMs),
+    String(p.turnsPerDay),
+  ])
+  const agg = data.aggregate
+  if (agg) {
+    rows.push([
+      '__total__',
+      String(agg.totalInputTokens),
+      String(agg.totalOutputTokens),
+      agg.estimatedCostUsd.toFixed(4),
+      '—',
+      '—',
+      '—',
+    ])
+  }
+  const csv = [headers, ...rows].map((r) => r.map((v) => `"${v}"`).join(',')).join('\n')
+  const blob = new Blob([csv], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  const date = new Date().toISOString().slice(0, 10)
+  a.href = url
+  a.download = `mcd-metrics-${date}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 export default function MetricsPage() {
   const [data, setData] = useState<MetricsResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -152,6 +186,13 @@ export default function MetricsPage() {
             <span className="text-[0.55rem] font-mono text-amber-400 border border-amber-400/30 px-1.5 py-0.5 rounded">REFRESHING…</span>
           )}
           <div className="flex-1" />
+          <button
+            onClick={() => { if (data) exportCsv(data) }}
+            disabled={loading || !data}
+            className="text-[0.6rem] font-mono text-slate-500 hover:text-cyber-cyan transition-colors uppercase tracking-wider border border-slate-700 hover:border-cyber-cyan/30 px-2 py-1 rounded disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {loading ? 'Loading…' : '⬇ Export CSV'}
+          </button>
           <button
             onClick={load}
             className="text-[0.6rem] font-mono text-slate-500 hover:text-cyber-cyan transition-colors uppercase tracking-wider border border-slate-700 hover:border-cyber-cyan/30 px-2 py-1 rounded"
