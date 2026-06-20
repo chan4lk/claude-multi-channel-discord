@@ -1370,6 +1370,7 @@ async function handleMemory(rest: string[], ctx: MasterContext): Promise<string>
     const r2: R2Config = { bucket: r2Cfg.bucket, endpoint: r2Cfg.endpoint, accessKeyId, secretAccessKey }
     try {
       const { memoryDbFile } = await import('./paths.ts')
+      ctx.memoryStore.checkpoint()
       const key = await backupMemory(r2, memoryDbFile())
       return key ? `✅ backed up to \`${key}\`` : 'backup skipped (no config)'
     } catch (err) {

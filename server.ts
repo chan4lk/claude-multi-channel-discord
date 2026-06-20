@@ -1152,6 +1152,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
       const secretAccessKey = process.env[r2Env.secretAccessKeyEnv] ?? ''
       if (!accessKeyId || !secretAccessKey) return
       const r2: R2Config = { bucket: r2Env.bucket, endpoint: r2Env.endpoint, accessKeyId, secretAccessKey }
+      try { memoryStore?.checkpoint() } catch {}
       backupMemory(r2, memoryDbFile()).catch((err: Error) => {
         process.stderr.write(`[memory] R2 backup failed: ${err.message}\n`)
       })

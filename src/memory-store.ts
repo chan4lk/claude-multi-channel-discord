@@ -223,6 +223,10 @@ export class MemoryStore {
     return { total, byType, bySlug }
   }
 
+  checkpoint(): void {
+    this.db.exec('PRAGMA wal_checkpoint(FULL)')
+  }
+
   close(): void {
     this.db.close()
   }
