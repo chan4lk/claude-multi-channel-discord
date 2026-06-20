@@ -18,6 +18,7 @@ import {
   makeWASocket,
   useMultiFileAuthState,
   DisconnectReason,
+  fetchLatestWaWebVersion,
 } from '@whiskeysockets/baileys'
 import type { WASocket, BaileysEventMap } from '@whiskeysockets/baileys'
 
@@ -154,12 +155,22 @@ export class WhatsAppAdapter {
       return
     }
 
+    let waVersion: [number, number, number] | undefined
+    try {
+      const { version } = await fetchLatestWaWebVersion({})
+      waVersion = version
+      console.error(`whatsapp: using WA Web version ${version.join('.')}`)
+    } catch (err) {
+      console.error('whatsapp: fetchLatestWaWebVersion failed, using bundled version:', err)
+    }
+
     let sock: WASocket
     try {
       sock = makeWASocket({
         auth: state,
         logger: noopLogger,
         printQRInTerminal: false,
+        ...(waVersion ? { version: waVersion } : {}),
       })
     } catch (err) {
       console.error('whatsapp: failed to create socket:', err)
