@@ -1,7 +1,7 @@
 # 🦞 SpecClaw Dashboard
 
 **Project:** multi-channel-discord
-**Last Updated:** 2026-06-20 12:02 UTC
+**Last Updated:** 2026-06-20 13:20 UTC
 
 ## Active Changes
 
@@ -19,7 +19,15 @@
 
 ## Pending Proposals
 
-_None._
+
+- 📋 **mc-activity-feed-enhanced** — proposal ready, awaiting planning
+- 📋 **mc-fleet-health-bar** — proposal ready, awaiting planning
+- 📋 **mc-memory-heartbeat-integration** — proposal ready, awaiting planning
+- 📋 **mc-project-graph** — proposal ready, awaiting planning
+- 📋 **mc-proposal-overlay** — proposal ready, awaiting planning
+- 📋 **mc-schedule-timeline** — proposal ready, awaiting planning
+- 📋 **mc-stall-alert-panel** — proposal ready, awaiting planning
+- 📋 **mc-whatsapp-fleet-status** — proposal ready, awaiting planning
 
 ## Recently Completed
 
