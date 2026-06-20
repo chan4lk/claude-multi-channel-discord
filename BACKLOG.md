@@ -453,3 +453,99 @@ Add a `/search` page with a unified full-text search across: (1) memory records 
 - AC4: Transcript results link to Transcript Panel scrolled to that entry
 - AC5: Empty results show "No matches across memories or transcripts" with dim styling
 - AC6: Search term persisted in URL query param (`?q=`); shareable link works
+
+---
+
+## P20 — Stall Inject Upgrade
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-20
+
+### Problem
+
+The `StallAlertPanel` inject dialog copies the `!project inject` command to clipboard and asks the operator to paste it into the master Discord channel. Now that P17 shipped `InjectTerminal`, this copy-paste detour is unnecessary friction. The stall panel should open `InjectTerminal` directly, pre-filled with the suggested continuation prompt.
+
+### Proposed Solution
+
+Replace the `InjectDialog` inside `StallAlertPanel` with a call to the global `InjectTerminal` via the `mc:inject` window event (introduced in P17). Pass `initialSlug` and pre-populate `message` with the suggested prompt via a new `mc:inject` event payload field (`initialMessage`). `InjectTerminal` gains an optional `initialMessage` prop. The old clipboard-based dialog is removed.
+
+### Acceptance Criteria
+
+- AC1: Clicking "Inject" in `StallAlertPanel` opens `InjectTerminal` modal (not clipboard dialog)
+- AC2: `InjectTerminal` pre-filled with the stall's suggested continuation prompt
+- AC3: Project slug pre-selected from the stall entry
+- AC4: After sending, stall row removed optimistically (same behavior as before)
+- AC5: Old `InjectDialog` component and clipboard path deleted from `StallAlertPanel`
+- AC6: `mc:inject` event payload extended with optional `initialMessage` field
+
+---
+
+## P21 — Watchdog Countdown in Instance Grid
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-20
+
+### Problem
+
+The stuck-watchdog timer (default 5 min, adaptive up to 30 min) fires silently. Operators watching an active project have no warning that the watchdog is about to kill it. The only signal is a sudden `watchdog` event in the feed, which may arrive after the kill.
+
+### Proposed Solution
+
+Add a per-project watchdog countdown badge to `InstanceGrid`. When a project has `lastActivity` within the watchdog window, show a countdown timer that ticks toward the kill threshold. A `/api/fleet` extension provides each project's `stuckThresholdMinutes` and `lastReplyMs`. Badge colors: green (>50% time remaining), amber (20–50%), red pulsing (<20%). Badge disappears when project is idle or after a reply resets the timer.
+
+### Acceptance Criteria
+
+- AC1: Countdown badge visible in Instance Grid row for active projects
+- AC2: Badge shows remaining time in format `W:SS` (minutes:seconds)
+- AC3: Badge color transitions green → amber → red at 50% and 20% thresholds
+- AC4: Badge pulses red when < 20% threshold remains
+- AC5: Badge disappears when project receives a reply (watchdog reset)
+- AC6: `/api/fleet` response includes `stuckThresholdMinutes` and `lastReplyMs` per project
+
+---
+
+## P22 — Pipeline-to-Diff Deep Link
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-20
+
+### Problem
+
+The `/pipeline` kanban detail drawer shows tasks and proposal snippets but has no way to see the actual code changes for a project in Build or Verify stage. Operators must navigate to the graph, find the project node, open the diff tab, and scroll back. There is no direct path from a pipeline card to the diff.
+
+### Proposed Solution
+
+Add a "View Diff" button to the `/pipeline` detail drawer for cards in `build`, `verify`, or `pr` stage. Clicking it navigates to `/graph?diff=<slug>`, which the graph page already supports (or should be wired to auto-open the diff tab for that slug). Alternatively, embed a compact diff preview inline in the drawer using the existing `/api/diff/[slug]` endpoint: last 5 commits as a log + stat summary (no full patch).
+
+### Acceptance Criteria
+
+- AC1: "View Diff" button visible in detail drawer for `build`, `verify`, `pr` stage cards
+- AC2: Button links to `/graph?diff=<slug>` which auto-opens the diff tab for that project
+- AC3: Compact diff preview (commit log + `--stat`) shown inline in drawer below tasks list
+- AC4: Drawer uses `/api/diff/[slug]` (existing endpoint); no new API required
+- AC5: "No diff yet" message shown if project has no commits
+- AC6: Preview truncated at 10 commits and 20 stat lines
+
+---
+
+## P23 — Metrics CSV Export
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-20
+
+### Problem
+
+The `/metrics` page shows per-project token usage and cost estimates but has no export. Operators managing billing need to share these figures with finance or include them in sprint reports. Copy-pasting from a web table is error-prone for multi-project fleets.
+
+### Proposed Solution
+
+Add an "Export CSV" button to the `/metrics` page header. Clicking it triggers a download of a CSV file with columns: `slug, model, totalInputTokens, totalOutputTokens, estimatedCostUsd, avgLatencyMs, p95LatencyMs, turnsPerDay, exportedAt`. The CSV is generated client-side from the already-fetched metrics data (no new API endpoint needed). The global row is included as a `__total__` slug.
+
+### Acceptance Criteria
+
+- AC1: "Export CSV" button in `/metrics` page header
+- AC2: Download triggered immediately on click; filename `mcd-metrics-YYYY-MM-DD.csv`
+- AC3: CSV includes all rows currently visible in the table (respects any active filter)
+- AC4: Global totals row included as slug `__total__`
+- AC5: CSV generated client-side from in-memory data; no network request on export
+- AC6: Button disabled and shows "Loading…" while metrics are still fetching
