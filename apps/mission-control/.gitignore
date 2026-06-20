@@ -1,0 +1,4 @@
+.next/
+mc.db
+test-results/
+tsconfig.tsbuildinfo
