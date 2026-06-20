@@ -29,7 +29,7 @@ Extend the fixed HUD header with project-state counters sourced from the MCD ser
 
 ## P2 — Project Graph View
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-20
 
 ### Problem
@@ -101,7 +101,7 @@ Enhance the existing `EventFeed` component with: (1) event-type filter chips (co
 
 ## P5 — Proposal / Backlog Overlay
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-20
 
 ### Problem
