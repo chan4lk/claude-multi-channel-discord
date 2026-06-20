@@ -6,7 +6,9 @@ import GlassCard from './ui/GlassCard'
 import PulseRing from './ui/PulseRing'
 import Sparkline from './ui/Sparkline'
 import TokenBudgetGauge from './TokenBudgetGauge'
+import HealthScoreRing from './HealthScoreRing'
 import type { FleetProject } from '../app/api/fleet/route'
+import type { HealthScore } from '../app/api/health/[slug]/route'
 
 interface InstanceEntry {
   instance_id: string
@@ -109,6 +111,7 @@ export default function InstanceGrid({ events = [], filterSlugs = null, fleetPro
   const [instances, setInstances] = useState<InstanceEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [healthScores, setHealthScores] = useState<Record<string, HealthScore>>({})
 
   const stuckInstances = new Set<string>(
     events
@@ -129,9 +132,21 @@ export default function InstanceGrid({ events = [], filterSlugs = null, fleetPro
     }
   }
 
+  async function fetchHealth() {
+    try {
+      const res = await fetch('/api/health')
+      if (!res.ok) return
+      const data = await res.json() as { projects: HealthScore[] }
+      const map: Record<string, HealthScore> = {}
+      for (const h of data.projects) map[h.slug] = h
+      setHealthScores(map)
+    } catch { /* non-critical */ }
+  }
+
   useEffect(() => {
     fetchInstances()
-    const interval = setInterval(fetchInstances, 30_000)
+    fetchHealth()
+    const interval = setInterval(() => { fetchInstances(); fetchHealth() }, 30_000)
     return () => clearInterval(interval)
   }, [])
 
@@ -199,13 +214,29 @@ export default function InstanceGrid({ events = [], filterSlugs = null, fleetPro
                           )}
                           {(() => {
                             const fleetProject = fleetProjects.find((p) => p.slug === slug)
-                            return fleetProject?.monthlyTokenBudget ? (
-                              <TokenBudgetGauge
-                                used={fleetProject.monthlyTokensUsed ?? 0}
-                                budget={fleetProject.monthlyTokenBudget}
-                                size={28}
-                              />
-                            ) : null
+                            const health = healthScores[slug]
+                            return (
+                              <>
+                                {fleetProject?.monthlyTokenBudget && (
+                                  <TokenBudgetGauge
+                                    used={fleetProject.monthlyTokensUsed ?? 0}
+                                    budget={fleetProject.monthlyTokenBudget}
+                                    size={28}
+                                  />
+                                )}
+                                {health && (
+                                  <HealthScoreRing
+                                    score={health.score}
+                                    insufficientData={health.insufficientData}
+                                    recency={health.recency}
+                                    stallRate={health.stallRate}
+                                    efficiency={health.efficiency}
+                                    freshness={health.freshness}
+                                    size={28}
+                                  />
+                                )}
+                              </>
+                            )
                           })()}
                         </div>
                       ))}
