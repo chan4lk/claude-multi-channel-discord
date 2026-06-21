@@ -66,6 +66,18 @@ CREATE TABLE IF NOT EXISTS project_annotations (
   note       TEXT NOT NULL DEFAULT '',
   updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
+
+CREATE TABLE IF NOT EXISTS broadcasts (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts         TEXT NOT NULL,
+  message    TEXT NOT NULL,
+  targets    TEXT NOT NULL,
+  sent_count INTEGER NOT NULL DEFAULT 0,
+  error_count INTEGER NOT NULL DEFAULT 0,
+  deleted_at INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_broadcasts_ts ON broadcasts(ts);
 `);
 
 // Prune old events on startup
@@ -174,6 +186,39 @@ export function upsertAnnotation(slug: string, note: string): void {
 
 export function getAllAnnotations(): Array<{ slug: string; note: string; updated_at: number }> {
   return db.prepare('SELECT slug, note, updated_at FROM project_annotations').all() as Array<{ slug: string; note: string; updated_at: number }>
+}
+
+export type BroadcastRow = {
+  id: number
+  ts: string
+  message: string
+  targets: string
+  sent_count: number
+  error_count: number
+  deleted_at: number | null
+}
+
+export function insertBroadcast(ts: string, message: string, targets: string[], sentCount: number, errorCount: number): number {
+  const result = db.prepare(
+    `INSERT INTO broadcasts (ts, message, targets, sent_count, error_count)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(ts, message, JSON.stringify(targets), sentCount, errorCount)
+  return result.lastInsertRowid as number
+}
+
+export function getBroadcastHistory(limit = 50, cursor?: number): BroadcastRow[] {
+  if (cursor != null) {
+    return db.prepare(
+      `SELECT * FROM broadcasts WHERE deleted_at IS NULL AND id < ? ORDER BY id DESC LIMIT ?`
+    ).all(cursor, limit) as BroadcastRow[]
+  }
+  return db.prepare(
+    `SELECT * FROM broadcasts WHERE deleted_at IS NULL ORDER BY id DESC LIMIT ?`
+  ).all(limit) as BroadcastRow[]
+}
+
+export function deleteBroadcast(id: number): void {
+  db.prepare(`UPDATE broadcasts SET deleted_at = unixepoch() WHERE id = ?`).run(id)
 }
 
 export default db;

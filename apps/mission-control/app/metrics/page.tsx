@@ -4,6 +4,8 @@ import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import type { MetricsResponse } from '../api/metrics/route'
 import type { SlugMetrics } from '../api/metrics/[slug]/route'
+import type { ActivityHeatmapResponse, ProjectHeatmap } from '../api/metrics/activity-heatmap/route'
+import type { TurnDurationsResponse, TurnDurationEntry } from '../api/metrics/turn-durations/route'
 import Sparkline from '../../components/ui/Sparkline'
 
 function fmtMs(ms: number): string {
@@ -102,6 +104,189 @@ function MetricsRow({ project, expanded, onToggle }: {
         </tr>
       )}
     </>
+  )
+}
+
+const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+function HeatmapGrid({ data }: { data: ProjectHeatmap }) {
+  const maxVal = Math.max(...data.grid.flat(), 1)
+  return (
+    <div className="overflow-x-auto">
+      <div style={{ display: 'grid', gridTemplateColumns: 'auto repeat(24, minmax(0,1fr))', gap: 2, minWidth: 600 }}>
+        <div />
+        {Array.from({ length: 24 }, (_, h) => (
+          <div key={h} className="text-center text-[0.45rem] font-mono text-slate-600">{h}</div>
+        ))}
+        {data.grid.map((row, dow) => (
+          <>
+            <div key={`lbl-${dow}`} className="text-[0.5rem] font-mono text-slate-500 flex items-center pr-1">{DOW_LABELS[dow]}</div>
+            {row.map((val, hour) => {
+              const intensity = val / maxVal
+              const alpha = val === 0 ? 0.05 : 0.15 + intensity * 0.85
+              return (
+                <div
+                  key={`${dow}-${hour}`}
+                  title={`${DOW_LABELS[dow]} ${hour}:00 — ${val} turn${val !== 1 ? 's' : ''}`}
+                  style={{
+                    height: 14,
+                    borderRadius: 2,
+                    background: val === 0 ? 'rgba(255,255,255,0.04)' : `rgba(0,245,255,${alpha.toFixed(2)})`,
+                  }}
+                />
+              )
+            })}
+          </>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ActivityHeatmapSection() {
+  const [data, setData] = useState<ActivityHeatmapResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [selected, setSelected] = useState<string | null>(null)
+
+  useEffect(() => {
+    fetch('/api/metrics/activity-heatmap')
+      .then((r) => r.json())
+      .then((d: ActivityHeatmapResponse) => {
+        setData(d)
+        setLoading(false)
+        if (d.projects.length > 0) setSelected(d.projects[0].slug)
+      })
+      .catch(() => setLoading(false))
+  }, [])
+
+  const activeGrid = data?.projects.find((p) => p.slug === selected)
+
+  return (
+    <div className="rounded-lg border border-cyber-cyan/12 p-4" style={{ background: 'rgba(0,245,255,0.02)' }}>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-xs font-mono text-slate-400 uppercase tracking-wider">Fleet Activity Heatmap</h2>
+        <span className="text-[0.55rem] font-mono text-slate-600">30-day rolling · rows=day · cols=hour</span>
+      </div>
+      {loading ? (
+        <div className="h-32 flex items-center justify-center text-xs font-mono text-slate-600 animate-pulse">Loading…</div>
+      ) : !data || data.projects.length === 0 ? (
+        <div className="h-32 flex items-center justify-center text-xs font-mono text-slate-600">No data</div>
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {data.projects.map((p) => (
+              <button
+                key={p.slug}
+                onClick={() => setSelected(p.slug)}
+                className="text-[0.6rem] font-mono px-2 py-0.5 rounded transition-colors"
+                style={{
+                  border: `1px solid ${selected === p.slug ? '#00F5FF60' : '#334155'}`,
+                  color: selected === p.slug ? '#00F5FF' : '#64748b',
+                  background: selected === p.slug ? 'rgba(0,245,255,0.08)' : 'transparent',
+                }}
+              >
+                {p.slug}
+              </button>
+            ))}
+          </div>
+          {activeGrid && <HeatmapGrid data={activeGrid} />}
+        </>
+      )}
+      {data && (
+        <p className="text-[0.5rem] font-mono text-slate-700 mt-2">
+          Generated {new Date(data.generatedAt).toLocaleTimeString()}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function TurnHistogramSection() {
+  const [data, setData] = useState<TurnDurationsResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetch('/api/metrics/turn-durations')
+      .then((r) => r.json())
+      .then((d: TurnDurationsResponse) => { setData(d); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [])
+
+  const projects = data?.projects.filter((p) => p.count >= 1) ?? []
+
+  return (
+    <div className="rounded-lg border border-cyber-cyan/12 p-4" style={{ background: 'rgba(0,245,255,0.02)' }}>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-xs font-mono text-slate-400 uppercase tracking-wider">Agent Turn Duration</h2>
+        <span className="text-[0.55rem] font-mono text-slate-600">30-day rolling · user→reply</span>
+      </div>
+      {loading ? (
+        <div className="h-32 flex items-center justify-center text-xs font-mono text-slate-600 animate-pulse">Loading…</div>
+      ) : projects.length === 0 ? (
+        <div className="h-32 flex items-center justify-center text-xs font-mono text-slate-600">No data</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-cyber-cyan/10">
+                <th className="pb-2 text-[0.6rem] font-mono text-slate-500 uppercase tracking-wider">Project</th>
+                <th className="pb-2 text-[0.6rem] font-mono text-slate-500 uppercase tracking-wider text-right">p50</th>
+                <th className="pb-2 text-[0.6rem] font-mono text-slate-500 uppercase tracking-wider text-right">p90</th>
+                <th className="pb-2 text-[0.6rem] font-mono text-slate-500 uppercase tracking-wider text-right">p99</th>
+                <th className="pb-2 text-[0.6rem] font-mono text-slate-500 uppercase tracking-wider text-right">max</th>
+                <th className="pb-2 text-[0.6rem] font-mono text-slate-500 uppercase tracking-wider text-right">turns</th>
+                <th className="pb-2 text-[0.6rem] font-mono text-slate-500 uppercase tracking-wider text-right">rec. threshold</th>
+                <th className="pb-2 pr-2 text-[0.6rem] font-mono text-slate-500 uppercase tracking-wider">bar</th>
+              </tr>
+            </thead>
+            <tbody>
+              {projects.map((p) => (
+                <TurnRow key={p.slug} entry={p} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function TurnRow({ entry }: { entry: TurnDurationEntry }) {
+  const maxDisplay = 5 * 60 * 1000
+  const p99Clamped = Math.min(entry.p99, maxDisplay)
+  const barWidth = maxDisplay > 0 ? (p99Clamped / maxDisplay) * 100 : 0
+
+  return (
+    <tr className="border-b border-cyber-cyan/6">
+      <td className="py-2 pr-4">
+        <span className="text-xs font-mono text-cyber-cyan">{entry.slug}</span>
+      </td>
+      <td className="py-2 text-right text-xs font-mono text-slate-400">{fmtMs(entry.p50)}</td>
+      <td className="py-2 text-right text-xs font-mono text-slate-400">{fmtMs(entry.p90)}</td>
+      <td className="py-2 text-right text-xs font-mono text-amber-400">{fmtMs(entry.p99)}</td>
+      <td className="py-2 text-right text-xs font-mono text-slate-500">{fmtMs(entry.max)}</td>
+      <td className="py-2 text-right text-xs font-mono text-slate-500">{entry.count < 5 ? `${entry.count} ⚠` : entry.count}</td>
+      <td className="py-2 text-right">
+        <span
+          className="text-[0.6rem] font-mono font-bold px-1.5 py-0.5 rounded"
+          style={{
+            color: entry.count < 5 ? '#64748b' : '#A855F7',
+            border: `1px solid ${entry.count < 5 ? '#33415540' : '#A855F740'}`,
+            background: entry.count < 5 ? 'transparent' : 'rgba(168,85,247,0.08)',
+          }}
+        >
+          {entry.count < 5 ? '—' : `${entry.recommendedThresholdMins}m`}
+        </span>
+      </td>
+      <td className="py-2 pr-2 w-32">
+        <div className="h-3 rounded-sm overflow-hidden" style={{ background: 'rgba(255,255,255,0.05)' }}>
+          <div
+            className="h-full rounded-sm"
+            style={{ width: `${barWidth}%`, background: 'rgba(245,158,11,0.6)' }}
+          />
+        </div>
+      </td>
+    </tr>
   )
 }
 
@@ -208,7 +393,7 @@ export default function MetricsPage() {
             <div className="text-xs font-mono text-slate-600 animate-pulse">Loading metrics…</div>
           </div>
         ) : (
-          <div className="max-w-5xl mx-auto space-y-4">
+          <div className="max-w-5xl mx-auto space-y-6">
             {/* Aggregate row */}
             {agg && (
               <div className="rounded-lg border border-cyber-cyan/20 p-4 flex flex-wrap gap-6"
@@ -271,6 +456,12 @@ export default function MetricsPage() {
                 </table>
               </div>
             )}
+
+            {/* P30 — Activity Heatmap */}
+            <ActivityHeatmapSection />
+
+            {/* P31 — Turn Duration Histogram */}
+            <TurnHistogramSection />
           </div>
         )}
       </main>
