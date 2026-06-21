@@ -276,9 +276,9 @@ function DashboardClient() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, ease: 'easeOut' }}
       >
-        {/* Responsive grid — stacks on mobile */}
+        {/* Responsive grid — stacks on mobile, 2-col on lg, 3-col on xl */}
         <div className="grid gap-5 grid-cols-1 lg:grid-cols-2 xl:grid-cols-[1fr_1fr_360px]">
-          {/* Left column */}
+          {/* Col 1: Instances + Stall Alerts */}
           <div className="flex flex-col gap-5">
             <section>
               <div className="flex items-center gap-2 mb-3">
@@ -307,10 +307,50 @@ function DashboardClient() {
             <section>
               <StallAlertPanel />
             </section>
+          </div>
+
+          {/* Col 2: Scheduler + Fleet Advisor */}
+          <div className="flex flex-col gap-5">
+            <section>
+              <div className="flex items-center gap-2 mb-3">
+                <span className="w-2 h-2 rounded-sm bg-cyber-cyan/60 shrink-0" style={{ clipPath: 'polygon(0 0,100% 0,100% 100%,0 100%)' }} />
+                <h2 className="section-label">Scheduler</h2>
+                <div className="flex-1 h-px bg-gradient-to-r from-cyber-cyan/20 to-transparent" />
+                <div className="flex rounded overflow-hidden border border-cyber-cyan/20 shrink-0">
+                  {(['timeline', 'table'] as const).map((v) => (
+                    <button
+                      key={v}
+                      onClick={() => setScheduleView(v)}
+                      className={`text-[10px] px-2 py-0.5 font-mono uppercase tracking-wider transition-colors ${
+                        scheduleView === v
+                          ? 'bg-cyber-cyan/20 text-cyber-cyan'
+                          : 'text-slate-500 hover:text-slate-300'
+                      }`}
+                    >
+                      {v}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {scheduleView === 'timeline'
+                ? <ScheduleTimeline events={events} />
+                : <SchedulerTable events={events} />
+              }
+            </section>
             <section>
               <SectionLabel label="Fleet Advisor" />
               <AdvisorTile />
             </section>
+          </div>
+
+          {/* Col 3: Event Feed (360px at xl, full-width at lg) */}
+          <section className="xl:col-span-1 lg:col-span-2">
+            <SectionLabel label="Event Feed" />
+            <EventFeed onEvent={handleEvent} />
+          </section>
+
+          {/* Bottom row: Specclaw Pipeline + Memories */}
+          <div className="col-span-full grid grid-cols-1 md:grid-cols-2 gap-5">
             <section>
               <SectionLabel label="Specclaw Pipeline" />
               <SpecclawPipeline events={events} />
@@ -320,40 +360,6 @@ function DashboardClient() {
               <MemoryPanel />
             </section>
           </div>
-
-          {/* Middle column */}
-          <section className="lg:col-span-1">
-            <div className="flex items-center gap-2 mb-3">
-              <span className="w-2 h-2 rounded-sm bg-cyber-cyan/60 shrink-0" style={{ clipPath: 'polygon(0 0,100% 0,100% 100%,0 100%)' }} />
-              <h2 className="section-label">Scheduler</h2>
-              <div className="flex-1 h-px bg-gradient-to-r from-cyber-cyan/20 to-transparent" />
-              <div className="flex rounded overflow-hidden border border-cyber-cyan/20 shrink-0">
-                {(['timeline', 'table'] as const).map((v) => (
-                  <button
-                    key={v}
-                    onClick={() => setScheduleView(v)}
-                    className={`text-[10px] px-2 py-0.5 font-mono uppercase tracking-wider transition-colors ${
-                      scheduleView === v
-                        ? 'bg-cyber-cyan/20 text-cyber-cyan'
-                        : 'text-slate-500 hover:text-slate-300'
-                    }`}
-                  >
-                    {v}
-                  </button>
-                ))}
-              </div>
-            </div>
-            {scheduleView === 'timeline'
-              ? <ScheduleTimeline events={events} />
-              : <SchedulerTable events={events} />
-            }
-          </section>
-
-          {/* Right column — event feed */}
-          <section className="xl:col-span-1 lg:col-span-2">
-            <SectionLabel label="Event Feed" />
-            <EventFeed onEvent={handleEvent} />
-          </section>
         </div>
       </motion.main>
     </div>
