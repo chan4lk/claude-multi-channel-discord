@@ -39,6 +39,7 @@ function MetricsRow({ project, expanded, onToggle }: {
   return (
     <>
       <tr
+        id={`metrics-row-${project.slug}`}
         onClick={onToggle}
         className="border-b border-cyber-cyan/6 cursor-pointer transition-colors"
         style={{ background: expanded ? 'rgba(0,245,255,0.04)' : 'transparent' }}
@@ -343,6 +344,18 @@ export default function MetricsPage() {
     const interval = setInterval(() => { setStale(true); load() }, 60_000)
     return () => clearInterval(interval)
   }, [load])
+
+  useEffect(() => {
+    if (loading || !data) return
+    const params = new URLSearchParams(window.location.search)
+    const slug = params.get('slug')
+    if (!slug) return
+    setExpanded((prev) => { const next = new Set(prev); next.add(slug); return next })
+    setTimeout(() => {
+      const el = document.getElementById(`metrics-row-${slug}`)
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 100)
+  }, [loading, data])
 
   function toggleExpand(slug: string) {
     setExpanded((prev) => {

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import type { WeeklyReportResponse, WeeklyProjectStats } from '../api/reports/weekly/route'
 
@@ -31,17 +31,52 @@ function NeonStat({ label, value, color = '#22D3EE' }: { label: string; value: s
   )
 }
 
-function ProjectRow({ p, rank }: { p: WeeklyProjectStats; rank: number }) {
+function TurnsSparkline({ data }: { data: number[] }) {
+  const w = 56, h = 18, pad = 1
+  const max = Math.max(...data, 1)
+  const pts = data.map((v, i) => {
+    const x = pad + (i / (data.length - 1)) * (w - pad * 2)
+    const y = h - pad - ((v / max) * (h - pad * 2))
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  })
+  const last3 = data.slice(-3)
+  const trend = last3[2] > last3[0] ? 'up' : last3[2] < last3[0] ? 'down' : 'flat'
+  const color = trend === 'up' ? '#4ADE80' : trend === 'down' ? '#F87171' : '#475569'
+  return (
+    <svg width={w} height={h} style={{ display: 'inline-block', verticalAlign: 'middle', maxWidth: '100%' }}>
+      <polyline
+        points={pts.join(' ')}
+        fill="none"
+        stroke={color}
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        style={{ filter: `drop-shadow(0 0 3px ${color}80)` }}
+      />
+    </svg>
+  )
+}
+
+type SortKey = 'rank' | 'slug' | 'turns' | 'toolCalls' | 'tokens' | 'cost' | 'stalls' | 'prCount' | 'avgTurnMs' | 'memoriesWritten'
+
+function ProjectRow({ p, rank, highlighted }: { p: WeeklyProjectStats & { _rank: number }; rank: number; highlighted: boolean }) {
   const isTop3 = rank <= 3
   const borderColor = rank === 1 ? '#F59E0B' : rank === 2 ? '#94A3B8' : rank === 3 ? '#B45309' : 'transparent'
   return (
     <tr
+      id={p.slug}
       className="border-b border-white/5 hover:bg-white/3 transition-colors"
-      style={isTop3 ? { boxShadow: `inset 2px 0 0 ${borderColor}` } : {}}
+      style={{
+        ...(isTop3 ? { boxShadow: `inset 2px 0 0 ${borderColor}` } : {}),
+        ...(highlighted ? { outline: '1px solid #22D3EE', outlineOffset: '-1px', background: 'rgba(34,211,238,0.06)' } : {}),
+      }}
     >
       <td className="px-3 py-2 font-mono text-[0.65rem]" style={{ color: isTop3 ? borderColor : '#475569' }}>{rank}</td>
       <td className="px-3 py-2 font-mono text-[0.7rem] font-semibold text-slate-200">{p.slug}</td>
-      <td className="px-3 py-2 font-mono text-[0.65rem] text-cyan-400">{fmt(p.turns)}</td>
+      <td className="px-3 py-2 font-mono text-[0.65rem] text-cyan-400">
+        <span className="mr-1.5">{fmt(p.turns)}</span>
+        {p.dailyTurns && p.dailyTurns.length === 7 && <TurnsSparkline data={p.dailyTurns} />}
+      </td>
       <td className="px-3 py-2 font-mono text-[0.65rem] text-purple-400">{fmt(p.toolCalls)}</td>
       <td className="px-3 py-2 font-mono text-[0.65rem] text-blue-400">{fmt(p.inputTokens + p.outputTokens)}</td>
       <td className="px-3 py-2 font-mono text-[0.65rem] text-green-400">{fmtCost(p.estimatedCostUsd)}</td>
@@ -115,6 +150,10 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
+  const [sortKey, setSortKey] = useState<SortKey>('rank')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+  const [highlightSlug, setHighlightSlug] = useState<string | null>(null)
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const fetchReport = useCallback(async () => {
     setLoading(true)
@@ -126,6 +165,44 @@ export default function ReportsPage() {
   }, [])
 
   useEffect(() => { fetchReport() }, [fetchReport])
+
+  useEffect(() => {
+    const slug = window.location.hash.slice(1)
+    if (!slug) return
+    setHighlightSlug(slug)
+    const el = document.getElementById(slug)
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    if (highlightTimer.current) clearTimeout(highlightTimer.current)
+    highlightTimer.current = setTimeout(() => setHighlightSlug(null), 3000)
+  }, [report])
+
+  function handleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortKey(key)
+      setSortDir(key === 'slug' ? 'asc' : 'desc')
+    }
+  }
+
+  function sortedProjects(projects: WeeklyProjectStats[]) {
+    const ranked = projects.map((p, i) => ({ ...p, _rank: i + 1 }))
+    if (sortKey === 'rank') return sortDir === 'asc' ? ranked : [...ranked].reverse()
+    return [...ranked].sort((a, b) => {
+      let av: number | string = 0, bv: number | string = 0
+      if (sortKey === 'slug') { av = a.slug; bv = b.slug }
+      else if (sortKey === 'turns') { av = a.turns; bv = b.turns }
+      else if (sortKey === 'toolCalls') { av = a.toolCalls; bv = b.toolCalls }
+      else if (sortKey === 'tokens') { av = a.inputTokens + a.outputTokens; bv = b.inputTokens + b.outputTokens }
+      else if (sortKey === 'cost') { av = a.estimatedCostUsd; bv = b.estimatedCostUsd }
+      else if (sortKey === 'stalls') { av = a.stalls; bv = b.stalls }
+      else if (sortKey === 'prCount') { av = a.prCount; bv = b.prCount }
+      else if (sortKey === 'avgTurnMs') { av = a.avgTurnMs; bv = b.avgTurnMs }
+      else if (sortKey === 'memoriesWritten') { av = a.memoriesWritten; bv = b.memoriesWritten }
+      const cmp = typeof av === 'string' ? av.localeCompare(bv as string) : (av as number) - (bv as number)
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+  }
 
   async function handleGenerate() {
     setGenerating(true)
@@ -227,20 +304,43 @@ export default function ReportsPage() {
             {/* Per-project table */}
             <div>
               <div className="text-[0.6rem] font-mono uppercase tracking-widest text-slate-500 mb-3">
-                Per-Project Breakdown — sorted by impact score
+                Per-Project Breakdown — click column to sort
               </div>
               <div className="overflow-x-auto rounded border border-white/6">
                 <table className="w-full text-[0.65rem] font-mono">
                   <thead>
                     <tr className="border-b border-white/8">
-                      {['#', 'Slug', 'Turns', 'Tools', 'Tokens', 'Cost', 'Stalls', 'PRs', 'Avg Turn', 'Memories'].map((h) => (
-                        <th key={h} className="text-left px-3 py-2.5 text-slate-500 uppercase tracking-wider font-semibold">{h}</th>
+                      {([
+                        ['#', 'rank'],
+                        ['Slug', 'slug'],
+                        ['Turns', 'turns'],
+                        ['Tools', 'toolCalls'],
+                        ['Tokens', 'tokens'],
+                        ['Cost', 'cost'],
+                        ['Stalls', 'stalls'],
+                        ['PRs', 'prCount'],
+                        ['Avg Turn', 'avgTurnMs'],
+                        ['Memories', 'memoriesWritten'],
+                      ] as [string, SortKey][]).map(([label, key]) => (
+                        <th
+                          key={key}
+                          onClick={() => handleSort(key)}
+                          className="text-left px-3 py-2.5 uppercase tracking-wider font-semibold cursor-pointer select-none transition-colors"
+                          style={{
+                            color: sortKey === key ? '#22D3EE' : '#475569',
+                          }}
+                        >
+                          {label}
+                          {sortKey === key && (
+                            <span className="ml-1 text-[0.5rem]">{sortDir === 'asc' ? '▲' : '▼'}</span>
+                          )}
+                        </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {report.projects.map((p, i) => (
-                      <ProjectRow key={p.slug} p={p} rank={i + 1} />
+                    {sortedProjects(report.projects).map((p) => (
+                      <ProjectRow key={p.slug} p={p} rank={p._rank} highlighted={highlightSlug === p.slug} />
                     ))}
                   </tbody>
                 </table>

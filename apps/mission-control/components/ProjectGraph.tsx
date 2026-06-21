@@ -139,6 +139,8 @@ export default function ProjectGraph({ showBacklog }: Props) {
   const nodesRef = useRef<GraphNode[]>([])
   const [budgetInput, setBudgetInput] = useState('')
   const [budgetSaving, setBudgetSaving] = useState(false)
+  const [showActionMenu, setShowActionMenu] = useState(false)
+  const actionMenuRef = useRef<HTMLDivElement | null>(null)
 
   // Measure container
   useEffect(() => {
@@ -592,6 +594,24 @@ export default function ProjectGraph({ showBacklog }: Props) {
     return `${mins}m`
   }
 
+  useEffect(() => {
+    if (!showActionMenu) return
+    function onClickOutside(e: MouseEvent) {
+      if (actionMenuRef.current && !actionMenuRef.current.contains(e.target as Node)) {
+        setShowActionMenu(false)
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setShowActionMenu(false)
+    }
+    document.addEventListener('mousedown', onClickOutside)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onClickOutside)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [showActionMenu])
+
   return (
     <div className="relative w-full h-full min-h-[400px]">
       {/* Legend */}
@@ -768,7 +788,47 @@ export default function ProjectGraph({ showBacklog }: Props) {
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b shrink-0" style={{ borderColor: `${STATE_COLORS[drawer.state]}20` }}>
             <span className="text-xs font-bold font-mono text-slate-200">{drawer.slug}</span>
-            <button onClick={() => { setDrawer(null); setDrawerTab('info') }} className="text-slate-500 hover:text-slate-200">×</button>
+            <div className="flex items-center gap-2">
+              {/* Action menu */}
+              <div className="relative" ref={actionMenuRef}>
+                <button
+                  onClick={() => setShowActionMenu((v) => !v)}
+                  className="text-slate-500 hover:text-slate-200 text-sm leading-none px-1"
+                  title="Actions"
+                >
+                  ⋯
+                </button>
+                {showActionMenu && (
+                  <div
+                    className="absolute right-0 top-6 z-30 flex flex-col rounded border py-1 text-[0.65rem] font-mono"
+                    style={{ background: 'rgba(4,10,20,0.98)', borderColor: `${STATE_COLORS[drawer.state]}30`, minWidth: '160px' }}
+                  >
+                    <a
+                      href={`/metrics?slug=${encodeURIComponent(drawer.slug)}`}
+                      className="px-3 py-1.5 text-slate-400 hover:text-cyber-cyan hover:bg-white/5 transition-colors"
+                      onClick={() => setShowActionMenu(false)}
+                    >
+                      View Metrics →
+                    </a>
+                    <a
+                      href={`/timeline?slug=${encodeURIComponent(drawer.slug)}`}
+                      className="px-3 py-1.5 text-slate-400 hover:text-cyber-cyan hover:bg-white/5 transition-colors"
+                      onClick={() => setShowActionMenu(false)}
+                    >
+                      View Timeline →
+                    </a>
+                    <a
+                      href={`/reports#${encodeURIComponent(drawer.slug)}`}
+                      className="px-3 py-1.5 text-slate-400 hover:text-cyber-cyan hover:bg-white/5 transition-colors"
+                      onClick={() => setShowActionMenu(false)}
+                    >
+                      View in Report →
+                    </a>
+                  </div>
+                )}
+              </div>
+              <button onClick={() => { setDrawer(null); setDrawerTab('info'); setShowActionMenu(false) }} className="text-slate-500 hover:text-slate-200">×</button>
+            </div>
           </div>
           {/* Tabs */}
           <div className="flex border-b shrink-0" style={{ borderColor: `${STATE_COLORS[drawer.state]}15` }}>
