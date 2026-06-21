@@ -1,10 +1,48 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import GlassCard from './ui/GlassCard'
 import { useFleet } from './FleetContext'
 import type { StallEntry, StallsResponse } from '../app/api/stalls/route'
+
+const NOTIF_THROTTLE_MS = 5 * 60 * 1000 // 5 min per slug
+
+function useStallNotifications(stalls: StallEntry[], dismissed: Set<string>) {
+  const [notifPerm, setNotifPerm] = useState<NotificationPermission>('default')
+  const lastNotifiedRef = useRef<Map<string, number>>(new Map())
+
+  useEffect(() => {
+    if (typeof Notification !== 'undefined') {
+      setNotifPerm(Notification.permission)
+    }
+  }, [])
+
+  const requestPermission = useCallback(async () => {
+    if (typeof Notification === 'undefined') return
+    const result = await Notification.requestPermission()
+    setNotifPerm(result)
+  }, [])
+
+  useEffect(() => {
+    if (notifPerm !== 'granted') return
+    const now = Date.now()
+    for (const stall of stalls) {
+      if (dismissed.has(stall.slug)) continue
+      const last = lastNotifiedRef.current.get(stall.slug) ?? 0
+      if (now - last < NOTIF_THROTTLE_MS) continue
+      lastNotifiedRef.current.set(stall.slug, now)
+      try {
+        new Notification(`⚠ Stall: ${stall.slug}`, {
+          body: stall.stallReason,
+          tag: `mcd-stall-${stall.slug}`,
+        })
+      } catch {}
+    }
+  }, [stalls, dismissed, notifPerm])
+
+  return { notifPerm, requestPermission }
+}
 
 const STALL_PROMPTS: Record<string, string> = {
   waiting: 'You appear to be waiting for operator input. If you have a pending question, please summarise it briefly and continue with the best available information.',
@@ -139,6 +177,7 @@ export default function StallAlertPanel() {
 
   const visible = stalls.filter((s) => !dismissed.has(s.slug))
   const stallCount = visible.length
+  const { notifPerm, requestPermission } = useStallNotifications(visible, dismissed)
 
   function handleDismiss(slug: string) {
     setDismissed((prev) => new Set([...prev, slug]))
@@ -147,9 +186,10 @@ export default function StallAlertPanel() {
   return (
     <div>
       {/* Header row */}
+      <div className="flex items-center gap-2 mb-2">
       <button
         onClick={() => setCollapsed((c) => !c)}
-        className="flex items-center gap-2 w-full text-left mb-2 group"
+        className="flex items-center gap-2 flex-1 text-left group"
       >
         <span
           className="w-1.5 h-1.5 rounded-sm bg-red-400/70 shrink-0"
@@ -171,6 +211,17 @@ export default function StallAlertPanel() {
           {collapsed ? '▶' : '▼'}
         </span>
       </button>
+      {notifPerm !== 'granted' && notifPerm !== 'denied' && (
+        <button
+          onClick={requestPermission}
+          className="shrink-0 text-[0.55rem] px-1.5 py-0.5 rounded border font-mono transition-colors"
+          style={{ color: '#F59E0B', borderColor: '#F59E0B40', background: '#F59E0B10' }}
+          title="Enable browser notifications for stall alerts"
+        >
+          🔔
+        </button>
+      )}
+      </div>
 
       <AnimatePresence initial={false}>
         {!collapsed && (
