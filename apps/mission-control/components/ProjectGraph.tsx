@@ -5,6 +5,7 @@ import * as d3 from 'd3'
 import type { FleetProject, ProjectState } from '../app/api/fleet/route'
 import type { ProjectBacklog } from '../app/api/backlog/route'
 import type { HealthScore } from '../app/api/health/[slug]/route'
+import type { PipelineCard, PipelineStage } from '../app/api/pipeline/route'
 import TokenBudgetGauge from './TokenBudgetGauge'
 import { useFleet, type ToolEvent } from './FleetContext'
 
@@ -79,6 +80,24 @@ const HEALTH_TIERS: [string, string][] = [
   ['#EF4444', '<50'],
 ]
 
+const PIPELINE_STAGE_COLOR: Record<PipelineStage, string> = {
+  propose:   '#F59E0B',
+  plan:      '#60A5FA',
+  build:     '#F97316',
+  verify:    '#34D399',
+  pr:        '#4ADE80',
+  completed: '#22D3EE',
+}
+
+interface ProposalDatum {
+  key: string
+  slug: string
+  name: string
+  stage: PipelineStage
+  x: number
+  y: number
+}
+
 function PulseRingLegend() {
   return (
     <div className="mt-1 flex flex-col gap-0.5 pl-0.5">
@@ -137,6 +156,7 @@ export default function ProjectGraph({ showBacklog }: Props) {
   const [dims, setDims] = useState({ w: 800, h: 500 })
   const simRef = useRef<d3.Simulation<GraphNode, undefined> | null>(null)
   const nodesRef = useRef<GraphNode[]>([])
+  const pipelineCardsRef = useRef<PipelineCard[]>([])
   const [budgetInput, setBudgetInput] = useState('')
   const [budgetSaving, setBudgetSaving] = useState(false)
   const [showActionMenu, setShowActionMenu] = useState(false)
@@ -196,13 +216,28 @@ export default function ProjectGraph({ showBacklog }: Props) {
     } catch {}
   }, [])
 
+  // Fetch pipeline cards
+  const fetchPipeline = useCallback(async () => {
+    try {
+      const res = await fetch('/api/pipeline')
+      if (res.ok) {
+        const data: PipelineCard[] = await res.json()
+        pipelineCardsRef.current = data
+        if (nodesRef.current.length > 0) renderFrame(nodesRef.current)
+      }
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   useEffect(() => {
     fetchFleet()
     fetchBacklog()
+    fetchPipeline()
     const i1 = setInterval(fetchFleet, 30_000)
     const i2 = setInterval(fetchBacklog, 30_000)
-    return () => { clearInterval(i1); clearInterval(i2) }
-  }, [fetchFleet, fetchBacklog])
+    const i3 = setInterval(fetchPipeline, 60_000)
+    return () => { clearInterval(i1); clearInterval(i2); clearInterval(i3) }
+  }, [fetchFleet, fetchBacklog, fetchPipeline])
 
   // Fetch health data when pulse mode enabled; clear rings when disabled
   useEffect(() => {
@@ -517,6 +552,81 @@ export default function ProjectGraph({ showBacklog }: Props) {
       .attr('font-family', 'JetBrains Mono, monospace')
       .attr('font-weight', 'bold')
       .text((d) => d.state[0]!.toUpperCase())
+
+    // Proposal diamond nodes — small diamonds orbiting project nodes
+    const proposalData: ProposalDatum[] = []
+    const activePipeline = pipelineCardsRef.current.filter((c) => c.stage !== 'completed')
+    for (const node of nodes) {
+      const cards = activePipeline.filter((c) => c.slug === node.slug)
+      const count = cards.length
+      if (count === 0) continue
+      cards.slice(0, 5).forEach((card, i) => {
+        const angle = (i / count) * Math.PI * 2 - Math.PI / 2
+        const dist = NODE_RADIUS + 22
+        proposalData.push({
+          key: `${node.slug}::${card.name}`,
+          slug: node.slug,
+          name: card.name,
+          stage: card.stage,
+          x: node.x + Math.cos(angle) * dist,
+          y: node.y + Math.sin(angle) * dist,
+        })
+      })
+    }
+
+    svg.selectAll<SVGRectElement, ProposalDatum>('.proposal-diamond')
+      .data(proposalData, (d) => d.key)
+      .join(
+        (enter) => enter.append('rect').attr('class', 'proposal-diamond').attr('pointer-events', 'all').attr('cursor', 'pointer'),
+        (update) => update,
+        (exit) => exit.remove()
+      )
+      .attr('width', 9)
+      .attr('height', 9)
+      .attr('rx', 1)
+      .attr('x', (d) => d.x - 4.5)
+      .attr('y', (d) => d.y - 4.5)
+      .attr('transform', (d) => `rotate(45, ${d.x}, ${d.y})`)
+      .attr('fill', (d) => PIPELINE_STAGE_COLOR[d.stage] + '22')
+      .attr('stroke', (d) => PIPELINE_STAGE_COLOR[d.stage])
+      .attr('stroke-width', 1.5)
+      .on('click', (event, d) => {
+        event.stopPropagation()
+        const params = new URLSearchParams(window.location.search)
+        params.set('spotlight', d.slug)
+        window.history.pushState(null, '', `?${params.toString()}`)
+        window.dispatchEvent(new PopStateEvent('popstate'))
+      })
+
+    svg.selectAll<SVGTitleElement, ProposalDatum>('.proposal-title')
+      .data(proposalData, (d) => d.key)
+      .join(
+        (enter) => enter.append('title').attr('class', 'proposal-title'),
+        (update) => update,
+        (exit) => exit.remove()
+      )
+      .text((d) => `${d.name} [${d.stage}]`)
+
+    // Edges from project node to proposal diamonds
+    svg.selectAll<SVGLineElement, ProposalDatum>('.proposal-edge')
+      .data(proposalData, (d) => d.key)
+      .join(
+        (enter) => enter.append('line').attr('class', 'proposal-edge').lower().attr('pointer-events', 'none'),
+        (update) => update,
+        (exit) => exit.remove()
+      )
+      .attr('x1', (d) => {
+        const node = nodes.find((n) => n.slug === d.slug)
+        return node?.x ?? d.x
+      })
+      .attr('y1', (d) => {
+        const node = nodes.find((n) => n.slug === d.slug)
+        return node?.y ?? d.y
+      })
+      .attr('x2', (d) => d.x)
+      .attr('y2', (d) => d.y)
+      .attr('stroke', (d) => PIPELINE_STAGE_COLOR[d.stage] + '40')
+      .attr('stroke-width', 0.8)
 
     // Hit-area for drag (transparent, on top)
     svg.selectAll<SVGCircleElement, GraphNode>('.node-hit')
