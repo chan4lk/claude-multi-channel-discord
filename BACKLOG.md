@@ -1675,3 +1675,116 @@ Add a `/similarity` page showing a project × project heatmap where each cell's 
 - AC5: Threshold slider (0–50%) grays out cells below threshold
 - AC6: `/api/similarity` endpoint computes scores server-side; result cached 5 min
 - AC7: Nav link to `/similarity` added to NavDropdown under Intelligence
+
+---
+
+## P71 — SpotlightDrawer Navigation Links
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+The SpotlightDrawer (P67) shows a rich summary for each project, but has no way to navigate to the full detail views. To reach the timeline, flamegraph, metrics, or branches for a project, operators must close the drawer and navigate manually. The drawer is a dead end for power users.
+
+### Proposed Solution
+
+Add a compact "jump to" link bar inside the SpotlightDrawer header area (below the slug/state row). Show icon buttons for: Timeline (`/projects/<slug>`), Flame Graph (`/flamegraph?project=<slug>`), Metrics (`/metrics?slug=<slug>`), Branches (`/branches?slug=<slug>`). Each opens in the same tab, closing the drawer first. Existing "Inject" and "Stop" quick actions remain at the bottom.
+
+### Acceptance Criteria
+
+- AC1: Link bar visible in drawer header with Timeline, Flame, Metrics, Branches icons
+- AC2: Clicking a link closes the drawer (removes `?spotlight` param) then navigates to the target
+- AC3: Each icon has a tooltip showing the full page name
+- AC4: Links render on both desktop (right panel) and mobile (bottom sheet) without overflow
+- AC5: Target pages that don't exist for a project (e.g. no JSONL) handle gracefully — link still present, page shows empty state
+
+---
+
+## P72 — 3D Force-Graph Spotlight Integration
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+The 3D Force-Graph page (`/graph3d`) still navigates to `/projects/<slug>` when a node is clicked, forcing operators to leave the 3D view entirely. The Galaxy Map (P67) was updated to open the SpotlightDrawer instead, but `graph3d` was not updated. Inconsistent click behavior between graph views creates UX confusion.
+
+### Proposed Solution
+
+Update `ForceGraph3D.tsx` and the `/graph3d` page to open `?spotlight=<slug>` on node click instead of navigating away, matching the Galaxy Map behavior. The SpotlightDrawer will slide in over the 3D view. Add a "full page" link inside the drawer (addressed by P71) for users who need the full timeline.
+
+### Acceptance Criteria
+
+- AC1: Clicking a node in `/graph3d` adds `?spotlight=<slug>` to the URL; SpotlightDrawer opens
+- AC2: The 3D graph remains visible in the background while the drawer is open
+- AC3: Closing the drawer (Escape or backdrop) returns to the graph without re-rendering
+- AC4: Node click behavior consistent with Galaxy Map
+
+---
+
+## P73 — Broadcast Send History
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+The `/broadcast` page lets operators send a message to all or selected channels, but has no record of what was sent. After a broadcast, operators cannot verify which channels received the message, what the exact text was, or when it was sent. A typo or mis-targeted broadcast leaves no audit trail in the UI.
+
+### Proposed Solution
+
+Add a local-storage-backed send history panel below the broadcast form on `/broadcast`. Each entry records: timestamp, target slug list (or "all"), message text (truncated), and a success/partial-fail indicator. Retain the last 20 entries. Add a "Re-send" button per entry that pre-fills the form with the same message and targets. A "Clear history" button purges localStorage.
+
+### Acceptance Criteria
+
+- AC1: After each successful broadcast, an entry is appended to history (localStorage)
+- AC2: History shows: relative timestamp, target count, message excerpt (80 chars), status badge
+- AC3: "Re-send" pre-fills slug selector and message textarea with the historical values
+- AC4: History persists across page reloads; cleared by "Clear history" button
+- AC5: Maximum 20 entries retained; oldest pruned on overflow
+
+---
+
+## P74 — Metrics Drill-Down to Flamegraph
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+The `/metrics` page shows per-project p50/p90/p99 turn latency, but clicking a project row does nothing. Operators who see an outlier (e.g. p99 of 8 minutes) have no way to jump directly to the flamegraph for that project to diagnose which tool calls dominated. The gap between the aggregate metric and the turn-level breakdown requires manual navigation.
+
+### Proposed Solution
+
+Add a "View turns →" link/button on each project row in the Metrics page that deep-links to `/flamegraph` with the project pre-selected. The `/flamegraph` page already supports selecting a project via dropdown — update its URL to accept a `?project=<slug>` query param that pre-selects the project on load.
+
+### Acceptance Criteria
+
+- AC1: Each project row in `/metrics` has a "↬ Turns" button that links to `/flamegraph?project=<slug>`
+- AC2: `/flamegraph` reads `?project=<slug>` on load and pre-selects that project in the dropdown
+- AC3: If the slug from the URL is not in the fleet list, the dropdown defaults to the first available
+- AC4: The button is visually small (ghost/icon) so it doesn't dominate the row layout
+
+---
+
+## P75 — On-Demand Fleet Report
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+The `/reports` page displays pre-generated weekly fleet reports, but there is no way to generate a report on-demand. Operators who want a status snapshot mid-week, before a release, or after an incident must wait for the scheduled generation or trigger it externally. The page is read-only with no generation controls.
+
+### Proposed Solution
+
+Add a "Generate now" button on the `/reports` page that calls a new `/api/reports/generate` POST endpoint. The endpoint runs the same aggregation logic as the weekly report but snapshots the current fleet state immediately. The response is streamed back as SSE and the new report appears at the top of the table when complete. A spinner with elapsed-time counter is shown during generation. The generated report is tagged as "on-demand" in the source column.
+
+### Acceptance Criteria
+
+- AC1: "Generate now" button visible on `/reports` page (top right, or below header)
+- AC2: Click triggers POST `/api/reports/generate`; button shows spinner + elapsed time
+- AC3: On completion, new report row appears at top of table with "on-demand" badge in source column
+- AC4: Generation errors surface inline (toast or error row) without crashing the page
+- AC5: Button disabled while generation is in progress to prevent duplicate submissions
