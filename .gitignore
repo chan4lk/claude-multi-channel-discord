@@ -8,4 +8,4 @@ git-credentials.json
 .session-id*
 .claude/
 .specclaw/
-memory/
+/memory/
