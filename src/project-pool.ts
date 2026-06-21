@@ -9,6 +9,17 @@ export type PoolEvent =
   | { kind: 'stuck'; chatId: string; slug: string; sinceLastReplyMs: number; effectiveThresholdMs: number }
   | { kind: 'progress-skip'; chatId: string; slug: string; sinceLastReplyMs: number; sinceTranscriptMs: number; effectiveThresholdMs: number }
   | { kind: 'tool-progress'; chatId: string; slug: string; event: ToolProgressEvent }
+  | { kind: 'respawn-scheduled'; chatId: string; slug: string; backoffMs: number; attempt: number }
+  | { kind: 'circuit-open'; chatId: string; slug: string; failureCount: number }
+  | { kind: 'circuit-reset'; chatId: string; slug: string }
+
+interface FailureLedger {
+  count: number
+  windowStart: number
+  backoffMs: number
+  circuitOpen: boolean
+  circuitOpenAt?: number
+}
 
 export interface ProjectPoolOptions {
   /**
@@ -42,6 +53,7 @@ export class ProjectPool {
    * dedup a resume burst without leaking memory.
    */
   private readonly recentMessages = new Map<string, Map<string, number>>()
+  private readonly failureLedger = new Map<string, FailureLedger>()
   private static readonly MSG_DEDUP_TTL_MS = 60_000
 
   /**
@@ -52,6 +64,11 @@ export class ProjectPool {
    * but short enough that operators don't sit on a dead channel.
    */
   static readonly STUCK_THRESHOLD_MS = 5 * 60_000
+
+  static readonly FAILURE_WINDOW_MS = 30 * 60_000   // 30 min
+  static readonly MAX_FAILURES_BEFORE_CIRCUIT = 5
+  static readonly CIRCUIT_RESET_MS = 10 * 60_000     // 10 min
+  static readonly BACKOFF_SEQUENCE_MS = [5_000, 10_000, 30_000, 120_000, 300_000]
 
   constructor(opts: ProjectPoolOptions) {
     this.opts = opts
@@ -78,6 +95,19 @@ export class ProjectPool {
     if (!project) {
       this.fireEvent({ kind: 'rejected', chatId, reason: 'unknown-project' })
       return
+    }
+
+    const ledger = this.failureLedger.get(chatId)
+    if (ledger?.circuitOpen) {
+      const sinceOpen = this.now() - (ledger.circuitOpenAt ?? 0)
+      if (sinceOpen < ProjectPool.CIRCUIT_RESET_MS) {
+        process.stderr.write(`pool: circuit open for ${project.slug}, dropping message\n`)
+        return
+      }
+      // Auto-reset
+      ledger.circuitOpen = false
+      ledger.count = 0
+      this.fireEvent({ kind: 'circuit-reset', chatId, slug: project.slug })
     }
 
     if (this.isDuplicate(chatId, envelope.messageId)) {
@@ -249,6 +279,15 @@ export class ProjectPool {
     return !!p && p.isAlive()
   }
 
+  /** Returns circuit-breaker state for each chat. */
+  getCircuitStates(): Map<string, { circuitOpen: boolean; backoffUntil?: number }> {
+    const out = new Map<string, { circuitOpen: boolean; backoffUntil?: number }>()
+    for (const [chatId, ledger] of this.failureLedger) {
+      out.set(chatId, { circuitOpen: ledger.circuitOpen, backoffUntil: ledger.backoffMs > 0 ? ledger.windowStart + ledger.backoffMs : undefined })
+    }
+    return out
+  }
+
   /**
    * Snapshot of every tracked process (alive AND recently-exited that
    * hasn't been GC'd yet). Used by `!project usage` to show resource
@@ -312,11 +351,14 @@ export class ProjectPool {
     })
     const offExit = proc.onExit(({ code, signal }) => {
       this.processes.delete(chatId)
-      if (code !== 0 && code !== null) {
-        this.fireEvent({ kind: 'crashed', chatId, slug: project.slug, code, signal })
-      }
       this.cleanups.get(chatId)?.()
       this.cleanups.delete(chatId)
+
+      const isCrash = code !== 0 && code !== null
+      if (isCrash) {
+        this.fireEvent({ kind: 'crashed', chatId, slug: project.slug, code, signal })
+        this.recordFailureAndMaybeRespawn(chatId, project, config)
+      }
     })
     const offToolProgress = proc.onToolProgress?.((ev) => {
       this.fireEvent({ kind: 'tool-progress', chatId, slug: project.slug, event: ev })
@@ -347,6 +389,48 @@ export class ProjectPool {
     this.fireEvent({ kind: 'evict', chatId: oldest.chatId, slug: oldest.proc.slug, reason: 'pool-full' })
     void oldest.proc.kill('pool-full')
     return oldest.chatId
+  }
+
+  private recordFailureAndMaybeRespawn(
+    chatId: string,
+    project: import('./channels-config.ts').Project,
+    config: import('./channels-config.ts').ChannelsConfig,
+  ): void {
+    const now = this.now()
+    let ledger = this.failureLedger.get(chatId)
+    if (!ledger) {
+      ledger = { count: 0, windowStart: now, backoffMs: 0, circuitOpen: false }
+      this.failureLedger.set(chatId, ledger)
+    }
+
+    // Reset window if it expired
+    if (now - ledger.windowStart > ProjectPool.FAILURE_WINDOW_MS) {
+      ledger.count = 0
+      ledger.windowStart = now
+    }
+
+    ledger.count++
+    const attempt = Math.min(ledger.count - 1, ProjectPool.BACKOFF_SEQUENCE_MS.length - 1)
+    const backoffMs = ProjectPool.BACKOFF_SEQUENCE_MS[attempt]
+    ledger.backoffMs = backoffMs
+
+    if (ledger.count >= ProjectPool.MAX_FAILURES_BEFORE_CIRCUIT) {
+      ledger.circuitOpen = true
+      ledger.circuitOpenAt = now
+      this.fireEvent({ kind: 'circuit-open', chatId, slug: project.slug, failureCount: ledger.count })
+      return
+    }
+
+    this.fireEvent({ kind: 'respawn-scheduled', chatId, slug: project.slug, backoffMs, attempt: ledger.count })
+    setTimeout(() => {
+      if (this.failureLedger.get(chatId)?.circuitOpen) return
+      const currentConfig = this.opts.getConfig()
+      const currentProject = currentConfig.projects[chatId]
+      if (!currentProject) return
+      void this.spawn(chatId, currentProject, currentConfig).catch((err) => {
+        process.stderr.write(`pool: respawn failed for ${project.slug}: ${err}\n`)
+      })
+    }, backoffMs)
   }
 
   private fireEvent(evt: PoolEvent): void {

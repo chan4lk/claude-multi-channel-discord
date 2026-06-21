@@ -66,6 +66,20 @@ const ACCESS_FILE = join(STATE_DIR, 'access.json')
 
 const MC_INSTANCE_ID = createHash('sha1').update(realpathSync(STATE_DIR)).digest('hex')
 const mcEmit = buildEmitter(MC_INSTANCE_ID, hostname(), userInfo().username)
+
+function writeCircuitState(chatId: string, slug: string, open: boolean): void {
+  const mcdDir = process.env.MCD_CHANNELS_DIR
+  if (!mcdDir) return
+  const file = join(mcdDir, 'circuit-state.json')
+  let current: Record<string, { circuitOpen: boolean; slug: string; ts: string }> = {}
+  try { current = JSON.parse(readFileSync(file, 'utf-8')) } catch {}
+  if (open) {
+    current[chatId] = { circuitOpen: true, slug, ts: new Date().toISOString() }
+  } else {
+    delete current[chatId]
+  }
+  try { writeFileSync(file, JSON.stringify(current, null, 2)) } catch {}
+}
 const APPROVED_DIR = join(STATE_DIR, 'approved')
 const ENV_FILE = join(STATE_DIR, '.env')
 
@@ -1296,6 +1310,26 @@ async function maybeInitProjectsBackend(): Promise<void> {
       }
       if (evt.kind === 'crashed') {
         detachSpecclawWatcher(evt.chatId)
+      }
+      if (evt.kind === 'respawn-scheduled') {
+        mcEmit('respawn_scheduled', { slug: evt.slug, chatId: evt.chatId, backoffMs: evt.backoffMs, attempt: evt.attempt })
+      }
+      if (evt.kind === 'circuit-open') {
+        mcEmit('circuit_open', { slug: evt.slug, chatId: evt.chatId, failureCount: evt.failureCount })
+        // Write circuit state side-file for fleet dashboard
+        writeCircuitState(evt.chatId, evt.slug, true)
+        const masterChatId = loadChannelsConfig().master?.chatId ?? evt.chatId
+        const masterNotice: OutboundReply = {
+          kind: 'text',
+          chatId: masterChatId,
+          text: `🔴 \`${evt.slug}\`: circuit opened after ${evt.failureCount} failures in 30 min. ` +
+            `Auto-resets in 10 min. Use \`!project stop\` then send a message to force-reset.`,
+        }
+        routeNotification(loadChannelsConfig(), masterNotice, 'circuit-open notify')
+      }
+      if (evt.kind === 'circuit-reset') {
+        mcEmit('circuit_reset', { slug: evt.slug, chatId: evt.chatId })
+        writeCircuitState(evt.chatId, evt.slug, false)
       }
       if (evt.kind === 'tool-progress') {
         void handleToolProgressEvent(evt.chatId, evt.slug, evt.event).catch((err) => {

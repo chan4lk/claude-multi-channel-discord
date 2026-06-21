@@ -11,6 +11,7 @@ export interface FleetProject {
   stuckThresholdMinutes: number
   monthlyTokenBudget?: number
   monthlyTokensUsed?: number
+  circuitOpen?: boolean
 }
 
 export interface FleetResponse {
@@ -159,6 +160,7 @@ function computeMonthlyTokensUsed(slug: string, mcdDir: string): number {
 }
 
 interface ProjectEntry {
+  chatId: string
   slug: string
   stuckThresholdMinutes: number
   monthlyTokenBudget?: number
@@ -183,6 +185,7 @@ function loadChannelEntries(mcdDir: string): { entries: ProjectEntry[]; chatIdTo
       if (proj.slug) {
         chatIdToSlug.set(chatId, proj.slug)
         entries.push({
+          chatId,
           slug: proj.slug,
           stuckThresholdMinutes: proj.stuckThresholdMinutes ?? defaultThreshold,
           monthlyTokenBudget: proj.monthlyTokenBudget,
@@ -209,8 +212,11 @@ export function computeFleet(mcdDir: string | undefined): FleetResponse {
   if (!mcdDir) return { idle: 0, active: 0, stalled: 0, autonomous: 0, projects: [] }
   const { entries, chatIdToSlug } = loadChannelEntries(mcdDir)
   const scheduledSlugs = loadScheduledSlugs(mcdDir, chatIdToSlug)
+  const circuitState = readJson<Record<string, { circuitOpen: boolean; slug: string; ts: string }>>(
+    path.join(mcdDir, 'circuit-state.json')
+  ) ?? {}
 
-  const projects: FleetProject[] = entries.map(({ slug, stuckThresholdMinutes, monthlyTokenBudget }) => {
+  const projects: FleetProject[] = entries.map(({ chatId, slug, stuckThresholdMinutes, monthlyTokenBudget }) => {
     const mtime = getTranscriptMtime(slug, mcdDir)
     const ageMs = mtime ? Date.now() - mtime : Infinity
     const ageMins = Math.min(Math.floor(ageMs / 60_000), 9999)
@@ -224,6 +230,14 @@ export function computeFleet(mcdDir: string | undefined): FleetResponse {
     if (monthlyTokenBudget != null) {
       result.monthlyTokenBudget = monthlyTokenBudget
       result.monthlyTokensUsed = computeMonthlyTokensUsed(slug, mcdDir)
+    }
+    // Add circuit state (auto-expire after 10 min)
+    const circuit = circuitState[chatId]
+    if (circuit?.circuitOpen) {
+      const tsMs = new Date(circuit.ts).getTime()
+      if (Date.now() - tsMs < 10 * 60_000) {
+        result.circuitOpen = true
+      }
     }
     return result
   })

@@ -13,6 +13,7 @@ export interface FleetProject {
   stuckThresholdMinutes: number
   monthlyTokenBudget?: number
   monthlyTokensUsed?: number
+  circuitOpen?: boolean
 }
 
 export interface FleetResponse {
@@ -109,10 +110,12 @@ function getTranscriptMtime(slug: string, mcdDir: string): number | null {
 }
 
 function classifyState(
+  chatId: string,
   slug: string,
   mcdDir: string,
   scheduledSlugs: Set<string>,
   stuckThresholdMinutes: number,
+  circuitState: Record<string, { circuitOpen: boolean; slug: string; ts: string }>,
   monthlyTokenBudget?: number
 ): FleetProject {
   const mtime = getTranscriptMtime(slug, mcdDir)
@@ -136,6 +139,15 @@ function classifyState(
   if (monthlyTokenBudget != null) {
     result.monthlyTokenBudget = monthlyTokenBudget
     result.monthlyTokensUsed = computeMonthlyTokensUsed(slug, mcdDir)
+  }
+
+  // Add circuit state (auto-expire after 10 min)
+  const circuit = circuitState[chatId]
+  if (circuit?.circuitOpen) {
+    const tsMs = new Date(circuit.ts).getTime()
+    if (Date.now() - tsMs < 10 * 60_000) {
+      result.circuitOpen = true
+    }
   }
 
   return result

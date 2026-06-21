@@ -407,6 +407,85 @@ function envelope(content: string): InboundEnvelope {
   await pool.shutdown()
 }
 
+// --- 13. Circuit-breaker: opens after 5 consecutive crashes -----------------
+{
+  const config = makeConfig({ idleEvictMinutes: 60 })
+  const now = 1_000_000
+  const events: PoolEvent[] = []
+  const created: MockProjectProcess[] = []
+  const pool = new ProjectPool({
+    factory: ({ chatId, project }) => {
+      const p = new MockProjectProcess({ chatId, slug: project.slug, now: () => now })
+      created.push(p)
+      return p
+    },
+    getConfig: () => config,
+    onReply: () => {},
+    onEvent: (e) => events.push(e),
+    now: () => now,
+  })
+
+  for (let i = 0; i < 5; i++) {
+    await pool.deliver('111111111111111111', { ...envelope(`crash-${i}`), messageId: `crash-msg-${i}` })
+    await sleep(5) // let spawn settle
+    created[i]!.crash()
+  }
+
+  check('13: circuit-open event fired', events.some((e) => e.kind === 'circuit-open'))
+  check(
+    '13: 4 respawn-scheduled events before circuit',
+    events.filter((e) => e.kind === 'respawn-scheduled').length === 4,
+  )
+  check(
+    '13: circuit-open has correct failureCount',
+    events.some((e) => e.kind === 'circuit-open' && e.failureCount === 5),
+  )
+
+  await pool.shutdown()
+}
+
+// --- 14. Circuit-breaker: drops messages when circuit is open ---------------
+{
+  const config = makeConfig({ idleEvictMinutes: 60 })
+  let now = 1_000_000
+  const events: PoolEvent[] = []
+  const created: MockProjectProcess[] = []
+  const pool = new ProjectPool({
+    factory: ({ chatId, project }) => {
+      const p = new MockProjectProcess({ chatId, slug: project.slug, now: () => now })
+      created.push(p)
+      return p
+    },
+    getConfig: () => config,
+    onReply: () => {},
+    onEvent: (e) => events.push(e),
+    now: () => now,
+  })
+
+  // Open the circuit
+  for (let i = 0; i < 5; i++) {
+    await pool.deliver('111111111111111111', { ...envelope(`crash-${i}`), messageId: `cb-msg-${i}` })
+    await sleep(5)
+    created[i]!.crash()
+  }
+  check('14: circuit is open', events.some((e) => e.kind === 'circuit-open'))
+
+  const countBefore = created.length
+  // Message while circuit open — should be dropped, no new spawn
+  await pool.deliver('111111111111111111', { ...envelope('dropped-msg'), messageId: 'cb-dropped' })
+  await sleep(5)
+  check('14: no new process spawned while circuit open', created.length === countBefore)
+
+  // Advance time past reset window — circuit should auto-reset
+  now += 11 * 60_000
+  await pool.deliver('111111111111111111', { ...envelope('after-reset'), messageId: 'cb-after-reset' })
+  await sleep(5)
+  check('14: circuit-reset event fired', events.some((e) => e.kind === 'circuit-reset'))
+  check('14: new process spawned after circuit reset', created.length > countBefore)
+
+  await pool.shutdown()
+}
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)
   process.exit(1)
