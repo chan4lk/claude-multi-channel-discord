@@ -130,12 +130,9 @@ export class ProjectPool {
       this.fireEvent({ kind: 'circuit-reset', chatId, slug: project.slug })
     }
 
-    if (this.isDuplicate(chatId, envelope.messageId)) {
-      process.stderr.write(`pool: drop duplicate msg=${envelope.messageId} chat=${chatId}\n`)
-      return
-    }
-
-    // Budget enforcement: check thresholds and queue at exhaustion.
+    // Budget enforcement before dedup: check thresholds and queue at exhaustion.
+    // Dedup is intentionally skipped for queued messages so they can be re-delivered
+    // on month rollover without being dropped as duplicates.
     if (project.monthlyTokenBudget != null) {
       const used = this.computeMonthlyTokensUsed(project.slug, config)
       const budget = project.monthlyTokenBudget
@@ -148,6 +145,11 @@ export class ProjectPool {
         this.fireEvent({ kind: 'budget-exhausted', chatId, slug: project.slug, used, budget, queuedCount: queue.length })
         return
       }
+    }
+
+    if (this.isDuplicate(chatId, envelope.messageId)) {
+      process.stderr.write(`pool: drop duplicate msg=${envelope.messageId} chat=${chatId}\n`)
+      return
     }
 
     const existing = this.processes.get(chatId)
