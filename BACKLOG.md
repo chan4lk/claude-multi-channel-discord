@@ -1504,7 +1504,7 @@ Beneath each fleet state badge, render a 20-point micro-sparkline (40×16 px inl
 
 ## P64 — Project Galaxy Map
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
@@ -1530,7 +1530,7 @@ Add a `/galaxy` page. Render projects as stars on a dark canvas using canvas2d o
 
 ## P65 — Holistic Project Feed
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem

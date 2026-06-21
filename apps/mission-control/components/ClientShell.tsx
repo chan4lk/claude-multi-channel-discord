@@ -12,9 +12,9 @@ import { authClient } from '../src/auth-client'
 
 const MOBILE_NAV = [
   { href: '/', icon: '⌂', label: 'Home' },
-  { href: '/graph', icon: '⬡', label: 'Graph' },
+  { href: '/feed', icon: '≣', label: 'Feed' },
+  { href: '/galaxy', icon: '✵', label: 'Galaxy' },
   { href: '/pipeline', icon: '⬒', label: 'Pipeline' },
-  { href: '/metrics', icon: '◱', label: 'Metrics' },
   { href: '/search', icon: '⌕', label: 'Search' },
 ] as const
 
