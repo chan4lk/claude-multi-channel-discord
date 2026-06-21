@@ -25,6 +25,7 @@ export interface FleetProject {
   queuedCount?: number
   circuitOpen?: boolean
   contextUsagePct?: number
+  contextFillEtaMinutes?: number
   goalText?: string
   goalStatus?: GoalStatus
   memoryStatus?: MemoryStatus
@@ -129,6 +130,69 @@ function computeContextUsagePct(slug: string, mcdDir: string): number | undefine
     } catch {}
   }
   return undefined
+}
+
+function computeContextFillEta(slug: string, mcdDir: string): number | undefined {
+  const projectPath = path.join(mcdDir, 'projects', slug)
+  let realPath = projectPath
+  try { realPath = fs.realpathSync(projectPath) } catch { return undefined }
+  const encoded = encodeProjectCwd(realPath)
+  const transcriptDir = path.join(os.homedir(), '.claude', 'projects', encoded)
+  let jsonlFiles: string[] = []
+  try {
+    jsonlFiles = fs.readdirSync(transcriptDir)
+      .filter((f) => f.endsWith('.jsonl'))
+      .map((f) => path.join(transcriptDir, f))
+  } catch { return undefined }
+  if (jsonlFiles.length === 0) return undefined
+
+  let latestFile = ''
+  let latestMtime = 0
+  for (const file of jsonlFiles) {
+    try {
+      const mtime = fs.statSync(file).mtimeMs
+      if (mtime > latestMtime) { latestMtime = mtime; latestFile = file }
+    } catch {}
+  }
+  if (!latestFile) return undefined
+
+  let raw = ''
+  try { raw = fs.readFileSync(latestFile, 'utf-8') } catch { return undefined }
+  const lines = raw.trim().split('\n').filter(Boolean)
+
+  type TurnSample = { tokens: number; tsMs: number }
+  const samples: TurnSample[] = []
+  for (const line of lines) {
+    if (samples.length >= 10) break
+    try {
+      const rec = JSON.parse(line) as { type?: string; timestamp?: string; message?: { usage?: { input_tokens?: number } } }
+      if (rec.type === 'assistant' && rec.message?.usage?.input_tokens != null && rec.timestamp) {
+        const tsMs = new Date(rec.timestamp).getTime()
+        if (!isNaN(tsMs)) {
+          samples.unshift({ tokens: rec.message.usage.input_tokens, tsMs })
+        }
+      }
+    } catch {}
+  }
+
+  if (samples.length < 3) return undefined
+
+  const last5 = samples.slice(-5)
+  const tokenDelta = last5[last5.length - 1].tokens - last5[0].tokens
+  const timeDeltaMs = last5[last5.length - 1].tsMs - last5[0].tsMs
+  const nIntervals = last5.length - 1
+
+  if (tokenDelta <= 0 || timeDeltaMs <= 0) return undefined
+
+  const tokensPerTurn = tokenDelta / nIntervals
+  const msPerTurn = timeDeltaMs / nIntervals
+  const currentTokens = last5[last5.length - 1].tokens
+  const headroom = 200_000 - currentTokens
+  if (headroom <= 0) return 0
+
+  const turnsToFill = headroom / tokensPerTurn
+  const etaMs = turnsToFill * msPerTurn
+  return Math.round(etaMs / 60_000)
 }
 
 function readMemoryStatus(slug: string, mcdDir: string): MemoryStatus {
@@ -243,7 +307,13 @@ function classifyState(
   }
 
   const ctxPct = computeContextUsagePct(slug, mcdDir)
-  if (ctxPct != null) result.contextUsagePct = ctxPct
+  if (ctxPct != null) {
+    result.contextUsagePct = ctxPct
+    if (ctxPct > 50) {
+      const eta = computeContextFillEta(slug, mcdDir)
+      if (eta != null && eta < 120) result.contextFillEtaMinutes = eta
+    }
+  }
 
   const goal = readGoal(slug, mcdDir)
   if (goal) { result.goalText = goal.goalText; result.goalStatus = goal.goalStatus }
