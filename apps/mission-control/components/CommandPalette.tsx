@@ -177,6 +177,14 @@ export default function CommandPalette({ onInject }: Props) {
         category: 'navigate',
         action: () => router.push('/branches'),
       },
+      {
+        id: 'nav:broadcast',
+        label: 'Broadcast…',
+        description: 'Send a message to multiple projects at once',
+        icon: '⊕',
+        category: 'navigate',
+        action: () => router.push('/broadcast'),
+      },
     ]
 
     const projects: Command[] = (fleet?.projects ?? []).flatMap((p) => [

@@ -602,7 +602,7 @@ Add a `/branches` page showing a table of all projects with git repositories. A 
 
 ## P26 — Multi-Project Broadcast
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-20
 
 ### Problem
@@ -626,7 +626,7 @@ Add a "Broadcast" action to the Command Palette and a dedicated `/broadcast` pag
 
 ## P27 — Scheduler Heatmap
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-20
 
 ### Problem

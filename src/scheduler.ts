@@ -10,6 +10,8 @@
  * tick (e.g. host was asleep at 09:00) doesn't double-fire when the
  * bot comes back up at 09:30.
  */
+import * as fs from 'fs'
+import * as path from 'path'
 import {
   hasFiredToday,
   hasFiredWithin,
@@ -19,6 +21,17 @@ import {
   type Schedule,
 } from './schedules-config.ts'
 import type { InboundEnvelope } from './project-process.ts'
+
+function appendScheduleLog(chatId: string, scheduledAt: string, firedAt: string, status: 'ok' | 'stalled' | 'skipped', durationMs: number): void {
+  const mcdDir = process.env.MCD_CHANNELS_DIR
+  if (!mcdDir) return
+  try {
+    const entry = JSON.stringify({ chatId, scheduledAt, firedAt, status, durationMs }) + '\n'
+    fs.appendFileSync(path.join(mcdDir, 'schedule-log.jsonl'), entry)
+  } catch {
+    // Non-fatal — don't break scheduler on log failure
+  }
+}
 
 export interface SchedulerDeps {
   /**
@@ -78,8 +91,10 @@ export class Scheduler {
       if (!isDue(s, now)) continue
 
       this.log(`firing schedule ${s.id} → chat ${s.chatId}`)
+      const fireStart = Date.now()
       try {
         await this.deps.deliver(s.chatId, this.envelopeFor(s, now))
+        appendScheduleLog(s.chatId, s.at ?? s.interval ?? 'unknown', now.toISOString(), 'ok', Date.now() - fireStart)
         this.deps.onFire?.(s.chatId, s.id, now.toISOString())
         s.lastRunAt = now.toISOString()
         s.runCount = s.runCount + 1
@@ -90,6 +105,7 @@ export class Scheduler {
         dirty = true
       } catch (err) {
         this.log(`fire failed for ${s.id}: ${(err as Error).message}`)
+        appendScheduleLog(s.chatId, s.at ?? s.interval ?? 'unknown', now.toISOString(), 'stalled', Date.now() - fireStart)
       }
     }
 
