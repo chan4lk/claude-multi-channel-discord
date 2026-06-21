@@ -38,6 +38,12 @@ export default function GraphPage() {
             PROJECT GRAPH
           </h1>
           <div className="flex-1" />
+          <Link
+            href="/graph3d"
+            className="text-[0.6rem] px-2.5 py-1 rounded font-mono font-bold uppercase tracking-wider border border-cyber-cyan/20 text-slate-400 hover:text-cyber-cyan hover:border-cyber-cyan/40 transition-colors"
+          >
+            ◈ 3D
+          </Link>
           <button
             onClick={() => setShowBacklog((b) => !b)}
             className="text-[0.6rem] px-2.5 py-1 rounded font-mono font-bold uppercase tracking-wider transition-all"
