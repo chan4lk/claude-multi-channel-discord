@@ -11,7 +11,8 @@ export type McEventType =
   | 'circuit_reset'
   | 'command_executed'
   | 'context_warning'
-  | 'distillation_complete';
+  | 'distillation_complete'
+  | 'tool_progress';
 
 export interface McEvent {
   instance_id: string;   // SHA1(realpath(MCD_CHANNELS_DIR))

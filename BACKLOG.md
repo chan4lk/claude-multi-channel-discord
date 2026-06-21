@@ -1630,7 +1630,7 @@ Add a `/ambient` page: a full-screen generative particle system that maps fleet 
 
 ## P69 — Live Tool Call Ticker
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
@@ -1770,7 +1770,7 @@ Add a "View turns →" link/button on each project row in the Metrics page that 
 
 ## P75 — On-Demand Fleet Report
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
@@ -1788,3 +1788,122 @@ Add a "Generate now" button on the `/reports` page that calls a new `/api/report
 - AC3: On completion, new report row appears at top of table with "on-demand" badge in source column
 - AC4: Generation errors surface inline (toast or error row) without crashing the page
 - AC5: Button disabled while generation is in progress to prevent duplicate submissions
+
+---
+
+## P76 — Cross-Project Memory Similarity Matrix
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+No view reveals which projects share similar memory topics or concerns. Operators cannot identify when two projects are independently solving the same problem, when a memory from one project would be valuable to another, or which projects are most topically isolated.
+
+### Proposed Solution
+
+Add a `/similarity` page showing a project × project heatmap where each cell's intensity represents co-mention overlap between the two projects' memory content (word-frequency intersection-over-union after stop-word removal). Rows and columns sorted by cluster. Cell colored dark (0%) to bright cyan (100%). Hovering shows top 5 shared keywords. Diagonal excluded from sorting. Threshold slider (default 10%) grays cells below threshold. Data computed server-side at `/api/similarity` reading all `~/.claude/projects/<encoded>/memory/*.md`.
+
+### Acceptance Criteria
+
+- AC1: `/similarity` page renders N×N heatmap (N = projects with memory files)
+- AC2: Cell intensity maps to word-overlap score (intersection/union of non-stop keywords, 0–1)
+- AC3: Rows/columns sorted by cluster (greedy: highest-average-similarity row first)
+- AC4: Hover tooltip shows top 5 shared keywords
+- AC5: Threshold slider (0–50%) grays cells below threshold
+- AC6: `/api/similarity` computes server-side; cached 5 min
+- AC7: Nav link added under Intelligence
+
+---
+
+## P77 — Project Health Score Card
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+The fleet dashboard shows per-project state (idle/active/stalled) but gives no aggregate quality signal. Operators cannot tell at a glance which projects are "healthy" (active, low stall rate, recent PR output, fresh memories) vs "degraded" (high stall rate, no output, old transcripts, stuck watchdog kills).
+
+### Proposed Solution
+
+Add a Health Score (0–100) computed server-side per project, weighting: stall rate (−30), recent turns (+ up to 30), PR output last 7 days (+ up to 20), memory write recency (+ up to 10), watchdog kills (−10 each, max −30). Expose `/api/fleet/health` endpoint. Show health badge on each InstanceGrid card: green ≥70, amber 40–69, red <40. Clicking the badge opens a breakdown tooltip: "−15 stall rate, +20 activity, +10 PRs…".
+
+### Acceptance Criteria
+
+- AC1: `/api/fleet/health` returns `{ slug, score, breakdown }[]`
+- AC2: InstanceGrid card shows colored health badge (green/amber/red) next to state
+- AC3: Clicking badge shows tooltip with score breakdown (per-factor +/- values)
+- AC4: Tooltip auto-hides on click-outside or Escape
+- AC5: Score updates with fleet refresh (30s poll)
+
+---
+
+## P78 — Agent Turn Diff Viewer
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+The flamegraph shows turn duration and tool call counts but does not show what files changed during a turn. After a long autonomous turn, operators have no way in Mission Control to see "what did Claude actually produce?" without switching to a terminal and running `git diff`.
+
+### Proposed Solution
+
+Add a "Diff" tab to the `/projects/<slug>` page (alongside Timeline). The tab shows a virtual file diff for each turn: read the JSONL transcript, extract Edit/Write/Bash tool results, and reconstruct a summary of changed files with +/− line counts. For turns where git is available, call `/api/projects/<slug>/diff?commit=<sha>` which runs `git diff <parent>..<sha>` and returns the patch. Display as a unified diff viewer (syntax-highlighted, collapsible per file).
+
+### Acceptance Criteria
+
+- AC1: Diff tab visible on `/projects/<slug>` alongside Timeline/Memory tabs
+- AC2: Turn list on left; selecting a turn shows diff on right
+- AC3: For git-tracked projects, diff comes from `git diff <parent>..<sha>`; for others, synthesized from JSONL tool results
+- AC4: Files collapsed by default; click to expand; +lines green, −lines red
+- AC5: `/api/projects/<slug>/diff` route accepts `?commit=<sha>` and returns git patch
+
+---
+
+## P79 — Scheduler Visual Calendar
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+The existing `/scheduler` view shows scheduled jobs as a flat list of slugs and times. Operators cannot visualize the spread of scheduled tasks across the day/week, identify conflicts (two heavy jobs at the same time), or see when jobs last fired.
+
+### Proposed Solution
+
+Add a calendar/timeline view to the Scheduler page. Render a 24-hour horizontal band (midnight to midnight) with each scheduled job as a colored bar at its HH:MM position. Jobs on the same project share a color. Hovering a bar shows: slug, time, message excerpt, last-fired timestamp. A "week view" toggle shows Mon–Sun columns with job bars. The list view remains as a tab alongside the calendar view.
+
+### Acceptance Criteria
+
+- AC1: Scheduler page has "Calendar" tab alongside existing "List" tab
+- AC2: 24-hour band renders jobs as colored position markers at HH:MM
+- AC3: Hover tooltip shows slug, time, message excerpt, last-fired
+- AC4: "Week view" toggle shows 7-column grid (Mon–Sun), each column is the 24h band
+- AC5: Jobs on same project share color; color derived from slug hash
+
+---
+
+## P80 — Fleet Command History
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+Operators issue `!project` commands via Discord but have no searchable record of what was done. The audit log records command_executed events, but the Audit Log page requires knowing what to search for. There is no dedicated view for "recent operator commands" with quick replay.
+
+### Proposed Solution
+
+Add a `/commands` page showing recent `!project ...` command executions sourced from the audit log (verb = "command"). Each row: timestamp, operator, verb, target, status (success/error). Clicking a row shows the full command text and any error message. A "Re-run" button sends the exact command text back via `/api/inject` to the master channel. Filter by verb (create/clone/set/rm/etc) and operator. Paginate 50 per page.
+
+### Acceptance Criteria
+
+- AC1: `/commands` page lists command_executed audit entries, newest first
+- AC2: Columns: timestamp, operator, verb, target, status
+- AC3: Row expand shows full command text + error if any
+- AC4: "Re-run" button POSTs command to `/api/inject` targeting master channel
+- AC5: Verb filter (multi-select) and operator filter (text substring)
+- AC6: Pagination: 50/page with prev/next
+- AC7: Nav link added under Operations

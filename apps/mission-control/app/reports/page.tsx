@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import type { WeeklyReportResponse, WeeklyProjectStats } from '../api/reports/weekly/route'
+import type { SavedReport } from '../api/reports/history/route'
 
 function fmt(n: number, decimals = 0): string {
   return n.toLocaleString('en-US', { maximumFractionDigits: decimals })
@@ -149,11 +150,15 @@ export default function ReportsPage() {
   const [report, setReport] = useState<WeeklyReportResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
+  const [genStatus, setGenStatus] = useState<string | null>(null)
+  const [genElapsed, setGenElapsed] = useState(0)
+  const genTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
   const [sortKey, setSortKey] = useState<SortKey>('rank')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const [highlightSlug, setHighlightSlug] = useState<string | null>(null)
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [history, setHistory] = useState<SavedReport[]>([])
 
   const fetchReport = useCallback(async () => {
     setLoading(true)
@@ -164,7 +169,18 @@ export default function ReportsPage() {
     setLoading(false)
   }, [])
 
+  const fetchHistory = useCallback(async () => {
+    try {
+      const res = await fetch('/api/reports/history')
+      if (res.ok) {
+        const d = await res.json() as { reports: SavedReport[] }
+        setHistory(d.reports)
+      }
+    } catch {}
+  }, [])
+
   useEffect(() => { fetchReport() }, [fetchReport])
+  useEffect(() => { fetchHistory() }, [fetchHistory])
 
   useEffect(() => {
     const slug = window.location.hash.slice(1)
@@ -206,15 +222,43 @@ export default function ReportsPage() {
 
   async function handleGenerate() {
     setGenerating(true)
+    setGenStatus('Starting…')
+    setGenElapsed(0)
     setSaveMsg(null)
+    const start = Date.now()
+    genTimerRef.current = setInterval(() => setGenElapsed(Date.now() - start), 200)
     try {
-      const res = await fetch('/api/reports/weekly/generate', { method: 'POST' })
-      const d = await res.json() as { ok?: boolean; savedTo?: string; weekLabel?: string; error?: string }
-      setSaveMsg(d.ok ? `Saved: ${d.savedTo}` : (d.error ?? 'Unknown error'))
+      const res = await fetch('/api/reports/generate', { method: 'POST' })
+      if (!res.body) throw new Error('No response body')
+      const reader = res.body.getReader()
+      const dec = new TextDecoder()
+      let buf = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += dec.decode(value, { stream: true })
+        const lines = buf.split('\n')
+        buf = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          try {
+            const ev = JSON.parse(line.slice(6)) as { type: string; message?: string; fileName?: string; weekLabel?: string }
+            if (ev.type === 'status') setGenStatus(ev.message ?? '')
+            if (ev.type === 'error') setSaveMsg(`Error: ${ev.message}`)
+            if (ev.type === 'done' && ev.fileName) {
+              setSaveMsg(`Saved: ${ev.fileName}`)
+              void fetchHistory()
+            }
+          } catch {}
+        }
+      }
     } catch (e) {
       setSaveMsg(String(e))
+    } finally {
+      if (genTimerRef.current) clearInterval(genTimerRef.current)
+      setGenerating(false)
+      setGenStatus(null)
     }
-    setGenerating(false)
   }
 
   function handleExport() {
@@ -258,9 +302,14 @@ export default function ReportsPage() {
             <button
               onClick={handleGenerate}
               disabled={generating}
-              className="text-[0.6rem] font-mono px-2 py-1 rounded border border-purple-500/30 text-slate-400 hover:text-purple-400 hover:border-purple-500/60 transition-colors disabled:opacity-50"
+              className="text-[0.6rem] font-mono px-2 py-1 rounded border border-purple-500/30 text-slate-400 hover:text-purple-400 hover:border-purple-500/60 transition-colors disabled:opacity-50 flex items-center gap-1.5"
             >
-              {generating ? 'Saving…' : '💾 Save Report'}
+              {generating ? (
+                <>
+                  <span className="animate-spin inline-block" style={{ fontSize: '0.7rem' }}>⟳</span>
+                  {genStatus ?? 'Generating…'} ({(genElapsed / 1000).toFixed(1)}s)
+                </>
+              ) : '⚡ Generate now'}
             </button>
             {report && (
               <button
@@ -352,6 +401,61 @@ export default function ReportsPage() {
             </div>
           </div>
         )}
+
+        {/* Saved Reports History */}
+        <div className="mt-8">
+          <div className="text-[0.6rem] font-mono uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-3">
+            Saved Reports
+            <button
+              onClick={fetchHistory}
+              className="text-[0.55rem] text-slate-600 hover:text-slate-400 transition-colors"
+            >↺</button>
+          </div>
+          {history.length === 0 ? (
+            <div className="text-slate-600 text-[0.65rem] font-mono py-4">
+              No saved reports yet. Click ⚡ Generate now to create the first snapshot.
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded border border-white/6">
+              <table className="w-full text-[0.65rem] font-mono">
+                <thead>
+                  <tr className="border-b border-white/8">
+                    {['Label', 'Generated', 'Source', 'Projects', 'Turns', 'Cost'].map((h) => (
+                      <th key={h} className="text-left px-3 py-2 uppercase tracking-wider text-[0.55rem] text-slate-500 font-semibold">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.map((r) => (
+                    <tr key={r.fileName} className="border-b border-white/4 hover:bg-white/2">
+                      <td className="px-3 py-1.5 text-slate-300">{r.weekLabel}</td>
+                      <td className="px-3 py-1.5 text-slate-500">
+                        {r.generatedAt ? new Date(r.generatedAt).toLocaleString() : '—'}
+                      </td>
+                      <td className="px-3 py-1.5">
+                        <span
+                          className="px-1.5 py-0.5 rounded text-[0.55rem]"
+                          style={{
+                            color: r.source === 'on-demand' ? '#F59E0B' : '#94A3B8',
+                            background: r.source === 'on-demand' ? '#F59E0B15' : '#94A3B810',
+                            border: `1px solid ${r.source === 'on-demand' ? '#F59E0B30' : '#94A3B820'}`,
+                          }}
+                        >
+                          {r.source}
+                        </span>
+                      </td>
+                      <td className="px-3 py-1.5 text-cyan-400">{r.projectCount}</td>
+                      <td className="px-3 py-1.5 text-purple-400">{r.totalTurns.toLocaleString()}</td>
+                      <td className="px-3 py-1.5 text-green-400">
+                        {r.totalCostUsd < 0.01 ? '<$0.01' : `$${r.totalCostUsd.toFixed(2)}`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </main>
     </div>
   )
