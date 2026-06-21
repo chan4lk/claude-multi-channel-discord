@@ -1818,7 +1818,7 @@ Add a `/similarity` page showing a project × project heatmap where each cell's 
 
 ## P77 — Project Health Score Card
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
@@ -1864,7 +1864,7 @@ Add a "Diff" tab to the `/projects/<slug>` page (alongside Timeline). The tab sh
 
 ## P79 — Scheduler Visual Calendar
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
