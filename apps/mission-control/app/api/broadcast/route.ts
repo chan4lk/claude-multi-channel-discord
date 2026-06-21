@@ -4,12 +4,14 @@ import { insertBroadcast } from '../../../src/db'
 
 export const dynamic = 'force-dynamic'
 
-function sessionExists(name: string): boolean {
+function findSession(slug: string): string | null {
   try {
-    execSync(`tmux has-session -t ${JSON.stringify(name)}`, { stdio: 'ignore' })
-    return true
+    const out = execSync('tmux ls -F "#{session_name}"', { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] })
+    const sessions = out.trim().split('\n').filter(Boolean)
+    // Match exact `mcd-<slug>` or timestamped `mcd-<slug>-<ts>`
+    return sessions.find((s) => s === `mcd-${slug}` || s.startsWith(`mcd-${slug}-`)) ?? null
   } catch {
-    return false
+    return null
   }
 }
 
@@ -21,9 +23,9 @@ function buildEnvelope(slug: string, message: string): string {
 
 function injectSlug(slug: string, rawMessage: string): { slug: string; status: 'sent' | 'error'; error?: string } {
   const message = rawMessage.replace(/\{\{slug\}\}/g, slug)
-  const session = `mcd-${slug}`
+  const session = findSession(slug)
 
-  if (!sessionExists(session)) {
+  if (!session) {
     return { slug, status: 'error', error: `No active session for "${slug}"` }
   }
 

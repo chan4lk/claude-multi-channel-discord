@@ -504,7 +504,7 @@ function DashboardClient() {
           </div>
 
           {/* Col 2: Scheduler + Fleet Advisor */}
-          <div className="flex flex-col gap-5">
+          <div className="flex flex-col gap-5 min-w-0 overflow-hidden">
             <AnimatedSection visible={sections.scheduler}>
               <section>
                 <div className="flex items-center gap-2 mb-3">

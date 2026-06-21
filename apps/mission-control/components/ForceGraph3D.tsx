@@ -54,7 +54,8 @@ export default function ForceGraph3D() {
     try {
       const res = await fetch('/api/fleet')
       if (!res.ok) return
-      const projects: FleetProject[] = await res.json()
+      const data = await res.json() as { projects?: FleetProject[] }
+      const projects: FleetProject[] = data.projects ?? []
       const nodes: GraphNode[] = projects.map((p) => ({
         id: p.slug,
         slug: p.slug,
