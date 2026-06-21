@@ -27,6 +27,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/timeline', label: 'Timeline', icon: '◫' },
       { href: '/memory-graph', label: 'Memory Graph', icon: '✦' },
       { href: '/knowledge', label: 'Knowledge', icon: '◈' },
+      { href: '/flamegraph', label: 'Turn Flame Graph', icon: '▬' },
     ],
   },
   {
