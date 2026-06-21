@@ -951,3 +951,118 @@ Extend the fleet broadcaster to check `monthlyTokensUsed / monthlyTokenBudget` e
 - AC3: Budget reset at calendar month start (UTC midnight on 1st) restores message flow
 - AC4: `budgetStatus` in `/api/fleet`; InstanceGrid card color: green/amber/red/grey
 - AC5: `monthlyTokenBudget: null` means unlimited; enforcement skipped
+
+---
+
+## P41 — Audit Log Browser
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+P36 shipped a comprehensive audit trail written to `mc.db` (SQLite). Every fleet event (spawns, kills, stuck-watchdog, circuit-open, budget-alerts, scheduler fires) is persisted. But there is no way to browse it from the mission control UI — operators must `sqlite3 mc.db` to inspect history. High-value operational data exists but is invisible.
+
+### Proposed Solution
+
+Add an `/audit` page to mission control that reads from `mc.db` via a new `/api/audit` route. Display events newest-first in a paginated table with columns: timestamp, event type (color-coded badge), slug, and payload summary. Support filtering by event type and by slug. Add a link from each InstanceGrid card's slug to a pre-filtered audit view for that project. Limit page size to 100; add load-more button.
+
+### Acceptance Criteria
+
+- AC1: `/audit` page lists events from `mc.db`, newest-first, paginated 100/page
+- AC2: Event type filter (multiselect: spawn, stuck, circuit-open, budget-alert, scheduler, crash)
+- AC3: Slug filter — text input that narrows to a single project's events
+- AC4: InstanceGrid slug chip links to `/audit?slug=<slug>` for per-project drill-down
+- AC5: `/api/audit` route returns `{ events: AuditEvent[], total: number }`; respects `?type=&slug=&limit=&offset=` params
+
+---
+
+## P42 — Memory Distillation Status Panel
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+P38 added cross-session memory distillation: after a project session stops, `src/distillation.ts` summarises the transcript and writes a `MEMORY.md` file in the project directory. This runs silently — operators have no way to see which projects have distilled memory, when it last ran, or how large the memory has grown. A project with a stale or missing MEMORY.md may be operating without useful context.
+
+### Proposed Solution
+
+Add a `/api/memory` route that reads each project's `projects/<slug>/MEMORY.md` and returns `{ slug, exists: bool, sizeBytes: number, lastModified: string | null }`. In the InstanceGrid card, add a small memory chip (💭) showing size (e.g. "4.2 KB") when MEMORY.md exists. Clicking the chip opens a modal that shows the full MEMORY.md content. Add a "Distill now" action button in the modal that calls `POST /api/memory/<slug>/distill` to trigger a manual distillation job.
+
+### Acceptance Criteria
+
+- AC1: InstanceGrid slug row shows 💭 chip with file size when `projects/<slug>/MEMORY.md` exists
+- AC2: Clicking chip opens modal with MEMORY.md content (read-only, markdown-rendered)
+- AC3: Modal has "Distill now" button that POSTs to `/api/memory/<slug>/distill`; server runs `distillation.ts` synchronously and refreshes the panel
+- AC4: `/api/memory` returns memory status for all projects in one call; updates every 60s alongside fleet polling
+- AC5: Projects with no MEMORY.md show no chip (no clutter)
+
+---
+
+## P43 — Budget Queue Count Badge
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+P40 queues inbound messages when a project's budget is exhausted. The InstanceGrid card shows the slug in grey when `budgetStatus === 'exhausted'`, but the operator cannot see how many messages are waiting. If 10 messages accumulated over a weekend, they would all fire at month start with no warning — potentially overwhelming the agent. P40's AC2 ("queued count shown in InstanceGrid card") was not fully implemented: the queue lives in the bot process, not in a queryable API.
+
+### Proposed Solution
+
+Expose `budgetQueuedCount` in `/api/fleet` by writing it to a side-file `budget-queue-state.json` under `MCD_CHANNELS_DIR`. The pool writes this file whenever the queue changes (`budget-exhausted`, `budget-restored` events). The mission-control fleet-compute reads it and surfaces `queuedCount` on `FleetProject`. InstanceGrid shows a small badge like "⏳3" next to the grey exhausted chip.
+
+### Acceptance Criteria
+
+- AC1: Pool writes `budget-queue-state.json` (`{ [chatId]: { slug, count, updatedAt } }`) on every queue change
+- AC2: `/api/fleet` returns `queuedCount?: number` on `FleetProject` when `budgetStatus === 'exhausted'` and count > 0
+- AC3: InstanceGrid shows `⏳<N>` badge next to exhausted slug chip; tooltip says "N message(s) queued for next month"
+- AC4: Badge disappears when queue drains (count returns to 0)
+- AC5: `budget-queue-state.json` written atomically (temp-file rename) to avoid partial reads
+
+---
+
+## P44 — Inline Goal Editor in Dashboard
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+P39 added `GOAL.md` per project and shows a goal chip in the InstanceGrid. But goals can only be set via `!project set goal "<text>"` typed into Discord. Operators using the mission control dashboard cannot set or clear a goal without switching to Discord. The goal chip is read-only — no pencil icon, no inline editor.
+
+### Proposed Solution
+
+Extend the InstanceGrid goal chip to be editable. Clicking the chip (or a ✎ button next to it) opens an inline textarea pre-filled with the current GOAL.md content. On save, `PUT /api/projects/<slug>/goal` writes the new content to `projects/<slug>/GOAL.md`. On clear, `DELETE /api/projects/<slug>/goal` removes the file. Add a `goalStatus` selector (active / paused / completed) rendered as a small pill that can be toggled. Mirror the existing `SlugAnnotation` component pattern.
+
+### Acceptance Criteria
+
+- AC1: Goal chip in InstanceGrid has a ✎ button; clicking opens inline textarea editor
+- AC2: `PUT /api/projects/<slug>/goal` with `{ text: string, status?: 'active'|'paused'|'completed' }` writes `GOAL.md`
+- AC3: `DELETE /api/projects/<slug>/goal` removes `GOAL.md`; chip disappears from card
+- AC4: goalStatus pill (active=purple, paused=grey, completed=green) toggleable inline; persisted to GOAL.md frontmatter or a sidecar `GOAL.status` file
+- AC5: Save is debounced on blur/Enter; optimistic UI update before server confirms
+
+---
+
+## P45 — Per-Project Timeline View
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+All project-level data (audit events, scheduler fires, budget alerts, memory distillations, stall detections) lives in separate stores. There is no single view that shows a project's history as a unified chronological timeline. Debugging why a project went stale or why budget was consumed requires cross-referencing audit log, scheduler heatmap, and transcript tail separately.
+
+### Proposed Solution
+
+Add a `/projects/<slug>` page with a vertical timeline view. Each entry is a timestamped event with an icon and colour: 🟢 spawn, 🔴 kill/crash, ⚠️ stuck/stall, 🔶 budget threshold, 📅 scheduler fire, 💭 distillation, 💬 reply (count per turn). Source data: audit events from `mc.db` + transcript `.jsonl` (for turn/reply events). Clicking a turn entry expands a snippet of the assistant's reply. Timeline is infinite-scroll, newest first. Link from InstanceGrid slug chip.
+
+### Acceptance Criteria
+
+- AC1: `/projects/<slug>` renders a vertical timeline with icons and timestamps
+- AC2: Event types covered: spawn, kill, crash, stuck, budget-alert, scheduler-fire, distillation, assistant-reply-turn
+- AC3: Clicking a reply-turn entry expands the assistant reply text snippet (first 300 chars)
+- AC4: Timeline paginated: loads 50 events, "load older" button appends next 50
+- AC5: Link from InstanceGrid slug chip (`{slug} ⟳` → `/projects/<slug>` on Ctrl+click or separate icon)
