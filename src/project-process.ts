@@ -216,4 +216,11 @@ export class MockProjectProcess implements ProjectProcess {
     this._alive = false
     for (const h of this.exitHandlers) h({ code: 0, signal: null })
   }
+
+  /** Test-only: simulate a non-zero exit (crash) to trigger circuit-breaker logic. */
+  crash(code = 1): void {
+    if (!this._alive) return
+    this._alive = false
+    for (const h of this.exitHandlers) h({ code, signal: null })
+  }
 }

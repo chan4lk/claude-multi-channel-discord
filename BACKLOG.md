@@ -795,7 +795,7 @@ MCD's goal: **fully featured autonomous agent harness** — one-liner install, g
 
 ## P34 — Cross-Platform One-Liner Installer
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
@@ -818,7 +818,7 @@ Ship a `bin/install.sh` (curl-pipe compatible) and `bin/install.ps1` (PowerShell
 
 ## P35 — Graceful Error Recovery Framework
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem

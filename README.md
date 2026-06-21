@@ -41,6 +41,28 @@ Discord (one bot) ─→ server.ts ─→ ProjectPool ─→ N × claude subproc
 
 ## Quick start
 
+### One-liner install (Linux / macOS)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/chan4lk/claude-multi-channel-discord/main/bin/install.sh | bash
+```
+
+Or via npx (requires Node.js):
+
+```sh
+npx mcd-setup
+```
+
+Windows (PowerShell 7+):
+
+```powershell
+irm https://raw.githubusercontent.com/chan4lk/claude-multi-channel-discord/main/bin/install.ps1 | iex
+```
+
+The installer detects your OS, installs bun + tmux, clones the repo, runs the interactive setup wizard, and registers a system service.
+
+---
+
 **1. Prerequisites:** `bun`, `claude` CLI (logged in), `tmux`, `git`. Optionally `gh` for PR workflows.
 
 ```sh

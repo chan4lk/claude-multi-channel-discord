@@ -5,7 +5,10 @@ export type McEventType =
   | 'message_received'
   | 'reply_sent'
   | 'scheduler_fired'
-  | 'specclaw_status_changed';
+  | 'specclaw_status_changed'
+  | 'respawn_scheduled'
+  | 'circuit_open'
+  | 'circuit_reset';
 
 export interface McEvent {
   instance_id: string;   // SHA1(realpath(MCD_CHANNELS_DIR))
