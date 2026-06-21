@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import Link from 'next/link'
 import GlassCard from '../../components/ui/GlassCard'
 import type { PipelineCard, PipelineStage } from '../api/pipeline/route'
+import type { ImpactStats } from '../api/pipeline/impact/[slug]/[changeName]/route'
 
 const STAGES: PipelineStage[] = ['propose', 'plan', 'build', 'verify', 'pr']
 
@@ -53,11 +54,29 @@ interface DiffData {
   error?: string
 }
 
+type DrawerTab = 'overview' | 'impact'
+
+function ImpactStatCard({ label, value, color }: { label: string; value: string | number; color: string }) {
+  return (
+    <div
+      className="flex flex-col gap-0.5 rounded p-2 border"
+      style={{ background: `${color}0d`, borderColor: `${color}25` }}
+    >
+      <span className="text-[0.55rem] font-mono uppercase tracking-wider" style={{ color: `${color}99` }}>{label}</span>
+      <span className="text-sm font-bold font-mono" style={{ color }}>{value}</span>
+    </div>
+  )
+}
+
 function DetailDrawer({ card, onClose }: DrawerProps) {
   const color = STAGE_COLORS[card.stage]
   const [diff, setDiff] = useState<DiffData | null>(null)
   const [diffLoading, setDiffLoading] = useState(false)
   const fetchedRef = useRef<string | null>(null)
+  const [activeTab, setActiveTab] = useState<DrawerTab>('overview')
+  const [impact, setImpact] = useState<ImpactStats | null>(null)
+  const [impactLoading, setImpactLoading] = useState(false)
+  const impactFetchedRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!DIFF_STAGES.includes(card.stage)) return
@@ -68,9 +87,7 @@ function DetailDrawer({ card, onClose }: DrawerProps) {
     fetch(`/api/diff/${encodeURIComponent(card.slug)}`)
       .then((r) => r.json())
       .then((d: { log?: string; diff?: string; error?: string }) => {
-        // Use --stat style: just the log; full diff would be too long in a drawer
         const log = d.log ?? ''
-        // Extract stat summary: lines starting with file names (not +/- patch lines)
         const statLines = (d.diff ?? '')
           .split('\n')
           .filter((l) => /^\s*([\w./].+\||\d+ file)/.test(l))
@@ -80,6 +97,19 @@ function DetailDrawer({ card, onClose }: DrawerProps) {
       .catch(() => setDiff({ log: '', stat: '', error: 'Failed to fetch diff' }))
       .finally(() => setDiffLoading(false))
   }, [card.slug, card.stage, card.name])
+
+  useEffect(() => {
+    if (activeTab !== 'impact') return
+    const key = `${card.slug}::${card.name}`
+    if (impactFetchedRef.current === key) return
+    impactFetchedRef.current = key
+    setImpactLoading(true)
+    fetch(`/api/pipeline/impact/${encodeURIComponent(card.slug)}/${encodeURIComponent(card.name)}`)
+      .then((r) => r.json())
+      .then((d: ImpactStats) => setImpact(d))
+      .catch(() => setImpact(null))
+      .finally(() => setImpactLoading(false))
+  }, [activeTab, card.slug, card.name])
 
   return (
     <motion.div
@@ -124,6 +154,54 @@ function DetailDrawer({ card, onClose }: DrawerProps) {
               ×
             </button>
           </div>
+
+          {/* Tabs */}
+          <div className="flex gap-0 border-b border-white/8">
+            {(['overview', 'impact'] as DrawerTab[]).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className="px-3 py-1.5 text-[0.6rem] font-mono uppercase tracking-wider transition-colors"
+                style={{
+                  color: activeTab === tab ? color : '#475569',
+                  borderBottom: activeTab === tab ? `2px solid ${color}` : '2px solid transparent',
+                  background: 'transparent',
+                }}
+              >
+                {tab === 'overview' ? '📋 Overview' : '📊 Impact'}
+              </button>
+            ))}
+          </div>
+
+          {activeTab === 'impact' && (
+            <div className="flex flex-col gap-3">
+              {impactLoading ? (
+                <div className="text-[0.6rem] text-slate-500 font-mono animate-pulse">Computing impact…</div>
+              ) : impact ? (
+                impact.createdDate === null ? (
+                  <p className="text-[0.6rem] text-slate-600 font-mono">No creation date found in proposal — cannot bound git log.</p>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 gap-2">
+                      <ImpactStatCard label="Commits" value={impact.commits} color="#4ADE80" />
+                      <ImpactStatCard label="Files Changed" value={impact.filesChanged} color="#60A5FA" />
+                      <ImpactStatCard label="Lines Added" value={`+${impact.linesAdded}`} color="#34D399" />
+                      <ImpactStatCard label="Lines Deleted" value={`-${impact.linesDeleted}`} color="#F87171" />
+                      <ImpactStatCard label="Tool Calls" value={impact.toolCalls} color="#A78BFA" />
+                      <ImpactStatCard label="Duration" value={`${impact.durationDays}d`} color="#F59E0B" />
+                    </div>
+                    {impact.commits === 0 && (
+                      <p className="text-[0.6rem] text-slate-600 font-mono">No commits yet since {impact.createdDate}</p>
+                    )}
+                  </>
+                )
+              ) : (
+                <p className="text-[0.6rem] text-slate-600 font-mono">Failed to load impact stats.</p>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'overview' && <>
 
           {/* Stage pipeline */}
           <div className="flex gap-1">
@@ -229,6 +307,8 @@ function DetailDrawer({ card, onClose }: DrawerProps) {
           <div className="text-[0.6rem] text-slate-600 font-mono">
             {card.daysInStage === 0 ? 'In stage today' : `${card.daysInStage}d in ${STAGE_LABELS[card.stage]}`}
           </div>
+
+          </> /* end overview tab */}
         </div>
       </motion.div>
     </motion.div>
@@ -296,6 +376,8 @@ export default function PipelinePage() {
   const [loading, setLoading] = useState(true)
   const [lastRefresh, setLastRefresh] = useState<number>(0)
   const [selectedCard, setSelectedCard] = useState<PipelineCard | null>(null)
+  const [leaderboard, setLeaderboard] = useState<ImpactStats[]>([])
+  const leaderboardFetchedRef = useRef(false)
 
   async function fetchCards() {
     try {
@@ -313,6 +395,25 @@ export default function PipelinePage() {
     const id = setInterval(fetchCards, 60_000)
     return () => clearInterval(id)
   }, [])
+
+  useEffect(() => {
+    if (leaderboardFetchedRef.current || cards.length === 0) return
+    const eligibleCards = cards.filter((c) => c.stage === 'verify' || c.stage === 'pr')
+    if (eligibleCards.length === 0) return
+    leaderboardFetchedRef.current = true
+    Promise.allSettled(
+      eligibleCards.map((c) =>
+        fetch(`/api/pipeline/impact/${encodeURIComponent(c.slug)}/${encodeURIComponent(c.name)}`)
+          .then((r) => r.json() as Promise<ImpactStats>)
+      )
+    ).then((results) => {
+      const stats = results
+        .filter((r): r is PromiseFulfilledResult<ImpactStats> => r.status === 'fulfilled')
+        .map((r) => r.value)
+        .sort((a, b) => (b.commits + b.linesAdded) - (a.commits + a.linesAdded))
+      setLeaderboard(stats)
+    })
+  }, [cards])
 
   const byStage = (stage: PipelineStage) => cards.filter((c) => c.stage === stage)
   const stalledCount = cards.filter((c) => c.stalled).length
@@ -416,6 +517,48 @@ export default function PipelinePage() {
                 </div>
               )
             })}
+          </div>
+        )}
+
+        {/* Impact Leaderboard */}
+        {leaderboard.length > 0 && (
+          <div className="mt-8">
+            <div className="text-[0.6rem] font-mono uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-2">
+              <span style={{ color: '#A78BFA' }}>◆</span> Impact Leaderboard — verify &amp; PR stage, ranked by commits + lines added
+            </div>
+            <div className="overflow-x-auto rounded border border-white/6">
+              <table className="w-full text-[0.65rem] font-mono">
+                <thead>
+                  <tr className="border-b border-white/6">
+                    {['#', 'Change', 'Slug', 'Commits', '+Lines', '-Lines', 'Files', 'Tool Calls', 'Age'].map((h) => (
+                      <th key={h} className="text-left px-3 py-2 text-slate-500 uppercase tracking-wider font-semibold">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {leaderboard.map((s, i) => (
+                    <tr
+                      key={`${s.slug}::${s.changeName}`}
+                      className="border-b border-white/4 hover:bg-white/3 cursor-pointer transition-colors"
+                      onClick={() => {
+                        const c = cards.find((c) => c.slug === s.slug && c.name === s.changeName)
+                        if (c) setSelectedCard(c)
+                      }}
+                    >
+                      <td className="px-3 py-2 text-slate-600">{i + 1}</td>
+                      <td className="px-3 py-2 text-slate-200 font-semibold">{s.changeName}</td>
+                      <td className="px-3 py-2 text-slate-500">{s.slug}</td>
+                      <td className="px-3 py-2" style={{ color: '#4ADE80' }}>{s.commits}</td>
+                      <td className="px-3 py-2" style={{ color: '#34D399' }}>+{s.linesAdded}</td>
+                      <td className="px-3 py-2" style={{ color: '#F87171' }}>-{s.linesDeleted}</td>
+                      <td className="px-3 py-2" style={{ color: '#60A5FA' }}>{s.filesChanged}</td>
+                      <td className="px-3 py-2" style={{ color: '#A78BFA' }}>{s.toolCalls}</td>
+                      <td className="px-3 py-2 text-slate-600">{s.durationDays}d</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </main>
