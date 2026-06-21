@@ -307,8 +307,14 @@ export default function InstanceGrid({ events = [], filterSlugs = null, fleetPro
                               : `Inject into ${slug}`
                             return (
                               <button
-                                title={budgetTitle}
-                                onClick={() => window.dispatchEvent(new CustomEvent('mc:inject', { detail: { slug } }))}
+                                title={budgetTitle + ' (Ctrl+click: audit log)'}
+                                onClick={(e) => {
+                                  if (e.ctrlKey || e.metaKey) {
+                                    window.open(`/audit?slug=${encodeURIComponent(slug)}`, '_blank')
+                                  } else {
+                                    window.dispatchEvent(new CustomEvent('mc:inject', { detail: { slug } }))
+                                  }
+                                }}
                                 className="text-[10px] font-mono px-1.5 py-0.5 rounded transition-colors cursor-pointer"
                                 style={budgetColor
                                   ? { color: budgetColor, background: `${budgetColor}20`, border: `1px solid ${budgetColor}50` }

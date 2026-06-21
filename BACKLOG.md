@@ -956,7 +956,7 @@ Extend the fleet broadcaster to check `monthlyTokensUsed / monthlyTokenBudget` e
 
 ## P41 — Audit Log Browser
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem

@@ -148,7 +148,9 @@ export default function TimelinePage() {
   useEffect(() => {
     fetch('/api/events?limit=500')
       .then((r) => r.json())
-      .then((rows: EventRow[]) => setEvents(rows))
+      .then((data: { events?: EventRow[] } | EventRow[]) => {
+        setEvents(Array.isArray(data) ? data : (data.events ?? []))
+      })
       .catch(() => {})
   }, [])
 
