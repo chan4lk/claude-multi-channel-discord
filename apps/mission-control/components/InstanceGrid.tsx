@@ -587,6 +587,17 @@ export default function InstanceGrid({ events = [], filterSlugs = null, fleetPro
                                 >
                                   {slug} ⟳
                                 </button>
+                                <a
+                                  href={`/projects/${encodeURIComponent(slug)}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  title={`Timeline for ${slug}`}
+                                  className="text-[10px] font-mono px-1 py-0.5 rounded transition-colors"
+                                  style={{ color: 'rgb(103 232 249 / 0.4)', background: 'transparent', lineHeight: 1 }}
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  ⧉
+                                </a>
                                 {fp?.queuedCount != null && fp.queuedCount > 0 && (
                                   <span
                                     className="text-[0.55rem] font-mono px-1 py-0.5 rounded shrink-0"
