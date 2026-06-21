@@ -116,6 +116,7 @@ function computeSlugMetrics(slug: string, model: string, mcdDir: string): SlugMe
     avgLatencyMs: Math.round(avgLatency),
     p95LatencyMs: Math.round(p95Latency),
     turnsPerDay: Math.round((totalTurns / spanDays) * 10) / 10,
+    monthlyTokens: 0,
     dayBuckets: [...dayMap.entries()].map(([date, tokens]) => ({ date, tokens })),
     stale: false,
     checkedAt: new Date().toISOString(),

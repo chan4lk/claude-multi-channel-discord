@@ -155,11 +155,11 @@ export function computeHealth(slug: string, mcdDir: string, fleetMedianTpt: numb
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { slug: string } }
+  { params }: { params: Promise<{ slug: string }> }
 ) {
   const mcdDir = process.env.MCD_CHANNELS_DIR ??
     path.join(os.homedir(), '.claude', 'channels', 'discord-multi')
-  const { slug } = params
+  const { slug } = await params
   const result = computeHealth(slug, mcdDir)
   return NextResponse.json(result)
 }
