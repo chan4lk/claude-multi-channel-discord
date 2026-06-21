@@ -697,7 +697,7 @@ Use the browser Notifications API to deliver push-style alerts when new stalls a
 
 ## P30 — Fleet Activity Heatmap
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
@@ -720,7 +720,7 @@ Add an `/api/metrics/activity-heatmap` endpoint that reads transcript `.jsonl` f
 
 ## P31 — Agent Turn Duration Histogram
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
@@ -743,7 +743,7 @@ Add `/api/metrics/turn-durations` that parses transcript `.jsonl` files, pairs e
 
 ## P32 — Broadcast History Log
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem

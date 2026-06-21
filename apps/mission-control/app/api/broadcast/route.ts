@@ -1,5 +1,6 @@
 import { execSync } from 'child_process'
 import { NextRequest } from 'next/server'
+import { insertBroadcast } from '../../../src/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -58,6 +59,10 @@ export async function POST(req: NextRequest): Promise<Response> {
 
   const sent = results.filter((r) => r.status === 'sent').length
   const errors = results.filter((r) => r.status === 'error').length
+
+  try {
+    insertBroadcast(new Date().toISOString(), message, slugs, sent, errors)
+  } catch { /* non-fatal */ }
 
   return Response.json({ sent, errors, results })
 }
