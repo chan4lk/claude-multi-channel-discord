@@ -8,6 +8,12 @@ export type ProjectState = 'idle' | 'active' | 'stalled' | 'autonomous'
 export type GoalStatus = 'active' | 'paused' | 'completed'
 export type BudgetStatus = 'ok' | 'warning' | 'critical' | 'exhausted'
 
+export interface MemoryStatus {
+  exists: boolean
+  sizeBytes: number
+  lastModified: string | null
+}
+
 export interface FleetProject {
   slug: string
   state: ProjectState
@@ -20,6 +26,7 @@ export interface FleetProject {
   contextUsagePct?: number
   goalText?: string
   goalStatus?: GoalStatus
+  memoryStatus?: MemoryStatus
 }
 
 export interface FleetResponse {
@@ -123,6 +130,16 @@ function computeContextUsagePct(slug: string, mcdDir: string): number | undefine
   return undefined
 }
 
+function readMemoryStatus(slug: string, mcdDir: string): MemoryStatus {
+  const memPath = path.join(mcdDir, 'projects', slug, 'MEMORY.md')
+  try {
+    const stat = fs.statSync(memPath)
+    return { exists: true, sizeBytes: stat.size, lastModified: stat.mtime.toISOString() }
+  } catch {
+    return { exists: false, sizeBytes: 0, lastModified: null }
+  }
+}
+
 function readGoal(slug: string, mcdDir: string): { goalText: string; goalStatus: GoalStatus } | null {
   const goalPath = path.join(mcdDir, 'projects', slug, 'GOAL.md')
   try {
@@ -215,6 +232,9 @@ function classifyState(
 
   const goal = readGoal(slug, mcdDir)
   if (goal) { result.goalText = goal.goalText; result.goalStatus = goal.goalStatus }
+
+  const mem = readMemoryStatus(slug, mcdDir)
+  if (mem.exists) result.memoryStatus = mem
 
   return result
 }
