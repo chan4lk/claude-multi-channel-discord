@@ -7,6 +7,7 @@ import InstanceGrid from '../components/InstanceGrid'
 import MemoryPanel from '../components/MemoryPanel'
 import SchedulerTable from '../components/SchedulerTable'
 import ScheduleTimeline from '../components/ScheduleTimeline'
+import SchedulerCalendar from '../components/SchedulerCalendar'
 import SpecclawPipeline from '../components/SpecclawPipeline'
 import StallAlertPanel from '../components/StallAlertPanel'
 import TranscriptPanel from '../components/TranscriptPanel'
@@ -238,7 +239,7 @@ function DashboardClient() {
   const { fleet: contextFleet, sseStatus } = useFleet()
   const fleet = contextFleet ?? EMPTY_FLEET
   const [fleetFilter, setFleetFilter] = useState<ProjectState | null>(null)
-  const [scheduleView, setScheduleView] = useState<'table' | 'timeline'>('timeline')
+  const [scheduleView, setScheduleView] = useState<'table' | 'timeline' | 'calendar'>('timeline')
   const [showTranscript, setShowTranscript] = useState(false)
   const [eventsPerMin, setEventsPerMin] = useState(0)
   const [uptime, setUptime] = useState(0)
@@ -512,7 +513,7 @@ function DashboardClient() {
                   <h2 className="section-label">Scheduler</h2>
                   <div className="flex-1 h-px bg-gradient-to-r from-cyber-cyan/20 to-transparent" />
                   <div className="flex rounded overflow-hidden border border-cyber-cyan/20 shrink-0">
-                    {(['timeline', 'table'] as const).map((v) => (
+                    {(['timeline', 'table', 'calendar'] as const).map((v) => (
                       <button
                         key={v}
                         onClick={() => setScheduleView(v)}
@@ -529,6 +530,8 @@ function DashboardClient() {
                 </div>
                 {scheduleView === 'timeline'
                   ? <ScheduleTimeline events={events} />
+                  : scheduleView === 'calendar'
+                  ? <SchedulerCalendar events={events} />
                   : <SchedulerTable events={events} />
                 }
               </section>
