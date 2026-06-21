@@ -979,7 +979,7 @@ Add an `/audit` page to mission control that reads from `mc.db` via a new `/api/
 
 ## P42 — Memory Distillation Status Panel
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem

@@ -10,6 +10,148 @@ import HealthScoreRing from './HealthScoreRing'
 import type { FleetProject } from '../app/api/fleet/route'
 import type { HealthScore } from '../app/api/health/[slug]/route'
 
+function fmtBytes(b: number): string {
+  if (b < 1024) return `${b} B`
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`
+  return `${(b / 1024 / 1024).toFixed(1)} MB`
+}
+
+interface MemoryModalProps {
+  slug: string
+  onClose: () => void
+}
+
+function MemoryModal({ slug, onClose }: MemoryModalProps) {
+  const [content, setContent] = useState<string | null>(null)
+  const [sizeBytes, setSizeBytes] = useState(0)
+  const [lastModified, setLastModified] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [distilling, setDistilling] = useState(false)
+  const [distillMsg, setDistillMsg] = useState<string | null>(null)
+
+  function load() {
+    setLoading(true)
+    fetch(`/api/memory/${encodeURIComponent(slug)}`)
+      .then((r) => r.json())
+      .then((d: { content?: string; sizeBytes?: number; lastModified?: string; error?: string }) => {
+        if (d.error) { setContent(null) } else {
+          setContent(d.content ?? '')
+          setSizeBytes(d.sizeBytes ?? 0)
+          setLastModified(d.lastModified ?? null)
+        }
+      })
+      .catch(() => setContent(null))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { load() }, [slug])
+
+  async function distill() {
+    setDistilling(true)
+    setDistillMsg(null)
+    try {
+      const r = await fetch(`/api/memory/${encodeURIComponent(slug)}/distill`, { method: 'POST' })
+      const d = await r.json() as { ok?: boolean; error?: string; content?: string; sizeBytes?: number; lastModified?: string; durationMs?: number }
+      if (d.ok) {
+        setDistillMsg(`✓ Distilled in ${((d.durationMs ?? 0) / 1000).toFixed(1)}s`)
+        if (d.content) {
+          setContent(d.content)
+          setSizeBytes(d.sizeBytes ?? 0)
+          setLastModified(d.lastModified ?? null)
+        } else {
+          load()
+        }
+      } else {
+        setDistillMsg(`✗ ${d.error ?? 'failed'}`)
+      }
+    } catch (e) {
+      setDistillMsg(`✗ ${e instanceof Error ? e.message : 'network error'}`)
+    } finally {
+      setDistilling(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)' }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        transition={{ duration: 0.15 }}
+        className="w-full max-w-2xl max-h-[80vh] flex flex-col rounded-lg border"
+        style={{ background: '#0f172a', borderColor: '#a78bfa40' }}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: '#a78bfa20' }}>
+          <div className="flex items-center gap-2">
+            <span style={{ color: '#a78bfa' }} className="text-sm font-mono font-bold">💭 {slug}/MEMORY.md</span>
+            {sizeBytes > 0 && (
+              <span className="text-[0.6rem] font-mono text-slate-500">{fmtBytes(sizeBytes)}</span>
+            )}
+            {lastModified && (
+              <span className="text-[0.6rem] font-mono text-slate-600" title={lastModified}>
+                · {new Date(lastModified).toLocaleDateString()}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {distillMsg && (
+              <span className={`text-[0.65rem] font-mono ${distillMsg.startsWith('✓') ? 'text-emerald-400' : 'text-red-400'}`}>
+                {distillMsg}
+              </span>
+            )}
+            <button
+              onClick={distill}
+              disabled={distilling}
+              className="text-[0.65rem] font-mono px-2 py-1 rounded border transition-colors disabled:opacity-50"
+              style={{ color: '#a78bfa', borderColor: '#a78bfa40', background: '#a78bfa15' }}
+            >
+              {distilling ? '⏳ Distilling…' : '✦ Distill now'}
+            </button>
+            <button
+              onClick={onClose}
+              className="text-slate-500 hover:text-slate-300 text-lg leading-none px-1"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-auto p-4">
+          {loading ? (
+            <div className="text-slate-500 text-sm text-center py-8">Loading…</div>
+          ) : content === null ? (
+            <div className="text-slate-500 text-sm text-center py-8">MEMORY.md not found</div>
+          ) : (
+            <pre className="text-[0.7rem] font-mono text-slate-300 whitespace-pre-wrap leading-relaxed">{content}</pre>
+          )}
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
+function MemoryChip({ slug, sizeBytes }: { slug: string; sizeBytes: number }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <button
+        title={`MEMORY.md · ${fmtBytes(sizeBytes)} — click to view`}
+        onClick={() => setOpen(true)}
+        className="text-[0.55rem] font-mono px-1 py-0.5 rounded shrink-0 transition-colors"
+        style={{ color: '#a78bfa', background: '#a78bfa15', border: '1px solid #a78bfa40' }}
+      >
+        💭{fmtBytes(sizeBytes)}
+      </button>
+      <AnimatePresence>
+        {open && <MemoryModal slug={slug} onClose={() => setOpen(false)} />}
+      </AnimatePresence>
+    </>
+  )
+}
+
 interface InstanceEntry {
   instance_id: string
   host: string
@@ -328,6 +470,11 @@ export default function InstanceGrid({ events = [], filterSlugs = null, fleetPro
                           {fleetProjects.length > 0 && (
                             <WatchdogBadge slug={slug} fleetProjects={fleetProjects} />
                           )}
+                          {(() => {
+                            const fp = fleetProjects.find((p) => p.slug === slug)
+                            if (!fp?.memoryStatus?.exists) return null
+                            return <MemoryChip slug={slug} sizeBytes={fp.memoryStatus.sizeBytes} />
+                          })()}
                           {(() => {
                             const fleetProject = fleetProjects.find((p) => p.slug === slug)
                             const health = healthScores[slug]
