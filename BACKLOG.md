@@ -1307,3 +1307,123 @@ Add a `/api/reports/weekly` endpoint that generates a JSON summary of the past 7
 - AC4: "Export HTML" button downloads a self-contained report (inlined CSS, no external deps)
 - AC5: Report data from `mc.db` audit events + transcript `.jsonl` for the 7-day window
 - AC6: Scheduler-compatible: `POST /api/reports/weekly/generate` triggers report and saves to `reports/YYYY-WW.json` in `MCD_CHANNELS_DIR`
+
+---
+
+## P56 — Dashboard Navigation Completeness
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+The dashboard header only links to 6 of the 13+ available Mission Control pages (Graph, Timeline, Memory, Pipeline, Audit, Goals). Pages like `/metrics`, `/branches`, `/broadcast`, `/knowledge`, `/reports`, and `/search` are reachable only by typing URLs directly. New operators discovering the product have no way to know these views exist.
+
+### Proposed Solution
+
+Replace the flat header link row with a collapsible "All Views" dropdown (click or keyboard `V`). Group links by category: **Observability** (Graph, Timeline, Memory Graph, Knowledge), **Operations** (Pipeline, Audit, Branches, Broadcast), **Intelligence** (Goals, Metrics, Reports, Advisor), **Admin** (Search, Admin). Each group shows a neon section heading. Active page is highlighted. On mobile the dropdown becomes a full-width slide-in menu. Current unlinkable pages (`/metrics`, `/branches`, `/broadcast`, `/knowledge`, `/reports`, `/search`) get added to the nav.
+
+### Acceptance Criteria
+
+- AC1: All 13+ pages reachable from the dashboard header via the dropdown
+- AC2: Links grouped by category with section headings
+- AC3: Current route highlighted in the dropdown
+- AC4: Dropdown closes on Escape or outside click
+- AC5: Mobile: dropdown renders as a full-width overlay panel
+- AC6: No layout shift — dropdown does not reflow the header HUD area
+
+---
+
+## P57 — Fleet Intelligence Advisor Dashboard Tile
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+The Fleet Intelligence Advisor (`/api/advisor`) generates actionable recommendations (critical stalls, memory distillation suggestions, token budget alerts) but the main dashboard has no tile for it. Operators must navigate to `/advisor` separately to see recommendations, missing time-sensitive critical alerts.
+
+### Proposed Solution
+
+Add a collapsible "Advisor" tile to the main dashboard page, positioned below the Instance Grid. The tile polls `/api/advisor` every 60s and shows the top 3 recommendations as compact cards with severity badges (critical=red pulse, warn=amber, info=cyan). Each card has a one-click action button that calls the relevant endpoint (`/api/inject/[slug]`, etc.). If no recommendations exist, the tile shows a "Fleet healthy ✓" message. A red badge on the tile header pulses when `critical` recommendations exist.
+
+### Acceptance Criteria
+
+- AC1: Advisor tile polls `/api/advisor` every 60s; shows top 3 recommendations
+- AC2: Critical recommendations cause tile header badge to pulse red
+- AC3: One-click action buttons work (inject, distill, command)
+- AC4: "Fleet healthy ✓" state shown when recommendations array is empty
+- AC5: Tile is collapsible; collapsed state persisted in localStorage
+- AC6: Tile added to main dashboard page, below the Instance Grid
+
+---
+
+## P58 — Reports Page Sortable Table + Sparklines
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+The `/reports` page renders a per-project table but it is not sortable — operators cannot click a column header to rank by cost, stalls, or turns. The table also lacks visual trend context: a project with 100 turns could be rising or declining week-over-week, but there is no sparkline to show the intra-week trend.
+
+### Proposed Solution
+
+Add client-side sort to every column header in the `/reports` per-project table (click to sort asc/desc, toggle on second click, active column highlighted). Extend `/api/reports/weekly` to include a `dailyTurns: number[7]` field per project (turns per day for the past 7 days). Render a 7-point mini sparkline SVG (inline, no lib) next to each project's Turns value showing the daily trend with a neon stroke. Color: green if last 3 days trend upward, red if downward, grey if flat.
+
+### Acceptance Criteria
+
+- AC1: All table columns in `/reports` are sortable; active sort column highlighted
+- AC2: `/api/reports/weekly` returns `dailyTurns: number[7]` per project
+- AC3: Sparkline SVG rendered next to Turns value; 7 points, neon stroke
+- AC4: Sparkline color: green (uptrend), red (downtrend), grey (flat)
+- AC5: Sort state preserved across report refreshes within the session
+- AC6: Sparklines render correctly on mobile (do not overflow table cell)
+
+---
+
+## P59 — Cross-Page Deep Link: Graph → Metrics → Report
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+The Project Graph, Metrics page, Timeline, and Weekly Report all show data for the same projects but there are no cross-links between them. Clicking a project node in the graph has no path to "see this project's metrics" or "see this project in the weekly report". Navigation between views requires going back to the dashboard and re-navigating — breaking flow when investigating a specific project.
+
+### Proposed Solution
+
+Add a context action menu to the Project Graph node detail drawer (small "⋯" button). Menu items: "View Metrics →" (links to `/metrics?slug=<slug>`), "View Timeline →" (`/timeline?slug=<slug>`), "View in Report →" (`/reports#<slug>`). On the `/metrics` page, detect the `slug` query param and pre-select/scroll to that project. On `/reports`, detect the hash and highlight the matching row. On the Timeline page, detect the `slug` param and filter to that project.
+
+### Acceptance Criteria
+
+- AC1: Project Graph node detail drawer has "⋯" action menu with Metrics / Timeline / Report links
+- AC2: `/metrics?slug=<slug>` pre-selects and scrolls to that project's card
+- AC3: `/reports#<slug>` highlights the matching row with a neon outline for 3s
+- AC4: `/timeline?slug=<slug>` pre-filters the timeline to that project
+- AC5: Links open in the same tab (no `target="_blank"`)
+- AC6: Menu closes on outside click or Escape
+
+---
+
+## P60 — Pipeline Impact All-Stages Leaderboard
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+The Impact Leaderboard added in P53 only shows changes in the `verify` or `pr` stage, silently excluding active `build`-stage changes that may have significant code churn. An operator running a large refactor in the build stage would never see it in the leaderboard, making the widget misleading about fleet-wide impact.
+
+### Proposed Solution
+
+Expand the Impact Leaderboard to include all pipeline stages. Add a stage filter row above the table (buttons: All / Propose / Plan / Build / Verify / PR) to let operators scope by stage. Changes with zero commits show a "—" in the score column instead of "0". Leaderboard fetches impact stats in batches of 5 concurrent requests (not one-shot parallel) to avoid hammering the server when there are many changes. Add a total row at the bottom showing fleet-wide commit + line sums.
+
+### Acceptance Criteria
+
+- AC1: Leaderboard includes changes from all pipeline stages by default
+- AC2: Stage filter buttons (All / Propose / Plan / Build / Verify / PR) filter the table
+- AC3: Changes with zero commits show "—" impact score
+- AC4: Impact stats fetched in batches of 5 (not all-at-once)
+- AC5: Total row at bottom shows fleet-wide sums: commits, +lines, -lines, tool calls
+- AC6: Leaderboard updates on same 60s poll as pipeline page
