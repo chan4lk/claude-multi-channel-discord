@@ -21,10 +21,13 @@ const NAV_GROUPS: NavGroup[] = [
     category: 'Observability',
     color: '#22D3EE',
     items: [
+      { href: '/feed', label: 'Project Feed', icon: '≣' },
+      { href: '/galaxy', label: 'Galaxy Map', icon: '✵' },
       { href: '/graph', label: 'Project Graph', icon: '⬡' },
       { href: '/timeline', label: 'Timeline', icon: '◫' },
       { href: '/memory-graph', label: 'Memory Graph', icon: '✦' },
       { href: '/knowledge', label: 'Knowledge', icon: '◈' },
+      { href: '/flamegraph', label: 'Turn Flame Graph', icon: '▬' },
     ],
   },
   {
@@ -85,7 +88,7 @@ export default function NavDropdown() {
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="text-[0.6rem] font-mono text-slate-500 hover:text-cyber-cyan transition-colors uppercase tracking-wider border border-transparent hover:border-cyber-cyan/30 px-1.5 py-0.5 rounded flex items-center gap-1"
+        className="text-[0.6rem] font-mono text-slate-500 hover:text-cyber-cyan transition-colors uppercase tracking-wider border border-transparent hover:border-cyber-cyan/30 px-2 py-1.5 sm:px-1.5 sm:py-0.5 rounded flex items-center gap-1 touch-manipulation"
         title="All Views (V)"
       >
         ⊞ All Views
@@ -104,8 +107,7 @@ export default function NavDropdown() {
             className="absolute left-0 top-full mt-1 z-50 rounded-lg border border-cyber-cyan/15 overflow-hidden shadow-xl"
             style={{
               background: '#080f1c',
-              minWidth: '560px',
-              maxWidth: '95vw',
+              width: 'min(560px, calc(100vw - 24px))',
             }}
           >
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-0">

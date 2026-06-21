@@ -1427,3 +1427,364 @@ Expand the Impact Leaderboard to include all pipeline stages. Add a stage filter
 - AC4: Impact stats fetched in batches of 5 (not all-at-once)
 - AC5: Total row at bottom shows fleet-wide sums: commits, +lines, -lines, tool calls
 - AC6: Leaderboard updates on same 60s poll as pipeline page
+
+---
+
+## P61 — 3D Force-Graph View
+
+**Status:** `[x] done`
+**Created:** 2026-06-21
+
+### Problem
+
+The 2D Project Graph (P2) shows project relationships as a flat node-link diagram. With many projects, nodes overlap and edges become hard to trace. There is no spatial depth cue to help operators distinguish clusters of related projects from isolated ones.
+
+### Proposed Solution
+
+Add a `/graph3d` page that renders the fleet as a 3D force-directed graph using `react-force-graph-3d` (three.js underneath). Nodes are spheres colored by project state (cyan=idle, green=active, red=stalled, purple=autonomous). Edges represent cross-channel injection links. Camera orbits automatically; operators can drag to rotate, scroll to zoom, click a node for a floating info card. Node size scales with memory file size.
+
+### Acceptance Criteria
+
+- AC1: `/graph3d` page renders all fleet projects as 3D spheres
+- AC2: Node color matches fleet state (idle/active/stalled/autonomous)
+- AC3: Camera auto-orbits; drag to rotate, scroll to zoom
+- AC4: Click node opens floating info card (slug, state, last-seen)
+- AC5: Node size proportional to memory size
+- AC6: Nav link to `/graph3d` in navigation
+
+---
+
+## P62 — Dashboard Section Visibility Controls
+
+**Status:** `[x] done`
+**Created:** 2026-06-21
+
+### Problem
+
+The main dashboard has 8 sections: Instances, Stall Alerts, Transcript, Scheduler, Fleet Advisor, Event Feed, Specclaw Pipeline, and Memories. Operators focused on a single workflow (e.g., stall triage or schedule management) must scroll past irrelevant sections. There is no way to collapse or hide sections to declutter the view.
+
+### Proposed Solution
+
+Add a `⊞ Sections` icon button in the dashboard header (right side, before the SSE indicator). Clicking opens a compact popover listing all 8 dashboard sections with toggle switches. Toggling a section off animates it to zero height and removes it from layout flow (not just `visibility: hidden`). State persisted to `localStorage` under key `mc-dashboard-sections`. A pill badge `N hidden` appears in the header when any sections are off. All sections visible by default on first load.
+
+### Acceptance Criteria
+
+- AC1: Header has `⊞ Sections` button that opens/closes a popover
+- AC2: Popover lists all 8 sections with on/off toggles
+- AC3: Toggling off a section collapses it with a 200ms height animation; content unmounts
+- AC4: Visibility state persisted to `localStorage`; survives page refresh
+- AC5: `N hidden` pill badge visible in header when ≥1 section is hidden
+- AC6: All sections on by default for new visitors (no prior localStorage entry)
+
+---
+
+## P63 — Fleet State History Sparklines
+
+**Status:** `[x] done`
+**Created:** 2026-06-21
+
+### Problem
+
+The fleet header badges (Idle / Active / Stalled / Autonomous) show only the current point-in-time count. An operator seeing "3 Stalled" has no idea whether that number is rising, falling, or stable — critical context when deciding whether to intervene.
+
+### Proposed Solution
+
+Beneath each fleet state badge, render a 20-point micro-sparkline (40×16 px inline SVG) that records the badge's count every 30 seconds in a client-side ring buffer (max 20 samples = 10 minutes of history). Line color matches the state color. A rising stalled sparkline draws in red; a falling one in green. Ring buffer stored in a `useRef`; no server round-trips needed.
+
+### Acceptance Criteria
+
+- AC1: Each fleet badge (Idle/Active/Stalled/Autonomous) shows a 40×16 sparkline below the count
+- AC2: Sparkline sampled every 30s; buffer holds last 20 samples (10 min)
+- AC3: Stalled sparkline: green if last 3 points trend downward, red if upward, default color if flat
+- AC4: Sparklines render without layout overflow on ≥320px viewport
+- AC5: On first load, sparkline shows a single flat dot (only one sample yet)
+- AC6: Sparklines are purely client-side (no new API endpoints)
+
+---
+
+## P64 — Project Galaxy Map
+
+**Status:** `[x] done`
+**Created:** 2026-06-21
+
+### Problem
+
+Both the 2D Project Graph and 3D Force Graph lay out projects by connection topology. Projects with no cross-channel injection links appear as isolated floating nodes with no meaningful placement. There is no visualization that places ALL projects in a spatial context based on their intrinsic properties (activity, age, memory richness).
+
+### Proposed Solution
+
+Add a `/galaxy` page. Render projects as stars on a dark canvas using canvas2d or SVG. Position each project on a spiral-arm layout where: radial distance from center = days since last activity (recent projects near center), angular position = project creation order. Star size = memory file size (log scale). Star brightness/glow = current state (active=bright green, idle=dim cyan, stalled=red pulse, autonomous=purple nebula). Hovering a star shows a floating tooltip (slug, state, last-seen, memory size). Clicking navigates to `/projects/<slug>`. A legend panel in the bottom-left explains the encoding. Auto-animates with a slow rotation of the whole galaxy.
+
+### Acceptance Criteria
+
+- AC1: `/galaxy` page renders all fleet projects as stars on a dark canvas
+- AC2: Radial distance from center proportional to recency (recent = close to center)
+- AC3: Star size proportional to memory file size (log scale, min 4px, max 20px)
+- AC4: Star color/glow reflects fleet state (active=green, idle=cyan, stalled=red, autonomous=purple)
+- AC5: Hover shows tooltip with slug, state, last-seen, memory size
+- AC6: Click star navigates to `/projects/<slug>`
+- AC7: Legend panel in bottom-left explains size/color/position encoding
+- AC8: Canvas rotates slowly (1 full rotation per 120s); pauses on hover
+
+---
+
+## P65 — Holistic Project Feed
+
+**Status:** `[x] done`
+**Created:** 2026-06-21
+
+### Problem
+
+No single view shows the complete picture of each project in one place. To understand a project's current state, an operator must visit the Dashboard (instance state), `/projects/<slug>` (memory + transcript), `/pipeline` (specclaw stage), `/metrics` (turn counts), `/branches` (git branch), and `/goals` (current goal) — six pages for what should be a single glance.
+
+### Proposed Solution
+
+Add a `/feed` page: a vertically-scrolling "project cards" feed where each card shows everything about one project in a compact 200px-tall card: slug + platform badge, fleet state dot, current goal (first 80 chars), active specclaw change (stage badge), latest transcript snippet (last tool call), memory size, git branch, last-active timestamp, and quick-action buttons (Inject, Stop, Graph). Cards sorted by last-active descending. Filtered by a search bar (slug/goal text match) and a state filter row (All / Idle / Active / Stalled / Auto). Data fetched from existing `/api/fleet`, `/api/goals`, `/api/pipeline` endpoints in parallel; refreshes every 30s.
+
+### Acceptance Criteria
+
+- AC1: `/feed` page renders one card per project, sorted by last-active descending
+- AC2: Each card shows: slug, platform, state dot, goal snippet, specclaw stage, transcript snippet, memory size, git branch, last-active
+- AC3: Search bar filters cards by slug or goal text (client-side, real-time)
+- AC4: State filter row (All / Idle / Active / Stalled / Auto) filters cards
+- AC5: Quick-action buttons on each card: Inject (opens InjectTerminal), Graph (links `/graph?highlight=<slug>`), Stop (with confirmation)
+- AC6: Data refreshes every 30s; cards animate in on first load
+- AC7: Nav link to `/feed` added to NavDropdown
+
+---
+
+## P66 — Agent Turn Flame Graph
+
+**Status:** `[x] done`
+**Created:** 2026-06-21
+
+### Problem
+
+Operators cannot visualize how individual agent turns are structured: which tools were called, in what order, how long each took, and which tools dominate turn time. The metrics page shows p50/p90/p99 per project but gives no per-turn breakdown. Debugging a slow or stuck turn requires reading raw JSONL manually.
+
+### Proposed Solution
+
+Add a `/flamegraph` page that renders a flame-chart view of recent agent turns for a selected project. Each row is one turn (newest at top, max 20 turns). Each row contains colored blocks representing tool calls, positioned left-to-right by their occurrence within the turn and sized proportionally to their duration (derived from JSONL record timestamps). Tool calls are color-coded by category: Bash (orange), Read/Write (blue), Agent (purple), MCP (cyan), other (gray). A tooltip on hover shows tool name, duration ms, and status (ok/error). A new API route `/api/flamegraph/[slug]` parses the latest JSONL transcript for the project and returns structured turn data. No external dependencies — pure SVG rendering.
+
+### Acceptance Criteria
+
+- AC1: `/flamegraph` page renders; project selector dropdown populates from `/api/fleet`
+- AC2: Each row represents one turn; max 20 turns shown; newest turn at top
+- AC3: Tool call blocks color-coded: Bash=orange, Read/Write=blue, Agent=purple, MCP=cyan, other=gray
+- AC4: Block width proportional to tool call duration (from JSONL timestamps); minimum visible width 4px
+- AC5: Hover tooltip shows: tool name, duration ms, turn index
+- AC6: X-axis shows turn duration in ms; Y-axis labels show turn index + user message snippet
+- AC7: `/api/flamegraph/[slug]` returns structured TurnFlame data parsed from JSONL
+- AC8: Nav link to `/flamegraph` added to NavDropdown under Observability
+
+---
+
+## P67 — Project Spotlight Drawer
+
+**Status:** `[x] done`
+**Created:** 2026-06-21
+
+### Problem
+
+To understand a project's full context, operators must navigate across six pages: Dashboard, `/projects/[slug]`, `/pipeline`, `/metrics`, `/branches`, and `/goals`. Every time a project card or graph node is clicked, operators leave the current view entirely.
+
+### Proposed Solution
+
+Add a global "Project Spotlight" right-side drawer (400px wide, slides in over content) that can be triggered from any project card in InstanceGrid, any node in the Galaxy Map or Force Graph, or any row in the timeline/feed pages. The drawer shows: state ring + slug header, current goal, active specclaw proposal (stage badge), last 3 transcript snippets, memory count + top 3 memory titles, git branch + last commit, scheduled jobs, and quick-action buttons (Inject, Stop). Drawer state is managed via URL param `?spotlight=<slug>` so it is shareable and deeplinked. Implemented as a `SpotlightDrawer` component registered in `ClientShell` so it is available on every page.
+
+### Acceptance Criteria
+
+- AC1: `SpotlightDrawer` renders as a right-side panel that slides in when `?spotlight=<slug>` is present in the URL
+- AC2: Drawer shows: state dot + slug, goal, specclaw stage, last 3 transcript entries, memory count + previews, git branch, last scheduled job
+- AC3: Clicking any project card/galaxy star/graph node adds `?spotlight=<slug>` to URL; closes on Escape or clicking outside
+- AC4: Quick-action: Inject opens InjectTerminal pre-filled with the slug; Stop fires inject with `/stop`
+- AC5: Drawer data auto-refreshes every 30s; stale indicator if data > 60s old
+- AC6: Works on mobile (full-width bottom sheet on <640px)
+
+---
+
+## P68 — Fleet Ambient Display
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+Mission Control has no wall-display or ambient mode. Operators monitoring the fleet from a secondary monitor need a glanceable, always-on visualization — not a data-dense dashboard.
+
+### Proposed Solution
+
+Add a `/ambient` page: a full-screen generative particle system that maps fleet state to visual atmosphere. Each project becomes a particle (circle) that orbits and drifts — idle particles drift slow cyan, active particles pulse bright green, stalled particles emit red ripples, autonomous particles glow purple with a slow orbit trail. The number of active particles and their brightness scales with fleet-wide activity. Clicking a particle opens the Project Spotlight drawer (`?spotlight=<slug>`). No nav header — a `[×]` exit button and an auto-hide overlay with the active/stalled count appear on mouse move. Particle positions are deterministic (seeded by slug hash) so the layout is stable across refreshes. Renders entirely in a `<canvas>` element using `requestAnimationFrame`; no external dependencies.
+
+### Acceptance Criteria
+
+- AC1: `/ambient` page renders full-screen canvas with no nav header
+- AC2: One particle per project; position seeded by slug hash (stable)
+- AC3: Particle color + animation reflects state: idle=slow cyan drift, active=green pulse, stalled=red ripple, autonomous=purple orbit
+- AC4: Clicking a particle adds `?spotlight=<slug>` to URL; SpotlightDrawer slides in
+- AC5: Fleet state polled every 30s from `/api/fleet`; particles animate transition on state change
+- AC6: Mouse-move reveals overlay: active count, stalled count, `[×]` back-to-dashboard link; overlay auto-hides after 3s
+- AC7: Nav link to `/ambient` added to NavDropdown under Observability
+
+---
+
+## P69 — Live Tool Call Ticker
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+When `progressMode` is enabled, tool call events flow through the SSE stream but are only visible in Discord or in a single project's progress messages. There is no fleet-wide view showing what all active projects are currently doing.
+
+### Proposed Solution
+
+Add a `/ticker` page styled like a Bloomberg terminal feed: a fixed-height scrolling panel of live tool call events across all active projects. Each row: `[HH:MM:SS] <slug> | <tool_name> | <status: started/done/error> | <duration_ms>`. Events sourced from the existing SSE stream at `/api/events/stream` — filter for `tool_progress` event type. Rows auto-scroll; newest at bottom. Color coding: slug in cyan, tool_name by category (Bash=orange, Read=blue, Agent=purple, MCP=teal, other=gray), status=green/red/amber, duration in dim white. A filter bar lets operators show only specific slugs or tool categories. The ticker pauses on hover (to allow reading); resumes on mouse-leave.
+
+### Acceptance Criteria
+
+- AC1: `/ticker` page renders scrolling event feed from SSE `/api/events/stream`
+- AC2: Rows formatted: `[HH:MM:SS] slug | tool_name | status | duration_ms`
+- AC3: Color coding: slug=cyan, tool category colors (Bash=orange, Read/Write=blue, Agent=purple, MCP=teal), status=green/red/amber
+- AC4: Auto-scroll to newest; pauses on hover; resumes on mouse-leave
+- AC5: Filter bar: slug substring filter + tool category multi-select checkboxes
+- AC6: Max 500 rows retained in memory; oldest evicted on overflow
+- AC7: Nav link to `/ticker` added to NavDropdown under Observability
+
+---
+
+## P70 — Cross-Project Memory Similarity Matrix
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+No view reveals which projects share similar memory topics or concerns. Operators cannot identify when two projects are independently solving the same problem, when a memory from one project would be valuable to another, or which projects are most topically isolated.
+
+### Proposed Solution
+
+Add a `/similarity` page showing a project × project heatmap where each cell's intensity represents the co-mention overlap between the two projects' memory content (simple word-frequency intersection over union after stop-word removal). Rows and columns are sorted by cluster (projects with highest average similarity grouped together). Each cell is colored from dark (0% overlap) to bright cyan (100% overlap). Hovering a cell shows the top 5 shared keywords. The diagonal is always 100% (excluded from sorting). A minimum threshold slider (default 10%) hides cells below threshold (gray). Data computed server-side at `/api/similarity` by reading all `~/.claude/projects/<encoded>/memory/*.md` files.
+
+### Acceptance Criteria
+
+- AC1: `/similarity` page renders an N×N heatmap where N = number of projects with memory files
+- AC2: Cell intensity maps to word-overlap score (intersection/union of non-stop keywords, 0–1)
+- AC3: Rows/columns sorted by cluster (greedy: row with highest average similarity placed first)
+- AC4: Hover tooltip shows top 5 shared keywords for that cell pair
+- AC5: Threshold slider (0–50%) grays out cells below threshold
+- AC6: `/api/similarity` endpoint computes scores server-side; result cached 5 min
+- AC7: Nav link to `/similarity` added to NavDropdown under Intelligence
+
+---
+
+## P71 — SpotlightDrawer Navigation Links
+
+**Status:** `[x] done`
+**Created:** 2026-06-21
+
+### Problem
+
+The SpotlightDrawer (P67) shows a rich summary for each project, but has no way to navigate to the full detail views. To reach the timeline, flamegraph, metrics, or branches for a project, operators must close the drawer and navigate manually. The drawer is a dead end for power users.
+
+### Proposed Solution
+
+Add a compact "jump to" link bar inside the SpotlightDrawer header area (below the slug/state row). Show icon buttons for: Timeline (`/projects/<slug>`), Flame Graph (`/flamegraph?project=<slug>`), Metrics (`/metrics?slug=<slug>`), Branches (`/branches?slug=<slug>`). Each opens in the same tab, closing the drawer first. Existing "Inject" and "Stop" quick actions remain at the bottom.
+
+### Acceptance Criteria
+
+- AC1: Link bar visible in drawer header with Timeline, Flame, Metrics, Branches icons
+- AC2: Clicking a link closes the drawer (removes `?spotlight` param) then navigates to the target
+- AC3: Each icon has a tooltip showing the full page name
+- AC4: Links render on both desktop (right panel) and mobile (bottom sheet) without overflow
+- AC5: Target pages that don't exist for a project (e.g. no JSONL) handle gracefully — link still present, page shows empty state
+
+---
+
+## P72 — 3D Force-Graph Spotlight Integration
+
+**Status:** `[x] done`
+**Created:** 2026-06-21
+
+### Problem
+
+The 3D Force-Graph page (`/graph3d`) still navigates to `/projects/<slug>` when a node is clicked, forcing operators to leave the 3D view entirely. The Galaxy Map (P67) was updated to open the SpotlightDrawer instead, but `graph3d` was not updated. Inconsistent click behavior between graph views creates UX confusion.
+
+### Proposed Solution
+
+Update `ForceGraph3D.tsx` and the `/graph3d` page to open `?spotlight=<slug>` on node click instead of navigating away, matching the Galaxy Map behavior. The SpotlightDrawer will slide in over the 3D view. Add a "full page" link inside the drawer (addressed by P71) for users who need the full timeline.
+
+### Acceptance Criteria
+
+- AC1: Clicking a node in `/graph3d` adds `?spotlight=<slug>` to the URL; SpotlightDrawer opens
+- AC2: The 3D graph remains visible in the background while the drawer is open
+- AC3: Closing the drawer (Escape or backdrop) returns to the graph without re-rendering
+- AC4: Node click behavior consistent with Galaxy Map
+
+---
+
+## P73 — Broadcast Send History
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+The `/broadcast` page lets operators send a message to all or selected channels, but has no record of what was sent. After a broadcast, operators cannot verify which channels received the message, what the exact text was, or when it was sent. A typo or mis-targeted broadcast leaves no audit trail in the UI.
+
+### Proposed Solution
+
+Add a local-storage-backed send history panel below the broadcast form on `/broadcast`. Each entry records: timestamp, target slug list (or "all"), message text (truncated), and a success/partial-fail indicator. Retain the last 20 entries. Add a "Re-send" button per entry that pre-fills the form with the same message and targets. A "Clear history" button purges localStorage.
+
+### Acceptance Criteria
+
+- AC1: After each successful broadcast, an entry is appended to history (localStorage)
+- AC2: History shows: relative timestamp, target count, message excerpt (80 chars), status badge
+- AC3: "Re-send" pre-fills slug selector and message textarea with the historical values
+- AC4: History persists across page reloads; cleared by "Clear history" button
+- AC5: Maximum 20 entries retained; oldest pruned on overflow
+
+---
+
+## P74 — Metrics Drill-Down to Flamegraph
+
+**Status:** `[x] done`
+**Created:** 2026-06-21
+
+### Problem
+
+The `/metrics` page shows per-project p50/p90/p99 turn latency, but clicking a project row does nothing. Operators who see an outlier (e.g. p99 of 8 minutes) have no way to jump directly to the flamegraph for that project to diagnose which tool calls dominated. The gap between the aggregate metric and the turn-level breakdown requires manual navigation.
+
+### Proposed Solution
+
+Add a "View turns →" link/button on each project row in the Metrics page that deep-links to `/flamegraph` with the project pre-selected. The `/flamegraph` page already supports selecting a project via dropdown — update its URL to accept a `?project=<slug>` query param that pre-selects the project on load.
+
+### Acceptance Criteria
+
+- AC1: Each project row in `/metrics` has a "↬ Turns" button that links to `/flamegraph?project=<slug>`
+- AC2: `/flamegraph` reads `?project=<slug>` on load and pre-selects that project in the dropdown
+- AC3: If the slug from the URL is not in the fleet list, the dropdown defaults to the first available
+- AC4: The button is visually small (ghost/icon) so it doesn't dominate the row layout
+
+---
+
+## P75 — On-Demand Fleet Report
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+The `/reports` page displays pre-generated weekly fleet reports, but there is no way to generate a report on-demand. Operators who want a status snapshot mid-week, before a release, or after an incident must wait for the scheduled generation or trigger it externally. The page is read-only with no generation controls.
+
+### Proposed Solution
+
+Add a "Generate now" button on the `/reports` page that calls a new `/api/reports/generate` POST endpoint. The endpoint runs the same aggregation logic as the weekly report but snapshots the current fleet state immediately. The response is streamed back as SSE and the new report appears at the top of the table when complete. A spinner with elapsed-time counter is shown during generation. The generated report is tagged as "on-demand" in the source column.
+
+### Acceptance Criteria
+
+- AC1: "Generate now" button visible on `/reports` page (top right, or below header)
+- AC2: Click triggers POST `/api/reports/generate`; button shows spinner + elapsed time
+- AC3: On completion, new report row appears at top of table with "on-demand" badge in source column
+- AC4: Generation errors surface inline (toast or error row) without crashing the page
+- AC5: Button disabled while generation is in progress to prevent duplicate submissions

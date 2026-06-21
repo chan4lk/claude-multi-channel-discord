@@ -73,10 +73,21 @@ function MetricsRow({ project, expanded, onToggle }: {
         <td className="px-4 py-3">
           <Sparkline data={sparkData} width={80} height={22} color="#00F5FF" />
         </td>
+        <td className="px-4 py-3 text-right">
+          <Link
+            href={`/flamegraph?project=${encodeURIComponent(project.slug)}`}
+            onClick={(e) => e.stopPropagation()}
+            title="View turn flamegraph"
+            className="text-[0.6rem] font-mono px-1.5 py-0.5 rounded border transition-colors"
+            style={{ borderColor: '#1e3a5f', color: '#22D3EE', background: 'transparent' }}
+          >
+            ↬ Turns
+          </Link>
+        </td>
       </tr>
       {expanded && (
         <tr style={{ background: 'rgba(0,245,255,0.02)' }}>
-          <td colSpan={7} className="px-8 py-4 border-b border-cyber-cyan/8">
+          <td colSpan={8} className="px-8 py-4 border-b border-cyber-cyan/8">
             <div className="flex flex-col gap-2">
               <p className="text-[0.6rem] font-mono text-slate-500 uppercase tracking-wider mb-1">7-Day Token Activity</p>
               <div className="flex items-end gap-2">
@@ -452,6 +463,7 @@ export default function MetricsPage() {
                       <th className="px-4 py-2 text-[0.6rem] font-mono text-slate-500 uppercase tracking-wider text-right">p95 Latency</th>
                       <th className="px-4 py-2 text-[0.6rem] font-mono text-slate-500 uppercase tracking-wider text-right">Turns/Day</th>
                       <th className="px-4 py-2 text-[0.6rem] font-mono text-slate-500 uppercase tracking-wider">7d Trend</th>
+                      <th className="px-4 py-2 text-[0.6rem] font-mono text-slate-500 uppercase tracking-wider"></th>
                     </tr>
                   </thead>
                   <tbody>

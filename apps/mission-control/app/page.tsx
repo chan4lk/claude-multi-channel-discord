@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import EventFeed from '../components/EventFeed'
 import InstanceGrid from '../components/InstanceGrid'
 import MemoryPanel from '../components/MemoryPanel'
@@ -35,6 +35,139 @@ function isHealthy(lastSeen: string | null): boolean {
   return Date.now() - new Date(lastSeen).getTime() < 5 * 60 * 1000
 }
 
+// === P62: Section visibility controls ===
+const SECTION_KEYS = ['instances', 'stalls', 'advisor', 'pipeline', 'memories', 'scheduler', 'events'] as const
+type SectionKey = typeof SECTION_KEYS[number]
+const SECTION_LABELS: Record<SectionKey, string> = {
+  instances: 'Instances',
+  stalls: 'Stall Alerts',
+  advisor: 'Fleet Advisor',
+  pipeline: 'Specclaw Pipeline',
+  memories: 'Memories',
+  scheduler: 'Scheduler',
+  events: 'Event Feed',
+}
+const ALL_VISIBLE = Object.fromEntries(SECTION_KEYS.map((k) => [k, true])) as Record<SectionKey, boolean>
+const LS_SECTIONS_KEY = 'mc-dashboard-sections'
+
+function loadVisibility(): Record<SectionKey, boolean> {
+  if (typeof window === 'undefined') return ALL_VISIBLE
+  try {
+    const raw = localStorage.getItem(LS_SECTIONS_KEY)
+    if (!raw) return ALL_VISIBLE
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    return Object.fromEntries(SECTION_KEYS.map((k) => [k, parsed[k] !== false])) as Record<SectionKey, boolean>
+  } catch {
+    return ALL_VISIBLE
+  }
+}
+
+function SectionsPopover({
+  open,
+  onClose,
+  sections,
+  onToggle,
+}: {
+  open: boolean
+  onClose: () => void
+  sections: Record<SectionKey, boolean>
+  onToggle: (k: SectionKey) => void
+}) {
+  if (!open) return null
+  return (
+    <>
+      <div className="fixed inset-0 z-30" onClick={onClose} />
+      <div
+        className="absolute right-0 top-full mt-2 z-40 rounded-lg border border-cyber-cyan/20 bg-cyber-surface/95 backdrop-blur-md p-3 min-w-[190px] shadow-2xl"
+        style={{ boxShadow: '0 0 24px rgba(0,245,255,0.08)' }}
+      >
+        <div className="text-[0.55rem] uppercase tracking-widest text-slate-500 mb-2.5 font-semibold px-1">
+          Dashboard Sections
+        </div>
+        {SECTION_KEYS.map((key) => (
+          <button
+            key={key}
+            onClick={() => onToggle(key)}
+            className="w-full flex items-center justify-between gap-3 px-2 py-1.5 rounded hover:bg-cyber-cyan/5 transition-colors text-left"
+          >
+            <span className="text-xs text-slate-300 font-mono">{SECTION_LABELS[key]}</span>
+            <span
+              className="w-7 h-3.5 rounded-full transition-colors relative flex-shrink-0"
+              style={{ background: sections[key] ? 'rgba(0,245,255,0.3)' : 'rgba(71,85,105,0.5)' }}
+            >
+              <span
+                className="absolute top-0.5 h-2.5 w-2.5 rounded-full transition-all"
+                style={{
+                  background: sections[key] ? '#00F5FF' : '#64748b',
+                  left: sections[key] ? '14px' : '2px',
+                }}
+              />
+            </span>
+          </button>
+        ))}
+      </div>
+    </>
+  )
+}
+
+function AnimatedSection({ visible, children }: { visible: boolean; children: React.ReactNode }) {
+  return (
+    <AnimatePresence initial={false}>
+      {visible && (
+        <motion.div
+          initial={{ height: 0, opacity: 0 }}
+          animate={{ height: 'auto', opacity: 1 }}
+          exit={{ height: 0, opacity: 0 }}
+          transition={{ duration: 0.2, ease: 'easeInOut' }}
+          style={{ overflow: 'hidden' }}
+        >
+          {children}
+        </motion.div>
+      )}
+    </AnimatePresence>
+  )
+}
+
+// === P63: Fleet state sparklines ===
+const MAX_SPARK_SAMPLES = 20
+
+function MiniSparkline({ data, color }: { data: number[]; color: string }) {
+  if (data.length < 2) {
+    return (
+      <svg width={40} height={14} style={{ display: 'block' }}>
+        <circle cx={20} cy={7} r={1.5} fill={color} opacity={0.6} />
+      </svg>
+    )
+  }
+  const max = Math.max(...data, 1)
+  const pts = data.map((v, i) => {
+    const x = (i / (data.length - 1)) * 38 + 1
+    const y = 12 - (v / max) * 10
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  })
+  return (
+    <svg width={40} height={14} style={{ display: 'block' }}>
+      <polyline
+        points={pts.join(' ')}
+        fill="none"
+        stroke={color}
+        strokeWidth={1.5}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        opacity={0.8}
+      />
+    </svg>
+  )
+}
+
+function getStalledSparkColor(data: number[]): string {
+  if (data.length < 3) return '#EF4444'
+  const last3 = data.slice(-3)
+  return last3[2] - last3[0] < 0 ? '#4ADE80' : '#EF4444'
+}
+
+// === Shared UI ===
+
 function SectionLabel({ label }: { label: string }) {
   return (
     <div className="flex items-center gap-2 mb-3">
@@ -64,11 +197,13 @@ interface FleetBadgeProps {
   count: number
   active: boolean
   onClick: () => void
+  sparkData?: number[]
 }
 
-function FleetBadge({ state, count, active, onClick }: FleetBadgeProps) {
+function FleetBadge({ state, count, active, onClick, sparkData }: FleetBadgeProps) {
   const color = STATE_COLORS[state]
   const isStalled = state === 'stalled' && count > 0
+  const sparkColor = state === 'stalled' && sparkData ? getStalledSparkColor(sparkData) : color
 
   return (
     <button
@@ -89,6 +224,7 @@ function FleetBadge({ state, count, active, onClick }: FleetBadgeProps) {
       >
         {STATE_LABELS[state]}
       </span>
+      {sparkData && <MiniSparkline data={sparkData} color={sparkColor} />}
     </button>
   )
 }
@@ -108,6 +244,41 @@ function DashboardClient() {
   const [uptime, setUptime] = useState(0)
   const mountTime = useRef(Date.now())
   const recentEvents = useRef<number[]>([])
+
+  // P62: section visibility
+  const [sections, setSections] = useState<Record<SectionKey, boolean>>(ALL_VISIBLE)
+  const [sectionsOpen, setSectionsOpen] = useState(false)
+
+  useEffect(() => { setSections(loadVisibility()) }, [])
+
+  function toggleSection(key: SectionKey) {
+    setSections((prev) => {
+      const next = { ...prev, [key]: !prev[key] }
+      try { localStorage.setItem(LS_SECTIONS_KEY, JSON.stringify(next)) } catch {}
+      return next
+    })
+  }
+
+  const hiddenCount = SECTION_KEYS.filter((k) => !sections[k]).length
+
+  // P63: fleet state history for sparklines (sampled every 30s)
+  const [fleetHistory, setFleetHistory] = useState<Record<ProjectState, number[]>>({
+    idle: [], active: [], stalled: [], autonomous: [],
+  })
+  useEffect(() => {
+    const sample = () => {
+      setFleetHistory((prev) => ({
+        idle: [...prev.idle.slice(-(MAX_SPARK_SAMPLES - 1)), fleet.idle],
+        active: [...prev.active.slice(-(MAX_SPARK_SAMPLES - 1)), fleet.active],
+        stalled: [...prev.stalled.slice(-(MAX_SPARK_SAMPLES - 1)), fleet.stalled],
+        autonomous: [...prev.autonomous.slice(-(MAX_SPARK_SAMPLES - 1)), fleet.autonomous],
+      }))
+    }
+    sample()
+    const id = setInterval(sample, 30_000)
+    return () => clearInterval(id)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fleet.idle, fleet.active, fleet.stalled, fleet.autonomous])
 
   useEffect(() => {
     async function fetchInstances() {
@@ -157,7 +328,6 @@ function DashboardClient() {
   const healthy = instances.filter((i) => isHealthy(i.last_seen)).length
   const degraded = instances.length - healthy
 
-  // Slugs matching the current fleet filter
   const filteredSlugs = fleetFilter
     ? new Set(fleet.projects.filter((p) => p.state === fleetFilter).map((p) => p.slug))
     : null
@@ -180,7 +350,7 @@ function DashboardClient() {
   return (
     <div className="min-h-dvh">
       {/* HUD Header */}
-      <header className="relative border-b border-cyber-cyan/12 bg-cyber-surface/70 backdrop-blur-md px-6 py-4">
+      <header className="relative z-50 border-b border-cyber-cyan/12 bg-cyber-surface/70 backdrop-blur-md px-6 py-4">
         {/* Bottom-edge glow line */}
         <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-cyber-cyan/40 to-transparent" />
         <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -199,9 +369,34 @@ function DashboardClient() {
             </div>
           </div>
 
-          <div className="flex items-center gap-4 sm:gap-6 flex-wrap">
-            {/* Fleet state badges */}
-            <div className="flex items-center gap-3 sm:gap-5 border-r border-cyber-cyan/10 pr-4 sm:pr-6">
+          <div className="flex items-center gap-2 sm:gap-4 flex-wrap justify-end">
+            {/* Sections toggle (P62) — always visible, first */}
+            <div className="relative shrink-0">
+              <button
+                onClick={() => setSectionsOpen((v) => !v)}
+                className="flex items-center gap-1 cursor-pointer rounded px-2 py-1 border transition-colors"
+                style={{
+                  borderColor: sectionsOpen ? 'rgba(0,245,255,0.4)' : '#1e3a5f',
+                  color: sectionsOpen ? '#00F5FF' : '#64748b',
+                  background: sectionsOpen ? 'rgba(0,245,255,0.08)' : 'transparent',
+                }}
+                title="Customize dashboard sections"
+              >
+                <span className="text-xs font-mono">⊞</span>
+                <span className="text-[0.6rem] uppercase tracking-widest font-mono">
+                  Sections{hiddenCount > 0 ? ` (${hiddenCount} hidden)` : ''}
+                </span>
+              </button>
+              <SectionsPopover
+                open={sectionsOpen}
+                onClose={() => setSectionsOpen(false)}
+                sections={sections}
+                onToggle={toggleSection}
+              />
+            </div>
+
+            {/* Fleet state badges with sparklines (P63) */}
+            <div className="flex items-center gap-3 sm:gap-4 border-l border-cyber-cyan/10 pl-2 sm:pl-4 shrink-0">
               {FLEET_STATES.map((state) => (
                 <FleetBadge
                   key={state}
@@ -209,13 +404,14 @@ function DashboardClient() {
                   count={fleet[state]}
                   active={fleetFilter === null || fleetFilter === state}
                   onClick={() => handleFleetBadgeClick(state)}
+                  sparkData={fleetHistory[state]}
                 />
               ))}
             </div>
             {/* WhatsApp badge — only when configured */}
             {whatsapp?.enabled && (
               <div
-                className="flex flex-col items-center gap-0.5 cursor-pointer rounded px-1"
+                className="flex flex-col items-center gap-0.5 cursor-pointer rounded px-1 shrink-0"
                 title={`WhatsApp: ${whatsapp.status} · ${whatsapp.projectCount} project${whatsapp.projectCount !== 1 ? 's' : ''}`}
                 onClick={() => {
                   const url = new URL(window.location.href)
@@ -242,19 +438,13 @@ function DashboardClient() {
                 </span>
               </div>
             )}
-            {/* MC instance counters */}
-            <CountBadge value={instances.length} label="Instances" color="#00F5FF" />
-            <CountBadge value={eventsPerMin} label="Events/min" color="#00F5FF" />
-            <CountBadge value={healthy} label="Healthy" color="#4ADE80" />
-            <CountBadge value={degraded} label="Degraded" color="#EF4444" />
-            <div className="flex flex-col items-center gap-0.5">
-              <span className="text-xl font-bold font-mono text-slate-400 tabular-nums">
-                {formatUptime(uptime)}
-              </span>
-              <span className="text-[0.6rem] text-slate-500 uppercase tracking-widest">Uptime</span>
-            </div>
+            {/* MC instance counters — hidden on small screens to reduce clutter */}
+            <CountBadge value={instances.length} label="Instances" color="#00F5FF" className="shrink-0 hidden lg:flex" />
+            <CountBadge value={eventsPerMin} label="Events/min" color="#00F5FF" className="shrink-0 hidden xl:flex" />
+            <CountBadge value={healthy} label="Healthy" color="#4ADE80" className="shrink-0 hidden lg:flex" />
+            <CountBadge value={degraded} label="Degraded" color="#EF4444" className="shrink-0 hidden lg:flex" />
             <div
-              className="flex flex-col items-center gap-0.5"
+              className="flex flex-col items-center gap-0.5 shrink-0"
               title={`SSE: ${sseStatus}`}
             >
               <span
@@ -280,85 +470,99 @@ function DashboardClient() {
         <div className="grid gap-5 grid-cols-1 lg:grid-cols-2 xl:grid-cols-[1fr_1fr_360px]">
           {/* Col 1: Instances + Stall Alerts */}
           <div className="flex flex-col gap-5">
-            <section>
-              <div className="flex items-center gap-2 mb-3">
-                <span className="w-2 h-2 rounded-sm bg-cyber-cyan/60 shrink-0" style={{ clipPath: 'polygon(0 0,100% 0,100% 100%,0 100%)' }} />
-                <h2 className="section-label">{fleetFilter ? `Instances — ${fleetFilter}` : 'Instances'}</h2>
-                <div className="flex-1 h-px bg-gradient-to-r from-cyber-cyan/20 to-transparent" />
-                <button
-                  onClick={() => setShowTranscript((v) => !v)}
-                  className="text-[0.55rem] font-mono px-1.5 py-0.5 rounded border transition-colors"
-                  style={{
-                    color: showTranscript ? '#00F5FF' : '#475569',
-                    borderColor: showTranscript ? '#00F5FF40' : '#334155',
-                    background: showTranscript ? '#00F5FF12' : 'transparent',
-                  }}
-                >
-                  ◈ Transcript
-                </button>
-              </div>
-              <InstanceGrid events={events} filterSlugs={filteredSlugs} fleetProjects={fleet.projects} />
-            </section>
-            {showTranscript && fleet.projects.length > 0 && (
+            <AnimatedSection visible={sections.instances}>
               <section>
-                <TranscriptPanel slugs={fleet.projects.map((p) => p.slug)} />
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="w-2 h-2 rounded-sm bg-cyber-cyan/60 shrink-0" style={{ clipPath: 'polygon(0 0,100% 0,100% 100%,0 100%)' }} />
+                  <h2 className="section-label">{fleetFilter ? `Instances — ${fleetFilter}` : 'Instances'}</h2>
+                  <div className="flex-1 h-px bg-gradient-to-r from-cyber-cyan/20 to-transparent" />
+                  <button
+                    onClick={() => setShowTranscript((v) => !v)}
+                    className="text-[0.55rem] font-mono px-1.5 py-0.5 rounded border transition-colors"
+                    style={{
+                      color: showTranscript ? '#00F5FF' : '#475569',
+                      borderColor: showTranscript ? '#00F5FF40' : '#334155',
+                      background: showTranscript ? '#00F5FF12' : 'transparent',
+                    }}
+                  >
+                    ◈ Transcript
+                  </button>
+                </div>
+                <InstanceGrid events={events} filterSlugs={filteredSlugs} fleetProjects={fleet.projects} />
               </section>
-            )}
-            <section>
-              <StallAlertPanel />
-            </section>
+              {showTranscript && fleet.projects.length > 0 && (
+                <section className="mt-5">
+                  <TranscriptPanel slugs={fleet.projects.map((p) => p.slug)} />
+                </section>
+              )}
+            </AnimatedSection>
+            <AnimatedSection visible={sections.stalls}>
+              <section>
+                <StallAlertPanel />
+              </section>
+            </AnimatedSection>
           </div>
 
           {/* Col 2: Scheduler + Fleet Advisor */}
           <div className="flex flex-col gap-5">
-            <section>
-              <div className="flex items-center gap-2 mb-3">
-                <span className="w-2 h-2 rounded-sm bg-cyber-cyan/60 shrink-0" style={{ clipPath: 'polygon(0 0,100% 0,100% 100%,0 100%)' }} />
-                <h2 className="section-label">Scheduler</h2>
-                <div className="flex-1 h-px bg-gradient-to-r from-cyber-cyan/20 to-transparent" />
-                <div className="flex rounded overflow-hidden border border-cyber-cyan/20 shrink-0">
-                  {(['timeline', 'table'] as const).map((v) => (
-                    <button
-                      key={v}
-                      onClick={() => setScheduleView(v)}
-                      className={`text-[10px] px-2 py-0.5 font-mono uppercase tracking-wider transition-colors ${
-                        scheduleView === v
-                          ? 'bg-cyber-cyan/20 text-cyber-cyan'
-                          : 'text-slate-500 hover:text-slate-300'
-                      }`}
-                    >
-                      {v}
-                    </button>
-                  ))}
+            <AnimatedSection visible={sections.scheduler}>
+              <section>
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="w-2 h-2 rounded-sm bg-cyber-cyan/60 shrink-0" style={{ clipPath: 'polygon(0 0,100% 0,100% 100%,0 100%)' }} />
+                  <h2 className="section-label">Scheduler</h2>
+                  <div className="flex-1 h-px bg-gradient-to-r from-cyber-cyan/20 to-transparent" />
+                  <div className="flex rounded overflow-hidden border border-cyber-cyan/20 shrink-0">
+                    {(['timeline', 'table'] as const).map((v) => (
+                      <button
+                        key={v}
+                        onClick={() => setScheduleView(v)}
+                        className={`text-[10px] px-2 py-0.5 font-mono uppercase tracking-wider transition-colors ${
+                          scheduleView === v
+                            ? 'bg-cyber-cyan/20 text-cyber-cyan'
+                            : 'text-slate-500 hover:text-slate-300'
+                        }`}
+                      >
+                        {v}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-              {scheduleView === 'timeline'
-                ? <ScheduleTimeline events={events} />
-                : <SchedulerTable events={events} />
-              }
-            </section>
-            <section>
-              <SectionLabel label="Fleet Advisor" />
-              <AdvisorTile />
-            </section>
+                {scheduleView === 'timeline'
+                  ? <ScheduleTimeline events={events} />
+                  : <SchedulerTable events={events} />
+                }
+              </section>
+            </AnimatedSection>
+            <AnimatedSection visible={sections.advisor}>
+              <section>
+                <SectionLabel label="Fleet Advisor" />
+                <AdvisorTile />
+              </section>
+            </AnimatedSection>
           </div>
 
           {/* Col 3: Event Feed (360px at xl, full-width at lg) */}
-          <section className="xl:col-span-1 lg:col-span-2">
-            <SectionLabel label="Event Feed" />
-            <EventFeed onEvent={handleEvent} />
-          </section>
+          <AnimatedSection visible={sections.events}>
+            <section className="xl:col-span-1 lg:col-span-2">
+              <SectionLabel label="Event Feed" />
+              <EventFeed onEvent={handleEvent} />
+            </section>
+          </AnimatedSection>
 
-          {/* Bottom row: Specclaw Pipeline + Memories */}
+          {/* Bottom row: Memories + Specclaw Pipeline */}
           <div className="col-span-full grid grid-cols-1 md:grid-cols-2 gap-5">
-            <section>
-              <SectionLabel label="Specclaw Pipeline" />
-              <SpecclawPipeline events={events} />
-            </section>
-            <section>
-              <SectionLabel label="Memories" />
-              <MemoryPanel />
-            </section>
+            <AnimatedSection visible={sections.memories}>
+              <section>
+                <SectionLabel label="Memories" />
+                <MemoryPanel />
+              </section>
+            </AnimatedSection>
+            <AnimatedSection visible={sections.pipeline}>
+              <section>
+                <SectionLabel label="Specclaw Pipeline" />
+                <SpecclawPipeline events={events} />
+              </section>
+            </AnimatedSection>
           </div>
         </div>
       </motion.main>

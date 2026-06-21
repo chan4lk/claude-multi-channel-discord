@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import ForceGraph3DLib from 'react-force-graph-3d'
 import type { FleetProject, ProjectState } from '../app/api/fleet/route'
 
@@ -39,6 +40,7 @@ function formatAge(mins: number): string {
 }
 
 export default function ForceGraph3D() {
+  const router = useRouter()
   const containerRef = useRef<HTMLDivElement>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fgRef = useRef<any>(null)
@@ -183,6 +185,13 @@ export default function ForceGraph3D() {
             {hud.state}
           </span>
           <span className="text-slate-500">{formatAge(hud.ageMins)}</span>
+          <button
+            onClick={() => { setHud(null); router.push(`?spotlight=${encodeURIComponent(hud.slug)}`) }}
+            className="text-[0.6rem] font-mono px-2 py-1 rounded border w-full text-left transition-colors"
+            style={{ borderColor: `${STATE_COLORS[hud.state]}40`, color: STATE_COLORS[hud.state], background: `${STATE_COLORS[hud.state]}10` }}
+          >
+            ◎ Spotlight
+          </button>
         </div>
       )}
     </div>

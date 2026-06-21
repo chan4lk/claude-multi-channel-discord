@@ -19,6 +19,7 @@ export interface FleetProject {
   state: ProjectState
   ageMins: number
   stuckThresholdMinutes: number
+  platform?: string
   monthlyTokenBudget?: number
   monthlyTokensUsed?: number
   budgetStatus?: BudgetStatus
@@ -331,7 +332,7 @@ export async function GET(): Promise<Response> {
   }
 
   const channels = readJson<{
-    projects?: Record<string, { slug?: string; stuckThresholdMinutes?: number; monthlyTokenBudget?: number }>
+    projects?: Record<string, { slug?: string; platform?: string; stuckThresholdMinutes?: number; monthlyTokenBudget?: number }>
     defaults?: { stuckThresholdMinutes?: number }
   }>(path.join(mcdDir, 'channels.json'))
 
@@ -342,7 +343,7 @@ export async function GET(): Promise<Response> {
   const defaultThreshold = channels?.defaults?.stuckThresholdMinutes ?? 5
 
   const chatIdToSlug = new Map<string, string>()
-  const projectEntries: Array<{ chatId: string; slug: string; stuckThresholdMinutes: number; monthlyTokenBudget?: number }> = []
+  const projectEntries: Array<{ chatId: string; slug: string; platform?: string; stuckThresholdMinutes: number; monthlyTokenBudget?: number }> = []
 
   if (channels?.projects) {
     for (const [chatId, proj] of Object.entries(channels.projects)) {
@@ -351,10 +352,10 @@ export async function GET(): Promise<Response> {
         projectEntries.push({
           chatId,
           slug: proj.slug,
+          platform: proj.platform,
           stuckThresholdMinutes: proj.stuckThresholdMinutes ?? defaultThreshold,
           monthlyTokenBudget: proj.monthlyTokenBudget,
         })
-
       }
     }
   }
@@ -375,9 +376,11 @@ export async function GET(): Promise<Response> {
     path.join(mcdDir, 'budget-queue-state.json')
   ) ?? {}
 
-  const projects: FleetProject[] = projectEntries.map(({ chatId, slug, stuckThresholdMinutes, monthlyTokenBudget }) =>
-    classifyState(chatId, slug, mcdDir, scheduledSlugs, stuckThresholdMinutes, circuitState, budgetQueueState, monthlyTokenBudget)
-  )
+  const projects: FleetProject[] = projectEntries.map(({ chatId, slug, platform, stuckThresholdMinutes, monthlyTokenBudget }) => {
+    const p = classifyState(chatId, slug, mcdDir, scheduledSlugs, stuckThresholdMinutes, circuitState, budgetQueueState, monthlyTokenBudget)
+    if (platform) p.platform = platform
+    return p
+  })
 
   const counts = { idle: 0, active: 0, stalled: 0, autonomous: 0 }
   for (const p of projects) counts[p.state]++
