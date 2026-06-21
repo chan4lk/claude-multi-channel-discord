@@ -185,6 +185,14 @@ export default function CommandPalette({ onInject }: Props) {
         category: 'navigate',
         action: () => router.push('/broadcast'),
       },
+      {
+        id: 'nav:audit',
+        label: 'Go to Audit Log',
+        description: 'Tamper-evident log of commands, spawns, and config changes',
+        icon: '⧇',
+        category: 'navigate',
+        action: () => router.push('/admin/audit'),
+      },
     ]
 
     const projects: Command[] = (fleet?.projects ?? []).flatMap((p) => [

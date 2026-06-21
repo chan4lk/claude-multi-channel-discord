@@ -12,6 +12,7 @@ export interface FleetProject {
   monthlyTokenBudget?: number
   monthlyTokensUsed?: number
   circuitOpen?: boolean
+  contextUsagePct?: number
 }
 
 export interface FleetResponse {
@@ -122,6 +123,40 @@ function extractSnippet(transcriptFile: string): string | null {
     }
   } catch {}
   return null
+}
+
+function computeContextUsagePct(slug: string, mcdDir: string): number | undefined {
+  const projectPath = path.join(mcdDir, 'projects', slug)
+  let realPath = projectPath
+  try { realPath = fs.realpathSync(projectPath) } catch { return undefined }
+  const encoded = encodeProjectCwd(realPath)
+  const transcriptDir = path.join(os.homedir(), '.claude', 'projects', encoded)
+  let jsonlFiles: string[] = []
+  try {
+    jsonlFiles = fs.readdirSync(transcriptDir).filter((f) => f.endsWith('.jsonl')).map((f) => path.join(transcriptDir, f))
+  } catch { return undefined }
+  if (jsonlFiles.length === 0) return undefined
+  let latestFile = ''
+  let latestMtime = 0
+  for (const file of jsonlFiles) {
+    try {
+      const mtime = fs.statSync(file).mtimeMs
+      if (mtime > latestMtime) { latestMtime = mtime; latestFile = file }
+    } catch {}
+  }
+  if (!latestFile) return undefined
+  let raw = ''
+  try { raw = fs.readFileSync(latestFile, 'utf-8') } catch { return undefined }
+  const lines = raw.trim().split('\n').filter(Boolean).reverse()
+  for (const line of lines.slice(0, 100)) {
+    try {
+      const rec = JSON.parse(line) as { type?: string; message?: { usage?: { input_tokens?: number } } }
+      if (rec.type === 'assistant' && rec.message?.usage?.input_tokens != null) {
+        return Math.min(Math.round((rec.message.usage.input_tokens / 200_000) * 100), 100)
+      }
+    } catch {}
+  }
+  return undefined
 }
 
 function stallReason(ageMins: number): string {
@@ -239,6 +274,8 @@ export function computeFleet(mcdDir: string | undefined): FleetResponse {
         result.circuitOpen = true
       }
     }
+    const ctxPct = computeContextUsagePct(slug, mcdDir)
+    if (ctxPct != null) result.contextUsagePct = ctxPct
     return result
   })
 

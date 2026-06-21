@@ -107,6 +107,33 @@ function WatchdogBadge({ slug, fleetProjects }: WatchdogBadgeProps) {
   )
 }
 
+function ContextUsageGauge({ pct, size }: { pct: number; size: number }) {
+  const r = (size - 4) / 2
+  const circ = 2 * Math.PI * r
+  const stroke = circ * (1 - pct / 100)
+  const color = pct >= 90 ? '#EF4444' : pct >= 80 ? '#F59E0B' : '#A78BFA'
+  return (
+    <span title={`Context: ${pct}% full`} className="relative cursor-default">
+      <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#1e293b" strokeWidth={3} />
+        <circle
+          cx={size / 2} cy={size / 2} r={r}
+          fill="none" stroke={color} strokeWidth={3}
+          strokeDasharray={circ} strokeDashoffset={stroke}
+          strokeLinecap="round"
+          style={{ transition: 'stroke-dashoffset 0.4s ease' }}
+        />
+      </svg>
+      <span
+        className="absolute inset-0 flex items-center justify-center text-[0.45rem] font-bold font-mono"
+        style={{ color, transform: 'none' }}
+      >
+        {pct}
+      </span>
+    </span>
+  )
+}
+
 function SlugAnnotation({ slug }: { slug: string }) {
   const [note, setNote] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
@@ -288,6 +315,9 @@ export default function InstanceGrid({ events = [], filterSlugs = null, fleetPro
                                     budget={fleetProject.monthlyTokenBudget}
                                     size={28}
                                   />
+                                )}
+                                {(fleetProject?.contextUsagePct ?? 0) > 60 && (
+                                  <ContextUsageGauge pct={fleetProject!.contextUsagePct!} size={28} />
                                 )}
                                 {health && (
                                   <HealthScoreRing

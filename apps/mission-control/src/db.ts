@@ -78,6 +78,22 @@ CREATE TABLE IF NOT EXISTS broadcasts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_broadcasts_ts ON broadcasts(ts);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts        INTEGER NOT NULL DEFAULT (unixepoch()),
+  actor     TEXT NOT NULL DEFAULT '',
+  actor_id  TEXT NOT NULL DEFAULT '',
+  verb      TEXT NOT NULL,
+  target    TEXT NOT NULL DEFAULT '',
+  payload   TEXT NOT NULL DEFAULT '{}',
+  ip        TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_ts      ON audit_log(ts);
+CREATE INDEX IF NOT EXISTS idx_audit_actor   ON audit_log(actor_id);
+CREATE INDEX IF NOT EXISTS idx_audit_verb    ON audit_log(verb);
+CREATE INDEX IF NOT EXISTS idx_audit_target  ON audit_log(target);
 `);
 
 // Prune old events on startup
@@ -219,6 +235,64 @@ export function getBroadcastHistory(limit = 50, cursor?: number): BroadcastRow[]
 
 export function deleteBroadcast(id: number): void {
   db.prepare(`UPDATE broadcasts SET deleted_at = unixepoch() WHERE id = ?`).run(id)
+}
+
+export type AuditRow = {
+  id: number
+  ts: number
+  actor: string
+  actor_id: string
+  verb: string
+  target: string
+  payload: string
+  ip: string
+}
+
+export interface AuditEntry {
+  actor?: string
+  actor_id?: string
+  verb: string
+  target?: string
+  payload?: Record<string, unknown>
+  ip?: string
+}
+
+export function insertAuditLog(entry: AuditEntry): void {
+  db.prepare(
+    `INSERT INTO audit_log (actor, actor_id, verb, target, payload, ip)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(
+    entry.actor ?? '',
+    entry.actor_id ?? '',
+    entry.verb,
+    entry.target ?? '',
+    JSON.stringify(entry.payload ?? {}),
+    entry.ip ?? '',
+  )
+}
+
+export function getAuditLog(opts: {
+  actor_id?: string
+  verb?: string
+  target?: string
+  since?: number
+  until?: number
+  cursor?: number
+  limit?: number
+}): AuditRow[] {
+  const conditions: string[] = []
+  const params: unknown[] = []
+  if (opts.actor_id) { conditions.push('actor_id = ?'); params.push(opts.actor_id) }
+  if (opts.verb) { conditions.push('verb = ?'); params.push(opts.verb) }
+  if (opts.target) { conditions.push('target = ?'); params.push(opts.target) }
+  if (opts.since != null) { conditions.push('ts >= ?'); params.push(opts.since) }
+  if (opts.until != null) { conditions.push('ts <= ?'); params.push(opts.until) }
+  if (opts.cursor != null) { conditions.push('id < ?'); params.push(opts.cursor) }
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+  const limit = Math.min(opts.limit ?? 100, 500)
+  return db.prepare(
+    `SELECT * FROM audit_log ${where} ORDER BY id DESC LIMIT ?`
+  ).all(...params, limit) as AuditRow[]
 }
 
 export default db;
