@@ -1,6 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, Suspense } from 'react'
+import { useSearchParams } from 'next/navigation'
 import SubPageHeader from '../../components/SubPageHeader'
 import type { FleetResponse } from '../api/fleet/route'
 import type { FlamegraphResponse, TurnFlame, ToolCallFlame, ToolCategory } from '../api/flamegraph/[slug]/route'
@@ -123,7 +124,9 @@ function FlameTurn({
   )
 }
 
-export default function FlamegraphPage() {
+function FlamegraphInner() {
+  const searchParams = useSearchParams()
+  const preselect = searchParams.get('project') ?? ''
   const [slugs, setSlugs] = useState<string[]>([])
   const [selected, setSelected] = useState<string>('')
   const [data, setData] = useState<FlamegraphResponse | null>(null)
@@ -139,7 +142,8 @@ export default function FlamegraphPage() {
       .then((d: FleetResponse) => {
         const ss = d.projects.map((p) => p.slug).sort()
         setSlugs(ss)
-        if (ss.length > 0) setSelected(ss[0])
+        if (preselect && ss.includes(preselect)) setSelected(preselect)
+        else if (ss.length > 0) setSelected(ss[0])
       })
       .catch(() => {})
   }, [])
@@ -302,4 +306,8 @@ export default function FlamegraphPage() {
       </div>
     </div>
   )
+}
+
+export default function FlamegraphPage() {
+  return <Suspense><FlamegraphInner /></Suspense>
 }

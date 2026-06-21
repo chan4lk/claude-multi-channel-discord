@@ -1680,7 +1680,7 @@ Add a `/similarity` page showing a project × project heatmap where each cell's 
 
 ## P71 — SpotlightDrawer Navigation Links
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
@@ -1703,7 +1703,7 @@ Add a compact "jump to" link bar inside the SpotlightDrawer header area (below t
 
 ## P72 — 3D Force-Graph Spotlight Integration
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
@@ -1748,7 +1748,7 @@ Add a local-storage-backed send history panel below the broadcast form on `/broa
 
 ## P74 — Metrics Drill-Down to Flamegraph
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem

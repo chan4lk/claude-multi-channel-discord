@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
+import Link from 'next/link'
 import type { SpotlightResponse } from '../app/api/spotlight/[slug]/route'
 
 const STATE_COLOR: Record<string, string> = {
@@ -147,6 +148,33 @@ export default function SpotlightDrawer() {
                 </button>
               </div>
             </div>
+
+            {/* nav jump bar */}
+            {slug && (
+              <div
+                className="flex items-center gap-1 px-4 py-2 border-b flex-wrap"
+                style={{ borderColor: '#0d1a2e', background: '#04080f' }}
+              >
+                {[
+                  { href: `/projects/${encodeURIComponent(slug)}`, icon: '◫', label: 'Timeline' },
+                  { href: `/flamegraph?project=${encodeURIComponent(slug)}`, icon: '▬', label: 'Flame' },
+                  { href: `/metrics?slug=${encodeURIComponent(slug)}`, icon: '◱', label: 'Metrics' },
+                  { href: `/branches?slug=${encodeURIComponent(slug)}`, icon: '⑂', label: 'Branches' },
+                ].map(({ href, icon, label }) => (
+                  <Link
+                    key={href}
+                    href={href}
+                    onClick={close}
+                    title={label}
+                    className="flex items-center gap-1 text-[0.6rem] font-mono px-2 py-1 rounded border transition-colors"
+                    style={{ borderColor: '#1e3a5f', color: '#475569', background: 'transparent' }}
+                  >
+                    <span>{icon}</span>
+                    <span>{label}</span>
+                  </Link>
+                ))}
+              </div>
+            )}
 
             {data && (
               <div className="flex flex-col gap-4 p-4 flex-1">
