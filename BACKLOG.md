@@ -1066,3 +1066,123 @@ Add a `/projects/<slug>` page with a vertical timeline view. Each entry is a tim
 - AC3: Clicking a reply-turn entry expands the assistant reply text snippet (first 300 chars)
 - AC4: Timeline paginated: loads 50 events, "load older" button appends next 50
 - AC5: Link from InstanceGrid slug chip (`{slug} ⟳` → `/projects/<slug>` on Ctrl+click or separate icon)
+
+---
+
+## P46 — Activity Pulse Rings on Project Graph
+
+**Status:** `[x] done`
+**Created:** 2026-06-21
+
+### Problem
+
+The Project Graph shows project state via color (idle/active/stalled/autonomous) but conveys no quantitative activity intensity. Two "active" projects could have wildly different turn rates and token costs — the graph shows them identically. Operators cannot see at a glance which projects are most busy or healthiest.
+
+### Proposed Solution
+
+Add a "Pulse Mode" toggle button in the Project Graph header. When enabled, each node gains two animated SVG rings sourced from the existing `/api/health` aggregate endpoint: (1) an inner activity ring whose CSS animation-duration is proportional to project activity rate (derived from `ageMins` — more recent = faster pulse); (2) an outer health ring whose color maps the health score (green ≥ 80, amber 50–79, red < 50). Ring radius scales with health score. A mini-legend appears in the graph corner explaining ring semantics. Toggle state persists to localStorage. No new API endpoint required — uses existing `/api/health`.
+
+### Acceptance Criteria
+
+- AC1: "Pulse" toggle button in graph legend area; default OFF
+- AC2: When ON, each node renders an inner activity ring with animation-duration between 0.6s (very active) and 3s (idle)
+- AC3: Outer health ring color: green (#4ADE80) for score ≥ 80, amber (#F59E0B) for 50–79, red (#EF4444) for < 50
+- AC4: Health ring radius scales between NODE_RADIUS+8 and NODE_RADIUS+16 proportional to score
+- AC5: Mini-legend in graph corner (when pulse ON) shows ring color → score tier mapping
+- AC6: Toggle state persisted to localStorage key `mc_graph_pulse`; `/api/health` fetched once on enable then on 30s interval
+
+---
+
+## P47 — Context Fill ETA Badge
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+The Context Window Optimizer (P37) shows `contextUsagePct` as a gauge when > 60%, but gives no forward-looking estimate. Operators cannot tell if a project will saturate its context in 10 minutes or 10 hours. Unplanned context saturation triggers compression injections that interrupt the agent mid-task.
+
+### Proposed Solution
+
+Add a `contextFillEtaMinutes` field to `/api/fleet` response. Computed by: reading the last 5 turns from transcript to get tokens-per-turn velocity; dividing remaining context headroom (model context limit × threshold − current input tokens) by that velocity. If velocity ≤ 0 or data insufficient, field is absent. InstanceGrid card shows a small ⏱ badge ("ctx full ~2h") when `contextFillEtaMinutes` < 120 and `contextUsagePct` > 50. Badge color: green > 60min, amber 20–60, red < 20.
+
+### Acceptance Criteria
+
+- AC1: `/api/fleet` includes `contextFillEtaMinutes?: number` computed from last-5-turn token velocity
+- AC2: InstanceGrid card shows ⏱ badge when eta < 120min and contextUsagePct > 50
+- AC3: Badge format: "ctx ~Xh Ym" for hours+mins, "ctx ~Xm" for minutes only
+- AC4: Badge color: green > 60min, amber 20–60min, red < 20min
+- AC5: When velocity data insufficient (< 3 turns), badge not shown; no division-by-zero crash
+- AC6: Tooltip on badge shows exact velocity (tokens/turn) and remaining headroom
+
+---
+
+## P48 — CLAUDE.md Live Editor
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+Each project's CLAUDE.md (system prompt) can only be edited by SSHing into the server or typing into a text editor. Operators iterating on project behavior must context-switch out of the dashboard. There is no way to preview, diff, or save the system prompt from the mission control UI.
+
+### Proposed Solution
+
+Add a "System Prompt" tab to the Project Graph detail drawer and InstanceGrid card context menu. The tab shows a `<textarea>` pre-filled with the current `projects/<slug>/CLAUDE.md` content. A `GET /api/projects/[slug]/claude-md` endpoint reads the file; `PUT` writes it atomically (temp-file rename). Ctrl+S saves; shows a "Saved ✓" confirmation for 2s. A diff view (split before/after) shown below the textarea highlights what changed. Character count shown; warn at > 8000 chars.
+
+### Acceptance Criteria
+
+- AC1: "Prompt" tab in Project Graph detail drawer (alongside Info and Diff tabs)
+- AC2: `GET /api/projects/[slug]/claude-md` returns `{ content: string, sizeBytes: number, lastModified: string }`
+- AC3: `PUT /api/projects/[slug]/claude-md` with `{ content: string }` writes atomically; returns 200 on success
+- AC4: Ctrl+S or "Save" button saves; shows "Saved ✓" confirmation; error shown on failure
+- AC5: Character count below textarea; amber warning at > 6000 chars, red at > 8000
+- AC6: Last-modified timestamp shown; content refreshed on drawer open
+
+---
+
+## P49 — Cross-Project Goal Progress Board
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+Project goals (GOAL.md, from P39) are visible only per-project in the InstanceGrid goal chip. There is no fleet-level view of all active goals, their statuses, or which projects have made progress. Operators managing many autonomous projects have no single surface to track what each agent is working toward.
+
+### Proposed Solution
+
+Add a `/goals` page with a kanban board. Three columns: Active (purple), Paused (grey), Completed (green). A `/api/goals` endpoint scans all project directories for `GOAL.md`, reads content and status (from `GOAL.status` sidecar or frontmatter), and returns cards. Each card shows: slug badge, goal text (first 120 chars), status chip, last-modified age, and a link to `/projects/<slug>` timeline. Clicking a card's status chip cycles Active → Paused → Completed via `PUT /api/projects/[slug]/goal`. Page accessible from nav sidebar and Command Palette.
+
+### Acceptance Criteria
+
+- AC1: `/goals` page renders kanban with Active / Paused / Completed columns
+- AC2: `/api/goals` scans all project dirs in `channels.json`; returns `{ slug, goalText, status, lastModified }[]`
+- AC3: Clicking status chip on a card cycles status and persists via existing `PUT /api/projects/[slug]/goal`
+- AC4: Cards link to `/projects/<slug>` for full timeline context
+- AC5: Projects with no GOAL.md not shown; empty board shows "No goals set" placeholder
+- AC6: Page reachable from Command Palette "Goals board" command and nav sidebar link
+
+---
+
+## P50 — Audit Replay Scrubber
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+Post-incident debugging requires reconstructing fleet state at a past moment. The Audit Log Browser (P41) shows events in chronological order but has no way to "rewind" to a specific time and see what the fleet looked like. Operators must mentally reconstruct state from a list of events — error-prone for complex multi-project incidents.
+
+### Proposed Solution
+
+Add a "Replay" panel to the `/audit` page. A time-range picker + a scrubber slider lets operators select a moment in the past. The panel shows a read-only snapshot of the InstanceGrid as it would have appeared at that moment: project states inferred from audit log events (spawn/kill/stuck events rebuild state transitions). The reconstruction is purely client-side from already-fetched audit rows — no new API needed. A "play" button animates through events at 10×. A "jump to incident" button appears when a `stuck` or `circuit-open` event is found in the selected window.
+
+### Acceptance Criteria
+
+- AC1: "Replay" toggle button in `/audit` page header
+- AC2: When enabled, a time-range picker + slider appear above the audit table
+- AC3: Scrubbing to a timestamp reconstructs project states from audit events up to that point
+- AC4: Reconstructed state shown as a mini InstanceGrid (slug + state badge) below the slider
+- AC5: "Play" button animates through events in the selected range at 10× speed
+- AC6: "Jump to incident" button scrolls to first `stuck` or `circuit-open` event in range
