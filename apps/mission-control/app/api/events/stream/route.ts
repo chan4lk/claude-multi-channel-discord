@@ -14,7 +14,7 @@ export async function GET(): Promise<Response> {
         } catch {
           clearInterval(hb)
         }
-      }, 15_000)
+      }, 5_000)
       // Store hb on controller object so cancel can reach it
       ;(c as unknown as Record<string, unknown>)['__hb'] = hb
     },

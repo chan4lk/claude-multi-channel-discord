@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import CommandPalette, { type InjectRequest } from './CommandPalette'
 import InjectTerminal from './InjectTerminal'
+import { FleetContextProvider } from './FleetContext'
 
 interface InjectState {
   slug: string
@@ -27,7 +28,7 @@ export default function ClientShell({ children }: { children: React.ReactNode })
   }, [])
 
   return (
-    <>
+    <FleetContextProvider>
       {children}
       <CommandPalette onInject={handleInject} />
       <AnimatePresence>
@@ -40,6 +41,6 @@ export default function ClientShell({ children }: { children: React.ReactNode })
           />
         )}
       </AnimatePresence>
-    </>
+    </FleetContextProvider>
   )
 }

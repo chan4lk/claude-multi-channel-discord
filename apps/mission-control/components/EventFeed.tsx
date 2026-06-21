@@ -193,6 +193,8 @@ export default function EventFeed({ onEvent }: Props = {}) {
   useEffect(() => {
     let cancelled = false
     let timeoutId: ReturnType<typeof setTimeout> | null = null
+    let backoff = 1_000
+    const MAX_BACKOFF = 30_000
 
     function connectSSE() {
       if (cancelled) return
@@ -207,10 +209,14 @@ export default function EventFeed({ onEvent }: Props = {}) {
           parsed = { raw: e.data }
         }
 
+        // Skip fleet-update and stall-alert events — handled by FleetContext
+        const msgType = typeof parsed['type'] === 'string' ? parsed['type'] : (e.type || 'unknown')
+        if (msgType === 'fleet-update' || msgType === 'stall-alert') return
+
         const entry: EventEntry = {
           id: nextId(),
           ts: typeof parsed['ts'] === 'number' ? parsed['ts'] : Date.now(),
-          type: typeof parsed['type'] === 'string' ? parsed['type'] : (e.type || 'unknown'),
+          type: msgType,
           instance_id: typeof parsed['instance_id'] === 'string' ? parsed['instance_id'] : '',
           payload: parsed,
         }
@@ -218,12 +224,18 @@ export default function EventFeed({ onEvent }: Props = {}) {
         addEvent(entry)
       }
 
-      es.onopen = () => setConnStatus('connected')
+      es.onopen = () => {
+        setConnStatus('connected')
+        backoff = 1_000
+      }
       es.onerror = () => {
         setConnStatus('reconnecting')
         es.close()
         if (!cancelled) {
-          timeoutId = setTimeout(connectSSE, 3000)
+          timeoutId = setTimeout(() => {
+            backoff = Math.min(backoff * 2, MAX_BACKOFF)
+            connectSSE()
+          }, backoff)
         }
       }
       es.onmessage = handleMsg

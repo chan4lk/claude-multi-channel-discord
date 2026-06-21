@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import GlassCard from './ui/GlassCard'
+import { useFleet } from './FleetContext'
 import type { StallEntry, StallsResponse } from '../app/api/stalls/route'
 
 const STALL_PROMPTS: Record<string, string> = {
@@ -95,36 +96,46 @@ function StallRow({ stall, onDismiss }: StallRowProps) {
 }
 
 export default function StallAlertPanel() {
-  const [stalls, setStalls] = useState<StallEntry[]>([])
+  const { stalls: sseStalls, stalledAt: sseStalledAt, sseStatus } = useFleet()
+  const [polledStalls, setPolledStalls] = useState<StallEntry[]>([])
+  const [polledCheckedAt, setPolledCheckedAt] = useState<string | null>(null)
   const [dismissed, setDismissed] = useState<Set<string>>(new Set())
-  const [checkedAt, setCheckedAt] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState(false)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Use SSE data when connected; fall back to REST polling when disconnected
+  const stallSource = sseStatus === 'disconnected' ? polledStalls : sseStalls
+  const checkedAt = sseStatus === 'disconnected' ? polledCheckedAt : sseStalledAt
 
   async function fetchStalls() {
     try {
       const res = await fetch('/api/stalls')
       if (!res.ok) return
       const data: StallsResponse = await res.json()
-      setStalls(data.stalls)
-      setCheckedAt(data.checkedAt)
-      // Clear dismissals for slugs that are no longer stalled
-      setDismissed((prev) => {
-        const stillStalled = new Set(data.stalls.map((s) => s.slug))
-        const next = new Set<string>()
-        for (const slug of prev) {
-          if (stillStalled.has(slug)) next.add(slug)
-        }
-        return next
-      })
+      setPolledStalls(data.stalls)
+      setPolledCheckedAt(data.checkedAt)
     } catch {}
   }
 
   useEffect(() => {
+    // Always fetch on mount for initial data; poll as fallback when SSE unavailable
     fetchStalls()
     intervalRef.current = setInterval(fetchStalls, 30_000)
     return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
   }, [])
+
+  // Sync dismissed set when stall list changes
+  const stalls = stallSource
+  useEffect(() => {
+    setDismissed((prev) => {
+      const stillStalled = new Set(stalls.map((s) => s.slug))
+      const next = new Set<string>()
+      for (const slug of prev) {
+        if (stillStalled.has(slug)) next.add(slug)
+      }
+      return next
+    })
+  }, [stalls])
 
   const visible = stalls.filter((s) => !dismissed.has(s.slug))
   const stallCount = visible.length
