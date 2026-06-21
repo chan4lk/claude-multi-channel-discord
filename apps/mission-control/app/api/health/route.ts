@@ -2,7 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { NextResponse } from 'next/server'
-import { computeHealth, type HealthScore } from './[slug]/route'
+import { computeHealth, type HealthScore } from '../../../lib/health'
 
 export const dynamic = 'force-dynamic'
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 
@@ -107,6 +107,17 @@ function toDatetimeLocal(d: Date): string {
 }
 
 export default function AuditPage() {
+  // useSearchParams() requires a Suspense boundary in Next.js 15.
+  // The actual page body lives in AuditPageInner; this wrapper just
+  // satisfies the boundary requirement so the route can prerender.
+  return (
+    <Suspense fallback={<div className="p-8 text-slate-500 font-mono text-sm">Loading…</div>}>
+      <AuditPageInner />
+    </Suspense>
+  )
+}
+
+function AuditPageInner() {
   const searchParams = useSearchParams()
   const initialSlug = searchParams.get('slug') ?? ''
   const [events, setEvents] = useState<EventRow[]>([])
