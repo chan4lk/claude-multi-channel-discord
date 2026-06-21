@@ -1048,7 +1048,7 @@ Extend the InstanceGrid goal chip to be editable. Clicking the chip (or a ✎ bu
 
 ## P45 — Per-Project Timeline View
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
