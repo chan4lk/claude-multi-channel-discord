@@ -173,7 +173,8 @@ export default function EventFeed({ onEvent }: Props = {}) {
   useEffect(() => {
     fetch('/api/events?limit=200')
       .then((r) => r.json())
-      .then((rows: Array<Record<string, unknown>>) => {
+      .then((data: { events?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>) => {
+        const rows = Array.isArray(data) ? data : (data.events ?? [])
         const historical: EventEntry[] = rows.map((row) => {
           const dbId = String(row['id'] ?? '')
           seenIds.current.add(dbId)

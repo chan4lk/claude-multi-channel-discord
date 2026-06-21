@@ -126,6 +126,8 @@ export function getEvents(filters: {
   instance_id?: string;
   type?: string;
   since?: string;
+  slug?: string;
+  cursor?: number;
   limit?: number;
 }): EventRow[] {
   const conditions: string[] = [];
@@ -143,11 +145,29 @@ export function getEvents(filters: {
     conditions.push("ts >= ?");
     params.push(filters.since);
   }
+  if (filters.slug) {
+    conditions.push("json_extract(payload, '$.slug') = ?");
+    params.push(filters.slug);
+  }
+  if (filters.cursor != null) {
+    conditions.push("id < ?");
+    params.push(filters.cursor);
+  }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-  const limitClause = filters.limit != null ? `LIMIT ${filters.limit}` : "";
-  const sql = `SELECT * FROM events ${where} ORDER BY created_at DESC ${limitClause}`;
-  return db.prepare(sql).all(...params) as EventRow[];
+  const limit = filters.limit != null ? Math.min(filters.limit, 500) : 100;
+  const sql = `SELECT * FROM events ${where} ORDER BY created_at DESC LIMIT ?`;
+  return db.prepare(sql).all(...params, limit) as EventRow[];
+}
+
+export function countEvents(filters: { type?: string; slug?: string }): number {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  if (filters.type) { conditions.push("type = ?"); params.push(filters.type) }
+  if (filters.slug) { conditions.push("json_extract(payload, '$.slug') = ?"); params.push(filters.slug) }
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const row = db.prepare(`SELECT COUNT(*) AS n FROM events ${where}`).get(...params) as { n: number }
+  return row.n
 }
 
 export type InstanceActivity = {
