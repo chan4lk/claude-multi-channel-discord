@@ -5,6 +5,7 @@ import * as os from 'os'
 export const dynamic = 'force-dynamic'
 
 export type ProjectState = 'idle' | 'active' | 'stalled' | 'autonomous'
+export type GoalStatus = 'active' | 'paused' | 'completed'
 
 export interface FleetProject {
   slug: string
@@ -15,6 +16,8 @@ export interface FleetProject {
   monthlyTokensUsed?: number
   circuitOpen?: boolean
   contextUsagePct?: number
+  goalText?: string
+  goalStatus?: GoalStatus
 }
 
 export interface FleetResponse {
@@ -118,6 +121,17 @@ function computeContextUsagePct(slug: string, mcdDir: string): number | undefine
   return undefined
 }
 
+function readGoal(slug: string, mcdDir: string): { goalText: string; goalStatus: GoalStatus } | null {
+  const goalPath = path.join(mcdDir, 'projects', slug, 'GOAL.md')
+  try {
+    const text = fs.readFileSync(goalPath, 'utf-8').trim()
+    if (!text) return null
+    return { goalText: text.slice(0, 200), goalStatus: 'active' }
+  } catch {
+    return null
+  }
+}
+
 function getTranscriptMtime(slug: string, mcdDir: string): number | null {
   const projectPath = path.join(mcdDir, 'projects', slug)
   let realPath = projectPath
@@ -193,6 +207,9 @@ function classifyState(
 
   const ctxPct = computeContextUsagePct(slug, mcdDir)
   if (ctxPct != null) result.contextUsagePct = ctxPct
+
+  const goal = readGoal(slug, mcdDir)
+  if (goal) { result.goalText = goal.goalText; result.goalStatus = goal.goalStatus }
 
   return result
 }

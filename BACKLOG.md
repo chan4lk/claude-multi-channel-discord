@@ -887,7 +887,7 @@ Track token usage per turn from transcript `.jsonl` (`message.usage.input_tokens
 
 ## P38 — Cross-Session Memory Distillation
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
@@ -910,7 +910,7 @@ After a session ends (clean stop or watchdog kill), schedule a distillation job:
 
 ## P39 — Autonomous Goal Persistence
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem

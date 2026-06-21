@@ -29,7 +29,8 @@ import { setTimeout as sleep } from 'node:timers/promises'
 
 import type { ClaudeArgs } from './channels-config.ts'
 import type { MasterMcpServer } from './master-mcp-server.ts'
-import { projectDir, projectSessionFile } from './paths.ts'
+import { projectDir, projectGoalFile, projectSessionFile } from './paths.ts'
+import { runDistillation } from './distillation.ts'
 import { buildGitEnv, type GitResult as _GitResultUnused } from './git-ops.ts'
 import { getCredential, loadCredentials, type Credential } from './git-credentials.ts'
 import { loadUserEnv, UserEnvError } from './user-env.ts'
@@ -277,6 +278,14 @@ export interface ClaudeProjectProcessOptions {
   contextWarningThresholdPct?: number
   /** Called when a context-warning is emitted (for MC event emission). */
   onContextWarning?: (inputTokens: number, thresholdPct: number) => void
+  /**
+   * When true, a background `claude -p` distillation job runs after the
+   * session ends (clean stop or watchdog kill), merging a session summary
+   * into `projects/<slug>/MEMORY.md`. See `src/distillation.ts`.
+   */
+  distillOnStop?: boolean
+  /** Called when distillation completes (for audit trail emission). */
+  onDistillationComplete?: (result: { success: boolean; durationMs: number; attempt: number; error?: string }) => void
 }
 
 function summarizeToolInput(name: string, input: Record<string, unknown>): string {
@@ -329,6 +338,10 @@ export class ClaudeProjectProcess implements ProjectProcess {
   private _latestInputTokens = 0
   private readonly turnHistory: number[] = []
   private exitHandlers = new Set<(info: { code: number | null; signal: NodeJS.Signals | null }) => void>()
+  /** Goal text loaded from GOAL.md at session start; injected into the first delivery. */
+  private goalText: string | null = null
+  /** True after the first message has been sent this session (goal injection is one-shot). */
+  private firstMessageSent = false
 
   constructor(opts: ClaudeProjectProcessOptions) {
     this.opts = opts
@@ -349,6 +362,21 @@ export class ClaudeProjectProcess implements ProjectProcess {
     // (line ~1098), and at the time of the call it was still null,
     // causing path.join(null, ...) to throw on every spawn.
     this.projectCwd = cwd
+
+    // Load GOAL.md once at session start for first-message injection (P39).
+    const goalPath = projectGoalFile(this.slug)
+    try {
+      if (existsSync(goalPath)) {
+        const raw = readFileSync(goalPath, 'utf8').trim()
+        if (raw) {
+          this.goalText = raw.slice(0, 500)
+          this.log(`goal loaded: ${this.goalText.length} chars`)
+        }
+      }
+    } catch {
+      // Non-fatal — proceed without goal injection.
+    }
+    this.firstMessageSent = false
 
     this.mcpConfigPath = this.writeMcpConfig()
 
@@ -935,7 +963,15 @@ export class ClaudeProjectProcess implements ProjectProcess {
       meta.push(`attachment_count="${envelope.attachments.length}"`)
       meta.push(`attachments="${envelope.attachments.join('; ').replace(/"/g, '\\"')}"`)
     }
-    return `<channel ${meta.join(' ')}>${envelope.content}</channel>`
+    const channelMsg = `<channel ${meta.join(' ')}>${envelope.content}</channel>`
+
+    // Inject goal context on the first message of each session start (P39).
+    if (!this.firstMessageSent && this.goalText) {
+      this.firstMessageSent = true
+      return `<goal>${this.goalText}</goal>\n${channelMsg}`
+    }
+    this.firstMessageSent = true
+    return channelMsg
   }
 
   onReply(handler: (reply: OutboundReply) => void): () => void {
@@ -1066,6 +1102,14 @@ export class ClaudeProjectProcess implements ProjectProcess {
       this.log(`kill-session non-zero (${result.status}) — assuming already dead`)
     }
     this.markDead(0, null)
+
+    // Fire background distillation if configured (P38). Non-blocking.
+    if (this.opts.distillOnStop && this.projectCwd) {
+      const cwd = this.projectCwd
+      const claudeBin = this.opts.claudeBin ?? 'claude'
+      const onComplete = this.opts.onDistillationComplete
+      runDistillation({ slug: this.slug, cwd, claudeBin, log: this.log, onComplete }).catch(() => {})
+    }
   }
 
   private startAliveCheck(): void {

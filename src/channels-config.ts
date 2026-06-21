@@ -105,6 +105,8 @@ const ProjectSchema = z.object({
   /** Inject a compression prompt when input tokens exceed this % of the model context (0–100). Default 80. */
   contextWarningThresholdPct: z.number().int().min(1).max(100).optional(),
   voice: VoiceProjectConfigSchema.optional(),
+  /** Run a session-distillation job after the project's claude process stops. */
+  distillOnStop: z.boolean().optional(),
   heartbeat: z.object({
     mode: z.enum(['supervised', 'autonomous']).default('supervised'),
     window: z.string().regex(/^\d{2}:\d{2}-\d{2}:\d{2}$/).optional(),

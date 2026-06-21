@@ -45,3 +45,7 @@ export function projectClaudeMd(slug: string): string {
 export function projectSessionFile(slug: string): string {
   return join(projectDir(slug), '.session-id')
 }
+
+export function projectGoalFile(slug: string): string {
+  return join(projectDir(slug), 'GOAL.md')
+}

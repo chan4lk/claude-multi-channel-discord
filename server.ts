@@ -1241,6 +1241,10 @@ async function maybeInitProjectsBackend(): Promise<void> {
         onContextWarning: (inputTokens, thresholdPct) => {
           mcEmit('context_warning', { slug: project.slug, chatId, inputTokens, thresholdPct })
         },
+        distillOnStop: project.distillOnStop ?? false,
+        onDistillationComplete: (result) => {
+          mcEmit('distillation_complete', { slug: project.slug, chatId, ...result })
+        },
       })
       // Fire-and-forget; the pool may call deliver() before start() resolves
       // for the very first message — ClaudeProjectProcess deliver() awaits

@@ -18,7 +18,7 @@ import {
 } from './channels-config.ts'
 import { buildGitEnv, gitClone, gitPullFastForward, gitSetRemote, gitStatusSummary } from './git-ops.ts'
 import { getCredential, loadCredentials } from './git-credentials.ts'
-import { accessFile, archiveDir, channelsDir, projectClaudeMd, projectDir } from './paths.ts'
+import { accessFile, archiveDir, channelsDir, projectClaudeMd, projectDir, projectGoalFile } from './paths.ts'
 import { IntervalSchema, loadSchedules, newScheduleId, saveSchedules, type Schedule } from './schedules-config.ts'
 import { scanChannels, classifyChannel } from './heartbeat.ts'
 
@@ -174,6 +174,8 @@ function helpText(prefix: string): string {
     `${prefix} set    <chat_id-or-slug> --heartbeat-mode <supervised|autonomous>  — set heartbeat mode`,
     `${prefix} set    <chat_id-or-slug> --heartbeat-window <HH:MM-HH:MM>          — set active window`,
     `${prefix} set    <chat_id-or-slug> --heartbeat-stale-minutes N               — set stale threshold`,
+    `${prefix} set    <chat_id-or-slug> --goal "..."                 — set persistent goal (injected at session start; "" to clear)`,
+    `${prefix} set    <chat_id-or-slug> --distill-on-stop            — enable memory distillation after session stops`,
     `${prefix} rename <chat_id-or-slug> --slug NEW                    — rename slug + dir`,
     `${prefix} remote <chat_id-or-slug> [--set URL] [--creds NAME]    — show/set git remote`,
     `${prefix} pull   <chat_id-or-slug>                               — git pull --ff-only`,
@@ -261,6 +263,18 @@ function handleShow(config: ChannelsConfig, rest: string[]): string {
       lines.push('git: (no remote configured)')
     }
   }
+  // Goal (P39)
+  const goalPath = projectGoalFile(project.slug)
+  if (existsSync(goalPath)) {
+    try {
+      const goalText = readFileSync(goalPath, 'utf8').trim()
+      if (goalText) lines.push(`goal: ${goalText.slice(0, 200)}${goalText.length > 200 ? '…' : ''}`)
+    } catch {}
+  }
+
+  // Distillation (P38)
+  if (project.distillOnStop) lines.push('distillation: enabled (runs after session stop)')
+
   lines.push('')
   lines.push('**system prompt** (first 500 chars):')
   lines.push('```')
@@ -509,8 +523,13 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
     return '`--heartbeat-stale-minutes` must be a positive integer'
   }
 
-  if (prompt === null && stuckMinutes === null && heartbeatMode === null && heartbeatWindow === null && heartbeatStale === null) {
-    return '`set` requires `--prompt "..."`, `--stuck-threshold-minutes N`, `--heartbeat-mode <supervised|autonomous>`, `--heartbeat-window <HH:MM-HH:MM>`, or `--heartbeat-stale-minutes N`'
+  const goalRaw = typeof flags.goal === 'string' ? flags.goal : null
+  const distillOnStopRaw = flags['distill-on-stop']
+  // parseFlags uses `string | true`; presence of --distill-on-stop enables distillation
+  const distillOnStop: boolean | null = distillOnStopRaw !== undefined ? true : null
+
+  if (prompt === null && stuckMinutes === null && heartbeatMode === null && heartbeatWindow === null && heartbeatStale === null && goalRaw === null && distillOnStop === null) {
+    return '`set` requires `--prompt "..."`, `--stuck-threshold-minutes N`, `--heartbeat-mode <supervised|autonomous>`, `--heartbeat-window <HH:MM-HH:MM>`, `--heartbeat-stale-minutes N`, `--goal "..."`, or `--distill-on-stop`'
   }
 
   const results: string[] = []
@@ -540,6 +559,30 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
     const updatedEntry = latest.projects[entry.chatId] ?? entry.project
     saveConfig({ ...latest, projects: { ...latest.projects, [entry.chatId]: { ...updatedEntry, heartbeat } } })
     results.push(`✅ set \`heartbeat\` for **${entry.project.slug}**: mode=${heartbeat.mode}, staleAfterMinutes=${heartbeat.staleAfterMinutes}${heartbeat.window ? `, window=${heartbeat.window}` : ''}.`)
+  }
+
+  if (goalRaw !== null) {
+    const goalPath = projectGoalFile(entry.project.slug)
+    if (goalRaw.trim() === '') {
+      if (existsSync(goalPath)) {
+        try { const { unlinkSync } = await import('node:fs'); unlinkSync(goalPath) } catch (err) {
+          return `failed to clear GOAL.md: ${(err as Error).message}`
+        }
+      }
+      results.push(`✅ cleared goal for **${entry.project.slug}**.`)
+    } else {
+      const truncated = goalRaw.slice(0, 500)
+      if (goalRaw.length > 500) results.push(`_goal truncated to 500 chars._`)
+      writeFileSync(goalPath, `${truncated.trim()}\n`, { mode: 0o600 })
+      results.push(`✅ set goal for **${entry.project.slug}**: ${truncated.slice(0, 80)}${truncated.length > 80 ? '…' : ''}`)
+    }
+  }
+
+  if (distillOnStop !== null) {
+    const latestConfig = loadConfig()
+    const latestEntry = latestConfig.projects[entry.chatId] ?? entry.project
+    saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: { ...latestEntry, distillOnStop } } })
+    results.push(`✅ set \`distillOnStop\` = ${distillOnStop} for **${entry.project.slug}**.`)
   }
 
   // Respawn only needed when prompt changed (CLAUDE.md is read at session start).
