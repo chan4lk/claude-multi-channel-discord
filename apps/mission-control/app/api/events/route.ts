@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { getEvents, insertEvent, insertAuditLog, updateLastSeen, type McEvent } from '../../../src/db'
+import { getEvents, countEvents, insertEvent, insertAuditLog, updateLastSeen, type McEvent } from '../../../src/db'
 import { validateApiKey } from '../../../src/auth'
 import { broadcast } from '../../../src/sse'
 
@@ -32,15 +32,25 @@ export const dynamic = 'force-dynamic'
 export async function GET(req: NextRequest): Promise<Response> {
   const { searchParams } = req.nextUrl
   const rawLimit = parseInt(searchParams.get('limit') ?? '', 10)
-  const limit = isNaN(rawLimit) ? 200 : Math.min(rawLimit, 500)
+  const limit = isNaN(rawLimit) ? 100 : Math.min(rawLimit, 500)
+  const rawCursor = parseInt(searchParams.get('cursor') ?? '', 10)
+  const cursor = isNaN(rawCursor) ? undefined : rawCursor
+  const slug = searchParams.get('slug') ?? undefined
+  const type = searchParams.get('type') ?? undefined
   const filters = {
     instance_id: searchParams.get('instance_id') ?? undefined,
-    type: searchParams.get('type') ?? undefined,
+    type,
     since: searchParams.get('since') ?? undefined,
+    slug,
+    cursor,
     limit,
   }
   const rows = getEvents(filters)
-  return Response.json(rows)
+  const nextCursor = rows.length === limit ? rows[rows.length - 1]?.id : null
+  // Only include total when caller requests it (counts are expensive on large tables)
+  const includeTotal = searchParams.get('total') === '1'
+  const total = includeTotal ? countEvents({ type, slug }) : undefined
+  return Response.json({ events: rows, nextCursor, ...(includeTotal ? { total } : {}) })
 }
 
 export async function POST(req: NextRequest): Promise<Response> {
