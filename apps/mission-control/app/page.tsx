@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import Link from 'next/link'
 import EventFeed from '../components/EventFeed'
 import InstanceGrid from '../components/InstanceGrid'
 import MemoryPanel from '../components/MemoryPanel'
@@ -12,6 +11,8 @@ import SpecclawPipeline from '../components/SpecclawPipeline'
 import StallAlertPanel from '../components/StallAlertPanel'
 import TranscriptPanel from '../components/TranscriptPanel'
 import CountBadge from '../components/ui/CountBadge'
+import NavDropdown from '../components/NavDropdown'
+import AdvisorTile from '../components/AdvisorTile'
 import { useFleet } from '../components/FleetContext'
 import type { FleetResponse, ProjectState } from './api/fleet/route'
 import type { WhatsAppResponse } from './api/whatsapp/route'
@@ -194,42 +195,7 @@ function DashboardClient() {
               <p className="text-[0.6rem] text-slate-500 uppercase tracking-[0.25em]">
                 MCD Observability Dashboard
               </p>
-              <Link
-                href="/graph"
-                className="text-[0.6rem] font-mono text-slate-500 hover:text-cyber-cyan transition-colors uppercase tracking-wider border border-transparent hover:border-cyber-cyan/30 px-1.5 py-0.5 rounded"
-              >
-                ⬡ Graph →
-              </Link>
-              <Link
-                href="/timeline"
-                className="text-[0.6rem] font-mono text-slate-500 hover:text-cyber-cyan transition-colors uppercase tracking-wider border border-transparent hover:border-cyber-cyan/30 px-1.5 py-0.5 rounded"
-              >
-                ◫ Timeline →
-              </Link>
-              <Link
-                href="/memory-graph"
-                className="text-[0.6rem] font-mono text-slate-500 hover:text-cyber-cyan transition-colors uppercase tracking-wider border border-transparent hover:border-cyber-cyan/30 px-1.5 py-0.5 rounded"
-              >
-                ✦ Memory →
-              </Link>
-              <Link
-                href="/pipeline"
-                className="text-[0.6rem] font-mono text-slate-500 hover:text-cyber-cyan transition-colors uppercase tracking-wider border border-transparent hover:border-cyber-cyan/30 px-1.5 py-0.5 rounded"
-              >
-                ⬒ Pipeline →
-              </Link>
-              <Link
-                href="/audit"
-                className="text-[0.6rem] font-mono text-slate-500 hover:text-cyber-cyan transition-colors uppercase tracking-wider border border-transparent hover:border-cyber-cyan/30 px-1.5 py-0.5 rounded"
-              >
-                ≡ Audit →
-              </Link>
-              <Link
-                href="/goals"
-                className="text-[0.6rem] font-mono text-slate-500 hover:text-cyber-cyan transition-colors uppercase tracking-wider border border-transparent hover:border-cyber-cyan/30 px-1.5 py-0.5 rounded"
-              >
-                ◎ Goals →
-              </Link>
+              <NavDropdown />
             </div>
           </div>
 
@@ -340,6 +306,10 @@ function DashboardClient() {
             )}
             <section>
               <StallAlertPanel />
+            </section>
+            <section>
+              <SectionLabel label="Fleet Advisor" />
+              <AdvisorTile />
             </section>
             <section>
               <SectionLabel label="Specclaw Pipeline" />

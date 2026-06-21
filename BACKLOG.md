@@ -1312,7 +1312,7 @@ Add a `/api/reports/weekly` endpoint that generates a JSON summary of the past 7
 
 ## P56 — Dashboard Navigation Completeness
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
@@ -1336,7 +1336,7 @@ Replace the flat header link row with a collapsible "All Views" dropdown (click 
 
 ## P57 — Fleet Intelligence Advisor Dashboard Tile
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
