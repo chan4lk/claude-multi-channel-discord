@@ -1216,7 +1216,7 @@ Add a `/knowledge` page with a multi-type D3 force-directed graph. Three node sh
 
 ## P52 — Fleet Intelligence Advisor
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
@@ -1264,7 +1264,7 @@ Add a `/api/pipeline/impact/[slug]/[changeName]` endpoint that: (1) reads `propo
 
 ## P54 — Live Agent Thought Stream
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem

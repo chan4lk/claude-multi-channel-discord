@@ -6,11 +6,18 @@ import type { StallEntry } from '../app/api/stalls/route'
 
 export type SseStatus = 'connected' | 'reconnecting' | 'disconnected'
 
+export interface ToolEvent {
+  slug: string
+  toolName: string
+  id: number
+}
+
 export interface FleetContextValue {
   fleet: FleetResponse | null
   stalls: StallEntry[]
   stalledAt: string | null
   sseStatus: SseStatus
+  toolEvents: ToolEvent[]
 }
 
 const FleetContext = createContext<FleetContextValue>({
@@ -18,6 +25,7 @@ const FleetContext = createContext<FleetContextValue>({
   stalls: [],
   stalledAt: null,
   sseStatus: 'disconnected',
+  toolEvents: [],
 })
 
 export function useFleet(): FleetContextValue {
@@ -27,11 +35,15 @@ export function useFleet(): FleetContextValue {
 const MIN_BACKOFF = 1_000
 const MAX_BACKOFF = 30_000
 
+const MAX_TOOL_EVENTS = 200
+let toolEventIdCounter = 0
+
 export function FleetContextProvider({ children }: { children: React.ReactNode }) {
   const [fleet, setFleet] = useState<FleetResponse | null>(null)
   const [stalls, setStalls] = useState<StallEntry[]>([])
   const [stalledAt, setStalledAt] = useState<string | null>(null)
   const [sseStatus, setSseStatus] = useState<SseStatus>('disconnected')
+  const [toolEvents, setToolEvents] = useState<ToolEvent[]>([])
   const esRef = useRef<EventSource | null>(null)
   const backoffRef = useRef(MIN_BACKOFF)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -87,6 +99,10 @@ export function FleetContextProvider({ children }: { children: React.ReactNode }
         const d = parsed.data as { stalls: StallEntry[]; checkedAt: string }
         setStalls(d.stalls ?? [])
         setStalledAt(d.checkedAt ?? null)
+      } else if (parsed.type === 'tool-event') {
+        const d = parsed.data as { slug: string; toolName: string }
+        const ev: ToolEvent = { slug: d.slug, toolName: d.toolName, id: ++toolEventIdCounter }
+        setToolEvents((prev) => [...prev.slice(-MAX_TOOL_EVENTS + 1), ev])
       }
     }
   }, [])
@@ -103,7 +119,7 @@ export function FleetContextProvider({ children }: { children: React.ReactNode }
   }, [connect])
 
   return (
-    <FleetContext.Provider value={{ fleet, stalls, stalledAt, sseStatus }}>
+    <FleetContext.Provider value={{ fleet, stalls, stalledAt, sseStatus, toolEvents }}>
       {children}
     </FleetContext.Provider>
   )

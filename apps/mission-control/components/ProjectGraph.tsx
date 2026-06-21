@@ -6,6 +6,7 @@ import type { FleetProject, ProjectState } from '../app/api/fleet/route'
 import type { ProjectBacklog } from '../app/api/backlog/route'
 import type { HealthScore } from '../app/api/health/[slug]/route'
 import TokenBudgetGauge from './TokenBudgetGauge'
+import { useFleet, type ToolEvent } from './FleetContext'
 
 const STATE_COLORS: Record<ProjectState, string> = {
   idle: '#00F5FF',
@@ -39,6 +40,38 @@ interface Props {
 }
 
 const STORAGE_KEY = 'mc_graph_positions'
+const THOUGHT_STORAGE_KEY = 'mc_graph_thought'
+const PARTICLE_LIFETIME_MS = 3000
+const MAX_PARTICLES_PER_NODE = 3
+
+const TOOL_CATEGORIES: Record<string, { color: string; short: string }> = {
+  Read: { color: '#22D3EE', short: 'Read' },
+  Edit: { color: '#22D3EE', short: 'Edit' },
+  Write: { color: '#22D3EE', short: 'Write' },
+  Glob: { color: '#22D3EE', short: 'Glob' },
+  Grep: { color: '#22D3EE', short: 'Grep' },
+  NotebookEdit: { color: '#22D3EE', short: 'NbEdit' },
+  WebFetch: { color: '#F59E0B', short: 'Fetch' },
+  WebSearch: { color: '#F59E0B', short: 'Search' },
+  Agent: { color: '#A78BFA', short: 'Agent' },
+  Workflow: { color: '#A78BFA', short: 'Workflow' },
+  Task: { color: '#A78BFA', short: 'Task' },
+}
+
+function getToolStyle(toolName: string): { color: string; short: string } {
+  return TOOL_CATEGORIES[toolName] ?? { color: '#6B7280', short: toolName.slice(0, 6) }
+}
+
+interface ThoughtParticle {
+  id: number
+  slug: string
+  toolName: string
+  x: number
+  y: number
+  spawnedAt: number
+  color: string
+  short: string
+}
 
 const HEALTH_TIERS: [string, string][] = [
   ['#4ADE80', '≥80'],
@@ -85,6 +118,12 @@ export default function ProjectGraph({ showBacklog }: Props) {
   const [showPulse, setShowPulse] = useState<boolean>(() => {
     try { return localStorage.getItem('mc_graph_pulse') === '1' } catch { return false }
   })
+  const [showThought, setShowThought] = useState<boolean>(() => {
+    try { return localStorage.getItem(THOUGHT_STORAGE_KEY) === '1' } catch { return false }
+  })
+  const [particles, setParticles] = useState<ThoughtParticle[]>([])
+  const particleIdRef = useRef(0)
+  const { toolEvents } = useFleet()
   const [drawer, setDrawer] = useState<DetailDrawer | null>(null)
   const [drawerTab, setDrawerTab] = useState<'info' | 'diff' | 'prompt'>('info')
   const [diffData, setDiffData] = useState<{ log: string; diff: string } | null>(null)
@@ -182,6 +221,80 @@ export default function ProjectGraph({ showBacklog }: Props) {
     if (nodesRef.current.length > 0) renderFrame(nodesRef.current)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showPulse, healthMap])
+
+  // Spawn thought particles on tool events (P54)
+  const lastProcessedToolEventId = useRef(-1)
+  useEffect(() => {
+    if (!showThought || toolEvents.length === 0) return
+    const latest = toolEvents[toolEvents.length - 1]
+    if (!latest || latest.id <= lastProcessedToolEventId.current) return
+    lastProcessedToolEventId.current = latest.id
+
+    const node = nodesRef.current.find((n) => n.slug === latest.slug)
+    if (!node || node.x == null || node.y == null) return
+
+    const { color, short } = getToolStyle(latest.toolName)
+    const now = Date.now()
+
+    setParticles((prev) => {
+      const nodeParticles = prev.filter((p) => p.slug === latest.slug)
+      let next = prev
+      if (nodeParticles.length >= MAX_PARTICLES_PER_NODE) {
+        // Drop oldest for this node
+        const oldestId = nodeParticles[0].id
+        next = prev.filter((p) => p.id !== oldestId)
+      }
+      return [
+        ...next,
+        {
+          id: ++particleIdRef.current,
+          slug: latest.slug,
+          toolName: latest.toolName,
+          x: node.x,
+          y: node.y,
+          spawnedAt: now,
+          color,
+          short,
+        },
+      ]
+    })
+
+    // Auto-remove after lifetime
+    const timer = setTimeout(() => {
+      setParticles((prev) => prev.filter((p) => p.spawnedAt !== now || p.slug !== latest.slug))
+    }, PARTICLE_LIFETIME_MS + 100)
+    return () => clearTimeout(timer)
+  }, [toolEvents, showThought])
+
+  // Prune expired particles every second
+  useEffect(() => {
+    if (!showThought) { setParticles([]); return }
+    const i = setInterval(() => {
+      const cutoff = Date.now() - PARTICLE_LIFETIME_MS - 200
+      setParticles((prev) => prev.filter((p) => p.spawnedAt > cutoff))
+    }, 1000)
+    return () => clearInterval(i)
+  }, [showThought])
+
+  // 'T' key toggles thought stream
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (
+        (e.key === 't' || e.key === 'T') &&
+        !e.ctrlKey && !e.metaKey && !e.altKey &&
+        !(document.activeElement instanceof HTMLInputElement) &&
+        !(document.activeElement instanceof HTMLTextAreaElement)
+      ) {
+        setShowThought((prev) => {
+          const next = !prev
+          try { localStorage.setItem(THOUGHT_STORAGE_KEY, next ? '1' : '0') } catch {}
+          return next
+        })
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   // Build / update D3 simulation
   useEffect(() => {
@@ -523,6 +636,47 @@ export default function ProjectGraph({ showBacklog }: Props) {
 
         {/* Pulse ring mini-legend */}
         {showPulse && <PulseRingLegend />}
+
+        {/* Thought stream toggle (P54) */}
+        <button
+          onClick={() => setShowThought((v) => {
+            const next = !v
+            try { localStorage.setItem(THOUGHT_STORAGE_KEY, next ? '1' : '0') } catch {}
+            return next
+          })}
+          className="mt-1 flex items-center gap-1.5 group"
+          title="Toggle thought stream (T)"
+        >
+          <span
+            className="w-2.5 h-2.5 rounded-full border transition-colors"
+            style={{
+              borderColor: showThought ? '#22D3EE' : '#334155',
+              background: showThought ? '#22D3EE20' : 'transparent',
+            }}
+          />
+          <span
+            className="text-[0.6rem] font-mono uppercase tracking-wider transition-colors"
+            style={{ color: showThought ? '#22D3EE' : '#334155' }}
+          >
+            thought
+          </span>
+        </button>
+        {showThought && (
+          <div className="mt-0.5 flex flex-col gap-0.5 pl-0.5">
+            <span className="text-[0.5rem] font-mono text-slate-600 uppercase tracking-wider mb-0.5">tool stream</span>
+            {[
+              { color: '#22D3EE', label: 'file ops' },
+              { color: '#F59E0B', label: 'web' },
+              { color: '#A78BFA', label: 'agent' },
+              { color: '#6B7280', label: 'other' },
+            ].map(({ color, label }) => (
+              <div key={label} className="flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full" style={{ background: color }} />
+                <span className="text-[0.5rem] font-mono" style={{ color, opacity: 0.75 }}>{label}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {projects.length === 0 ? (
@@ -531,37 +685,74 @@ export default function ProjectGraph({ showBacklog }: Props) {
           <span className="text-xs font-mono">No projects to display</span>
         </div>
       ) : (
-        <svg
-          ref={svgRef}
-          width={dims.w}
-          height={dims.h}
-          className="w-full h-full"
-          style={{ background: 'transparent' }}
-        >
-          <defs>
-            <filter id="glow-cyan">
-              <feGaussianBlur stdDeviation="3" result="blur" />
-              <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-            </filter>
-            <filter id="glow-red">
-              <feGaussianBlur stdDeviation="4" result="blur" />
-              <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-            </filter>
-          </defs>
-          {/* Pulse animation via CSS keyframe injected inline */}
+        <>
+          <svg
+            ref={svgRef}
+            width={dims.w}
+            height={dims.h}
+            className="w-full h-full"
+            style={{ background: 'transparent' }}
+          >
+            <defs>
+              <filter id="glow-cyan">
+                <feGaussianBlur stdDeviation="3" result="blur" />
+                <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+              </filter>
+              <filter id="glow-red">
+                <feGaussianBlur stdDeviation="4" result="blur" />
+                <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+              </filter>
+            </defs>
+            {/* Pulse animation via CSS keyframe injected inline */}
+            <style>{`
+              .node-pulse { animation: graph-pulse 1.5s ease-in-out infinite; }
+              @keyframes graph-pulse {
+                0%, 100% { opacity: 0.15; r: ${NODE_RADIUS + 4}; }
+                50% { opacity: 0.6; r: ${NODE_RADIUS + 9}; }
+              }
+              .node-activity-ring { animation: activity-pulse 1.5s ease-in-out infinite; }
+              @keyframes activity-pulse {
+                0%, 100% { opacity: 0.12; }
+                50% { opacity: 0.55; }
+              }
+            `}</style>
+          </svg>
+
+          {/* Thought stream particles (P54) */}
+          {showThought && particles.map((p) => {
+            const elapsed = Date.now() - p.spawnedAt
+            const progress = Math.min(elapsed / PARTICLE_LIFETIME_MS, 1)
+            return (
+              <div
+                key={p.id}
+                className="pointer-events-none absolute"
+                style={{
+                  left: p.x - 16,
+                  top: p.y - NODE_RADIUS - 8,
+                  animation: `thought-rise ${PARTICLE_LIFETIME_MS}ms ease-out forwards`,
+                  color: p.color,
+                  fontSize: '0.55rem',
+                  fontFamily: 'JetBrains Mono, monospace',
+                  fontWeight: 700,
+                  letterSpacing: '0.05em',
+                  textShadow: `0 0 6px ${p.color}`,
+                  opacity: 1 - progress * 0.8,
+                  zIndex: 15,
+                  whiteSpace: 'nowrap',
+                  userSelect: 'none',
+                }}
+              >
+                → {p.short}
+              </div>
+            )
+          })}
           <style>{`
-            .node-pulse { animation: graph-pulse 1.5s ease-in-out infinite; }
-            @keyframes graph-pulse {
-              0%, 100% { opacity: 0.15; r: ${NODE_RADIUS + 4}; }
-              50% { opacity: 0.6; r: ${NODE_RADIUS + 9}; }
-            }
-            .node-activity-ring { animation: activity-pulse 1.5s ease-in-out infinite; }
-            @keyframes activity-pulse {
-              0%, 100% { opacity: 0.12; }
-              50% { opacity: 0.55; }
+            @keyframes thought-rise {
+              0% { transform: translateY(0); opacity: 1; }
+              100% { transform: translateY(-32px); opacity: 0; }
             }
           `}</style>
-        </svg>
+        </>
       )}
 
       {/* Detail Drawer */}
