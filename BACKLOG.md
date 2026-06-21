@@ -1841,7 +1841,7 @@ Add a Health Score (0–100) computed server-side per project, weighting: stall 
 
 ## P78 — Agent Turn Diff Viewer
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
@@ -1887,7 +1887,7 @@ Add a calendar/timeline view to the Scheduler page. Render a 24-hour horizontal 
 
 ## P80 — Fleet Command History
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem

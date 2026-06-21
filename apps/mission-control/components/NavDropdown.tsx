@@ -40,6 +40,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/branches', label: 'Git Branches', icon: '⑂' },
       { href: '/broadcast', label: 'Broadcast', icon: '◉' },
       { href: '/audit', label: 'Audit Log', icon: '≡' },
+      { href: '/commands', label: 'Fleet Commands', icon: '⌨' },
     ],
   },
   {
