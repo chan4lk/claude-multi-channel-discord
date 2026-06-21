@@ -214,7 +214,8 @@ function GalaxyCanvas({ projects }: { projects: FleetProject[] }) {
 
   function handleClick() {
     if (hoveredIdxRef.current >= 0) {
-      router.push(`/projects/${projects[hoveredIdxRef.current].slug}`)
+      const slug = projects[hoveredIdxRef.current].slug
+      router.push(`?spotlight=${encodeURIComponent(slug)}`)
     }
   }
 

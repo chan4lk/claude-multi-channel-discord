@@ -1555,7 +1555,7 @@ Add a `/feed` page: a vertically-scrolling "project cards" feed where each card 
 
 ## P66 — Agent Turn Flame Graph
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
@@ -1581,7 +1581,7 @@ Add a `/flamegraph` page that renders a flame-chart view of recent agent turns f
 
 ## P67 — Project Spotlight Drawer
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
