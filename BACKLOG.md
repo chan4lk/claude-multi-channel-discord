@@ -1143,7 +1143,7 @@ Add a "System Prompt" tab to the Project Graph detail drawer and InstanceGrid ca
 
 ## P49 — Cross-Project Goal Progress Board
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
@@ -1167,7 +1167,7 @@ Add a `/goals` page with a kanban board. Three columns: Active (purple), Paused 
 
 ## P50 — Audit Replay Scrubber
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
