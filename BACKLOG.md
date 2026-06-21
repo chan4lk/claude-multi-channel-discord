@@ -1655,7 +1655,7 @@ Add a `/ticker` page styled like a Bloomberg terminal feed: a fixed-height scrol
 
 ## P70 — Cross-Project Memory Similarity Matrix
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
@@ -1793,7 +1793,7 @@ Add a "Generate now" button on the `/reports` page that calls a new `/api/report
 
 ## P76 — Cross-Project Memory Similarity Matrix
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
