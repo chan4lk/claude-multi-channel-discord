@@ -11,7 +11,7 @@ export default function SubPageHeader({
   children?: React.ReactNode
 }) {
   return (
-    <header className="relative border-b border-cyber-cyan/12 bg-cyber-surface/70 backdrop-blur-md px-4 sm:px-6 py-3">
+    <header className="relative z-50 border-b border-cyber-cyan/12 bg-cyber-surface/70 backdrop-blur-md px-4 sm:px-6 py-3">
       <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-cyber-cyan/40 to-transparent" />
       <div className="flex items-center gap-2 sm:gap-3 min-w-0">
         <Link
