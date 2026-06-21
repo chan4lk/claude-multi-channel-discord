@@ -1071,7 +1071,7 @@ Add a `/projects/<slug>` page with a vertical timeline view. Each entry is a tim
 
 ## P46 — Activity Pulse Rings on Project Graph
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem

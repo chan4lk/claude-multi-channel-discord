@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import * as d3 from 'd3'
 import type { FleetProject, ProjectState } from '../app/api/fleet/route'
 import type { ProjectBacklog } from '../app/api/backlog/route'
+import type { HealthScore } from '../app/api/health/[slug]/route'
 import TokenBudgetGauge from './TokenBudgetGauge'
 
 const STATE_COLORS: Record<ProjectState, string> = {
@@ -39,6 +40,27 @@ interface Props {
 
 const STORAGE_KEY = 'mc_graph_positions'
 
+const HEALTH_TIERS: [string, string][] = [
+  ['#4ADE80', '≥80'],
+  ['#F59E0B', '50–79'],
+  ['#EF4444', '<50'],
+]
+
+function PulseRingLegend() {
+  return (
+    <div className="mt-1 flex flex-col gap-0.5 pl-0.5">
+      <span className="text-[0.5rem] font-mono text-slate-600 uppercase tracking-wider mb-0.5">health ring</span>
+      {HEALTH_TIERS.map(([c, label]) => (
+        <div key={label} className="flex items-center gap-1">
+          <span className="w-2 h-2 rounded-full border" style={{ borderColor: c, background: 'transparent' }} />
+          <span className="text-[0.5rem] font-mono" style={{ color: c, opacity: 0.75 }}>{label}</span>
+        </div>
+      ))}
+      <span className="text-[0.5rem] font-mono text-slate-600 mt-0.5">inner ring = activity</span>
+    </div>
+  )
+}
+
 function loadPositions(): Record<string, { x: number; y: number }> {
   try {
     return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}')
@@ -59,6 +81,10 @@ export default function ProjectGraph({ showBacklog }: Props) {
   const svgRef = useRef<SVGSVGElement>(null)
   const [projects, setProjects] = useState<FleetProject[]>([])
   const [backlogMap, setBacklogMap] = useState<Map<string, ProjectBacklog>>(new Map())
+  const [healthMap, setHealthMap] = useState<Map<string, HealthScore>>(new Map())
+  const [showPulse, setShowPulse] = useState<boolean>(() => {
+    try { return localStorage.getItem('mc_graph_pulse') === '1' } catch { return false }
+  })
   const [drawer, setDrawer] = useState<DetailDrawer | null>(null)
   const [drawerTab, setDrawerTab] = useState<'info' | 'diff'>('info')
   const [diffData, setDiffData] = useState<{ log: string; diff: string } | null>(null)
@@ -93,6 +119,21 @@ export default function ProjectGraph({ showBacklog }: Props) {
     } catch {}
   }, [])
 
+  // Fetch health data for pulse mode
+  const fetchHealth = useCallback(async () => {
+    try {
+      const res = await fetch('/api/health')
+      if (res.ok) {
+        const data = await res.json()
+        const map = new Map<string, HealthScore>()
+        for (const h of data.projects ?? []) {
+          map.set(h.slug, h)
+        }
+        setHealthMap(map)
+      }
+    } catch {}
+  }, [])
+
   // Fetch backlog data
   const fetchBacklog = useCallback(async () => {
     try {
@@ -115,6 +156,26 @@ export default function ProjectGraph({ showBacklog }: Props) {
     const i2 = setInterval(fetchBacklog, 30_000)
     return () => { clearInterval(i1); clearInterval(i2) }
   }, [fetchFleet, fetchBacklog])
+
+  // Fetch health data when pulse mode enabled; clear rings when disabled
+  useEffect(() => {
+    if (!showPulse) {
+      if (svgRef.current) {
+        d3.select(svgRef.current).selectAll('.node-activity-ring').remove()
+        d3.select(svgRef.current).selectAll('.node-health-ring').remove()
+      }
+      return
+    }
+    fetchHealth()
+    const i = setInterval(fetchHealth, 30_000)
+    return () => clearInterval(i)
+  }, [showPulse, fetchHealth])
+
+  // Re-render when pulse state or health data changes
+  useEffect(() => {
+    if (nodesRef.current.length > 0) renderFrame(nodesRef.current)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showPulse, healthMap])
 
   // Build / update D3 simulation
   useEffect(() => {
@@ -188,6 +249,55 @@ export default function ProjectGraph({ showBacklog }: Props) {
 
   function renderFrame(nodes: GraphNode[]) {
     const svg = d3.select(svgRef.current!)
+
+    // Activity pulse rings (P46)
+    if (showPulse) {
+      svg.selectAll<SVGCircleElement, GraphNode>('.node-activity-ring')
+        .data(nodes, (d) => d.slug)
+        .join(
+          (enter) => enter.append('circle').attr('class', 'node-activity-ring').attr('pointer-events', 'none'),
+          (update) => update,
+          (exit) => exit.remove()
+        )
+        .attr('cx', (d) => d.x)
+        .attr('cy', (d) => d.y)
+        .attr('r', NODE_RADIUS + 6)
+        .attr('fill', 'none')
+        .attr('stroke', (d) => STATE_COLORS[d.state])
+        .attr('stroke-width', 1.5)
+        .attr('style', (d) => {
+          const speed = d.ageMins < 5 ? 0.6 : d.ageMins < 30 ? 1.2 : 2.8
+          return `animation: activity-pulse ${speed}s ease-in-out infinite;`
+        })
+
+      svg.selectAll<SVGCircleElement, GraphNode>('.node-health-ring')
+        .data(nodes, (d) => d.slug)
+        .join(
+          (enter) => enter.append('circle').attr('class', 'node-health-ring').attr('pointer-events', 'none'),
+          (update) => update,
+          (exit) => exit.remove()
+        )
+        .attr('cx', (d) => d.x)
+        .attr('cy', (d) => d.y)
+        .attr('r', (d) => {
+          const h = healthMap.get(d.slug)
+          if (!h || h.insufficientData) return NODE_RADIUS + 13
+          return NODE_RADIUS + 8 + (h.score / 100) * 8
+        })
+        .attr('fill', 'none')
+        .attr('stroke', (d) => {
+          const h = healthMap.get(d.slug)
+          if (!h || h.insufficientData) return '#64748B'
+          if (h.score >= 80) return '#4ADE80'
+          if (h.score >= 50) return '#F59E0B'
+          return '#EF4444'
+        })
+        .attr('stroke-width', 1)
+        .attr('opacity', 0.55)
+    } else {
+      svg.selectAll('.node-activity-ring').remove()
+      svg.selectAll('.node-health-ring').remove()
+    }
 
     // Halos (P5)
     svg.selectAll<SVGCircleElement, GraphNode>('.node-halo')
@@ -339,6 +449,34 @@ export default function ProjectGraph({ showBacklog }: Props) {
             <span className="text-[0.6rem] font-mono uppercase tracking-wider text-purple-400/70">backlog</span>
           </div>
         )}
+
+        {/* Pulse mode toggle */}
+        <button
+          onClick={() => setShowPulse((v) => {
+            const next = !v
+            try { localStorage.setItem('mc_graph_pulse', next ? '1' : '0') } catch {}
+            return next
+          })}
+          className="mt-2 flex items-center gap-1.5 group"
+          title="Toggle activity pulse rings"
+        >
+          <span
+            className="w-2.5 h-2.5 rounded-full border transition-colors"
+            style={{
+              borderColor: showPulse ? '#A855F7' : '#334155',
+              background: showPulse ? '#A855F720' : 'transparent',
+            }}
+          />
+          <span
+            className="text-[0.6rem] font-mono uppercase tracking-wider transition-colors"
+            style={{ color: showPulse ? '#A855F7' : '#334155' }}
+          >
+            pulse
+          </span>
+        </button>
+
+        {/* Pulse ring mini-legend */}
+        {showPulse && <PulseRingLegend />}
       </div>
 
       {projects.length === 0 ? (
@@ -370,6 +508,11 @@ export default function ProjectGraph({ showBacklog }: Props) {
             @keyframes graph-pulse {
               0%, 100% { opacity: 0.15; r: ${NODE_RADIUS + 4}; }
               50% { opacity: 0.6; r: ${NODE_RADIUS + 9}; }
+            }
+            .node-activity-ring { animation: activity-pulse 1.5s ease-in-out infinite; }
+            @keyframes activity-pulse {
+              0%, 100% { opacity: 0.12; }
+              50% { opacity: 0.55; }
             }
           `}</style>
         </svg>
