@@ -20,7 +20,8 @@
     "framer-motion": "^12.40.0",
     "next": "15.3.2",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "react-force-graph-3d": "^1.29.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.52.0",
