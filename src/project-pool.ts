@@ -141,6 +141,7 @@ export class ProjectPool {
         const queue = this.budgetQueue.get(chatId) ?? []
         queue.push(envelope)
         this.budgetQueue.set(chatId, queue)
+        this.writeBudgetQueueState()
         process.stderr.write(`pool: budget exhausted for ${project.slug}, queued msg (queue=${queue.length})\n`)
         this.fireEvent({ kind: 'budget-exhausted', chatId, slug: project.slug, used, budget, queuedCount: queue.length })
         return
@@ -198,6 +199,7 @@ export class ProjectPool {
       if (!project) { this.budgetQueue.delete(chatId); continue }
       const drained = queue.length
       this.budgetQueue.delete(chatId)
+      this.writeBudgetQueueState()
       this.fireEvent({ kind: 'budget-restored', chatId, slug: project.slug, drained })
       for (const envelope of queue) {
         await this.deliver(chatId, envelope)
@@ -548,6 +550,23 @@ export class ProjectPool {
         process.stderr.write(`pool: respawn failed for ${project.slug}: ${err}\n`)
       })
     }, backoffMs)
+  }
+
+  private writeBudgetQueueState(): void {
+    const mcdDir = process.env.MCD_CHANNELS_DIR
+    if (!mcdDir) return
+    const config = this.opts.getConfig()
+    const state: Record<string, { slug: string; count: number; updatedAt: string }> = {}
+    for (const [chatId, queue] of this.budgetQueue) {
+      const slug = config.projects[chatId]?.slug ?? chatId
+      state[chatId] = { slug, count: queue.length, updatedAt: new Date().toISOString() }
+    }
+    const filePath = path.join(mcdDir, 'budget-queue-state.json')
+    const tmpPath = filePath + '.tmp'
+    try {
+      fs.writeFileSync(tmpPath, JSON.stringify(state, null, 2), 'utf-8')
+      fs.renameSync(tmpPath, filePath)
+    } catch { /* non-critical */ }
   }
 
   private fireEvent(evt: PoolEvent): void {

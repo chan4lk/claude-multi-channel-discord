@@ -1002,7 +1002,7 @@ Add a `/api/memory` route that reads each project's `projects/<slug>/MEMORY.md` 
 
 ## P43 — Budget Queue Count Badge
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
@@ -1025,7 +1025,7 @@ Expose `budgetQueuedCount` in `/api/fleet` by writing it to a side-file `budget-
 
 ## P44 — Inline Goal Editor in Dashboard
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
