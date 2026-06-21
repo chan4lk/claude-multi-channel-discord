@@ -1186,3 +1186,124 @@ Add a "Replay" panel to the `/audit` page. A time-range picker + a scrubber slid
 - AC4: Reconstructed state shown as a mini InstanceGrid (slug + state badge) below the slider
 - AC5: "Play" button animates through events in the selected range at 10× speed
 - AC6: "Jump to incident" button scrolls to first `stuck` or `circuit-open` event in range
+
+---
+
+## P51 — Unified Knowledge Graph
+
+**Status:** `[x] done`
+**Created:** 2026-06-21
+
+### Problem
+
+Project nodes, memory records, and goals live in separate views. Operators have no single visualization that shows how knowledge, intent, and agent identity relate across the fleet. There is no way to see at a glance which projects share memory themes, which goals are backed by rich memory, or which agents are knowledge-rich vs knowledge-bare.
+
+### Proposed Solution
+
+Add a `/knowledge` page with a multi-type D3 force-directed graph. Three node shapes: circles (projects), diamonds (memories), hexagons (goals). Edges: project→memory when `memory.channel_slug` matches project slug; project→goal when `GOAL.md` exists for that project; memory→memory when two memories share the same `channel_slug`. Node size: projects scale with health score; memories scale with `access_count`; goals are fixed. A `/api/knowledge` endpoint aggregates `/api/fleet`, `/api/memories`, and `/api/goals` into a unified `{ nodes, edges }` graph payload. Filter chips (Projects / Memories / Goals / All) hide/show node types without re-running the simulation. Clicking a node opens a detail panel (right-side drawer) with full content and links to source views.
+
+### Acceptance Criteria
+
+- AC1: `/knowledge` page renders all three node types within 2s; node count shown in header
+- AC2: `/api/knowledge` returns `{ nodes: KnowledgeNode[], edges: KnowledgeEdge[] }` from fleet + memory + goal sources
+- AC3: Filter chips hide/show node types; simulation keeps positions; chip state in localStorage
+- AC4: Clicking project node opens drawer: slug, state, health score, goal text, memory count
+- AC5: Clicking memory node opens drawer: type, content, access_count, last_accessed, linked project
+- AC6: Clicking goal node opens drawer: goal text, status, slug, link to `/projects/<slug>`
+- AC7: Page reachable from nav sidebar and Command Palette ("Knowledge graph" command)
+
+---
+
+## P52 — Fleet Intelligence Advisor
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+Dashboard operators monitor fleet health reactively — they respond to stalls, budget alerts, and stuck watches after the fact. There is no proactive intelligence layer that synthesizes fleet state, memory quality, and goal progress to surface prioritized recommendations before problems escalate.
+
+### Proposed Solution
+
+Add a collapsible "Advisor" panel to the dashboard (bottom-right corner, toggleable with `A` shortcut). A `/api/advisor` endpoint runs a lightweight heuristic scan (no LLM) over fleet state, audit events, memory freshness, context usage, and goal staleness. Returns up to 5 ranked recommendations as cards, each with: severity (info/warn/critical), title, explanation (1-2 sentences), and a one-click action (inject suggestion text, trigger distill, copy command). Recommendations refresh every 5 minutes or on demand. Examples: "Project X has not replied in 3h — suggest inject", "Project Y context at 87% — suggest compression", "Memory for project Z is 14 days stale — suggest distillation". Recommendations are fully heuristic (no external AI calls).
+
+### Acceptance Criteria
+
+- AC1: Advisor panel toggleable with `A` key; collapsed by default; toggle state in localStorage
+- AC2: `/api/advisor` returns `{ recommendations: AdvisorCard[] }` sorted by severity desc
+- AC3: Each card has: severity badge (critical=red, warn=amber, info=cyan), title, explanation, action button
+- AC4: Action button: inject cards open InjectTerminal pre-filled; distill cards POST `/api/memory/<slug>/distill`; command cards copy to clipboard
+- AC5: Panel shows "Fleet looks healthy ✓" when no recommendations
+- AC6: Refresh every 5min; manual refresh button in panel header; last-checked timestamp shown
+
+---
+
+## P53 — Proposal-to-Impact Traceability Matrix
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+Specclaw proposals drive git commits, audit events, and agent tool calls — but there is no link between a proposal and its downstream impact. Operators cannot tell how many lines of code, how many tokens, or how many tool calls a given proposal generated. Post-mortem analysis of large changes is manual.
+
+### Proposed Solution
+
+Add a `/api/pipeline/impact/[slug]/[changeName]` endpoint that: (1) reads `proposal.md` created date; (2) runs `git log --oneline --after=<created>` to count commits and changed files in the project's working dir; (3) counts audit events tagged with the change name (if the agent logs them); (4) counts tool calls from transcript `.jsonl` in the window. Return `{ commits, filesChanged, linesAdded, linesDeleted, auditEvents, toolCalls, durationDays }`. Add an "Impact" tab to the `/pipeline` detail drawer showing these stats as neon stat cards. A fleet-wide "Impact Leaderboard" widget on `/pipeline` sorts changes by `commits + linesAdded` descending.
+
+### Acceptance Criteria
+
+- AC1: `/api/pipeline/impact/[slug]/[changeName]` returns impact stats for a given change
+- AC2: "Impact" tab in pipeline detail drawer shows: commits, files changed, ±lines, duration
+- AC3: Impact Leaderboard widget on `/pipeline` page ranks all verified/PR-stage changes by impact score
+- AC4: Impact stats computed from git log date-bounded by proposal `created` date
+- AC5: Changes with no git history show "No commits yet" in Impact tab
+- AC6: Leaderboard updates on same 60s poll as pipeline page
+
+---
+
+## P54 — Live Agent Thought Stream
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+Operators watching the Project Graph see node state colors update every 5s but cannot see what each agent is actually thinking or doing at a micro level. Active projects are opaque blobs — the graph gives no semantic signal about current reasoning, tool calls in progress, or decision points.
+
+### Proposed Solution
+
+Add a "Thought Stream" overlay mode to the Project Graph (toggle button in graph header, keyboard shortcut `T`). When enabled, active project nodes emit animated text particles showing the last tool call name (e.g. "→ Edit", "→ WebFetch", "→ Agent") as floating labels that drift upward from the node and fade out over 3s. Source: SSE `tool-event` events from `FleetContext` (already pushed by P28). Text particles are CSS-animated `<div>` elements absolutely positioned over the SVG. Max 3 simultaneous particles per node to prevent clutter. Particle color matches tool category (file ops=cyan, web=amber, agent=purple, other=grey).
+
+### Acceptance Criteria
+
+- AC1: "Thought" toggle button in Project Graph header; off by default; state in localStorage
+- AC2: When ON, tool-event SSE messages trigger a floating text particle at the source project node
+- AC3: Particle shows tool name (short form: "Edit", "Bash", "WebFetch", "Agent"); drifts up and fades over 3s
+- AC4: Particle color: file ops (#22D3EE cyan), web (#F59E0B amber), agent (#A78BFA purple), other (#6B7280 grey)
+- AC5: Max 3 particles per node; oldest dropped when 4th arrives
+- AC6: No particles emitted for `mcp__mcd__*` tool calls (same suppression rule as progress mode)
+
+---
+
+## P55 — Autonomous Weekly Fleet Report
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+Operators get no periodic summary of fleet performance. Week-over-week comparisons of token usage, goals achieved, PRs opened, stalls resolved, and memory growth require manual dashboard inspection. There is no automated digest to share with stakeholders or use as a self-audit.
+
+### Proposed Solution
+
+Add a `/api/reports/weekly` endpoint that generates a JSON summary of the past 7 days: per-project metrics (tokens, turns, stalls, PRs via git log, memories distilled), fleet totals, top performers (most active, most efficient, most goals completed). A `/reports` page renders this as a neon-styled report card with sparklines and a summary narrative. An "Export HTML" button generates a self-contained single-page HTML report for sharing. A scheduler entry can be added via `!project schedule add` to trigger weekly report generation. Report data sourced entirely from existing `mc.db` + transcript `.jsonl`; no new data collection required.
+
+### Acceptance Criteria
+
+- AC1: `/api/reports/weekly` returns `{ generatedAt, weekStart, weekEnd, projects: WeeklyProjectStats[], fleet: FleetWeeklyStats }`
+- AC2: `/reports` page renders stats as cards: total tokens, turns, stalls, estimated cost, goals completed
+- AC3: Per-project table sortable by any metric; top-3 projects highlighted with neon border
+- AC4: "Export HTML" button downloads a self-contained report (inlined CSS, no external deps)
+- AC5: Report data from `mc.db` audit events + transcript `.jsonl` for the 7-day window
+- AC6: Scheduler-compatible: `POST /api/reports/weekly/generate` triggers report and saves to `reports/YYYY-WW.json` in `MCD_CHANNELS_DIR`

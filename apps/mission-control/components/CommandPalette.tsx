@@ -201,6 +201,14 @@ export default function CommandPalette({ onInject }: Props) {
         category: 'navigate',
         action: () => router.push('/goals'),
       },
+      {
+        id: 'nav:knowledge',
+        label: 'Knowledge graph',
+        description: 'Unified view of projects, memories, and goals',
+        icon: '⬡',
+        category: 'navigate',
+        action: () => router.push('/knowledge'),
+      },
     ]
 
     const projects: Command[] = (fleet?.projects ?? []).flatMap((p) => [
