@@ -1550,3 +1550,128 @@ Add a `/feed` page: a vertically-scrolling "project cards" feed where each card 
 - AC5: Quick-action buttons on each card: Inject (opens InjectTerminal), Graph (links `/graph?highlight=<slug>`), Stop (with confirmation)
 - AC6: Data refreshes every 30s; cards animate in on first load
 - AC7: Nav link to `/feed` added to NavDropdown
+
+---
+
+## P66 — Agent Turn Flame Graph
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+Operators cannot visualize how individual agent turns are structured: which tools were called, in what order, how long each took, and which tools dominate turn time. The metrics page shows p50/p90/p99 per project but gives no per-turn breakdown. Debugging a slow or stuck turn requires reading raw JSONL manually.
+
+### Proposed Solution
+
+Add a `/flamegraph` page that renders a flame-chart view of recent agent turns for a selected project. Each row is one turn (newest at top, max 20 turns). Each row contains colored blocks representing tool calls, positioned left-to-right by their occurrence within the turn and sized proportionally to their duration (derived from JSONL record timestamps). Tool calls are color-coded by category: Bash (orange), Read/Write (blue), Agent (purple), MCP (cyan), other (gray). A tooltip on hover shows tool name, duration ms, and status (ok/error). A new API route `/api/flamegraph/[slug]` parses the latest JSONL transcript for the project and returns structured turn data. No external dependencies — pure SVG rendering.
+
+### Acceptance Criteria
+
+- AC1: `/flamegraph` page renders; project selector dropdown populates from `/api/fleet`
+- AC2: Each row represents one turn; max 20 turns shown; newest turn at top
+- AC3: Tool call blocks color-coded: Bash=orange, Read/Write=blue, Agent=purple, MCP=cyan, other=gray
+- AC4: Block width proportional to tool call duration (from JSONL timestamps); minimum visible width 4px
+- AC5: Hover tooltip shows: tool name, duration ms, turn index
+- AC6: X-axis shows turn duration in ms; Y-axis labels show turn index + user message snippet
+- AC7: `/api/flamegraph/[slug]` returns structured TurnFlame data parsed from JSONL
+- AC8: Nav link to `/flamegraph` added to NavDropdown under Observability
+
+---
+
+## P67 — Project Spotlight Drawer
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+To understand a project's full context, operators must navigate across six pages: Dashboard, `/projects/[slug]`, `/pipeline`, `/metrics`, `/branches`, and `/goals`. Every time a project card or graph node is clicked, operators leave the current view entirely.
+
+### Proposed Solution
+
+Add a global "Project Spotlight" right-side drawer (400px wide, slides in over content) that can be triggered from any project card in InstanceGrid, any node in the Galaxy Map or Force Graph, or any row in the timeline/feed pages. The drawer shows: state ring + slug header, current goal, active specclaw proposal (stage badge), last 3 transcript snippets, memory count + top 3 memory titles, git branch + last commit, scheduled jobs, and quick-action buttons (Inject, Stop). Drawer state is managed via URL param `?spotlight=<slug>` so it is shareable and deeplinked. Implemented as a `SpotlightDrawer` component registered in `ClientShell` so it is available on every page.
+
+### Acceptance Criteria
+
+- AC1: `SpotlightDrawer` renders as a right-side panel that slides in when `?spotlight=<slug>` is present in the URL
+- AC2: Drawer shows: state dot + slug, goal, specclaw stage, last 3 transcript entries, memory count + previews, git branch, last scheduled job
+- AC3: Clicking any project card/galaxy star/graph node adds `?spotlight=<slug>` to URL; closes on Escape or clicking outside
+- AC4: Quick-action: Inject opens InjectTerminal pre-filled with the slug; Stop fires inject with `/stop`
+- AC5: Drawer data auto-refreshes every 30s; stale indicator if data > 60s old
+- AC6: Works on mobile (full-width bottom sheet on <640px)
+
+---
+
+## P68 — Fleet Ambient Display
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+Mission Control has no wall-display or ambient mode. Operators monitoring the fleet from a secondary monitor need a glanceable, always-on visualization — not a data-dense dashboard.
+
+### Proposed Solution
+
+Add a `/ambient` page: a full-screen generative particle system that maps fleet state to visual atmosphere. Each project becomes a particle (circle) that orbits and drifts — idle particles drift slow cyan, active particles pulse bright green, stalled particles emit red ripples, autonomous particles glow purple with a slow orbit trail. The number of active particles and their brightness scales with fleet-wide activity. Clicking a particle opens the Project Spotlight drawer (`?spotlight=<slug>`). No nav header — a `[×]` exit button and an auto-hide overlay with the active/stalled count appear on mouse move. Particle positions are deterministic (seeded by slug hash) so the layout is stable across refreshes. Renders entirely in a `<canvas>` element using `requestAnimationFrame`; no external dependencies.
+
+### Acceptance Criteria
+
+- AC1: `/ambient` page renders full-screen canvas with no nav header
+- AC2: One particle per project; position seeded by slug hash (stable)
+- AC3: Particle color + animation reflects state: idle=slow cyan drift, active=green pulse, stalled=red ripple, autonomous=purple orbit
+- AC4: Clicking a particle adds `?spotlight=<slug>` to URL; SpotlightDrawer slides in
+- AC5: Fleet state polled every 30s from `/api/fleet`; particles animate transition on state change
+- AC6: Mouse-move reveals overlay: active count, stalled count, `[×]` back-to-dashboard link; overlay auto-hides after 3s
+- AC7: Nav link to `/ambient` added to NavDropdown under Observability
+
+---
+
+## P69 — Live Tool Call Ticker
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+When `progressMode` is enabled, tool call events flow through the SSE stream but are only visible in Discord or in a single project's progress messages. There is no fleet-wide view showing what all active projects are currently doing.
+
+### Proposed Solution
+
+Add a `/ticker` page styled like a Bloomberg terminal feed: a fixed-height scrolling panel of live tool call events across all active projects. Each row: `[HH:MM:SS] <slug> | <tool_name> | <status: started/done/error> | <duration_ms>`. Events sourced from the existing SSE stream at `/api/events/stream` — filter for `tool_progress` event type. Rows auto-scroll; newest at bottom. Color coding: slug in cyan, tool_name by category (Bash=orange, Read=blue, Agent=purple, MCP=teal, other=gray), status=green/red/amber, duration in dim white. A filter bar lets operators show only specific slugs or tool categories. The ticker pauses on hover (to allow reading); resumes on mouse-leave.
+
+### Acceptance Criteria
+
+- AC1: `/ticker` page renders scrolling event feed from SSE `/api/events/stream`
+- AC2: Rows formatted: `[HH:MM:SS] slug | tool_name | status | duration_ms`
+- AC3: Color coding: slug=cyan, tool category colors (Bash=orange, Read/Write=blue, Agent=purple, MCP=teal), status=green/red/amber
+- AC4: Auto-scroll to newest; pauses on hover; resumes on mouse-leave
+- AC5: Filter bar: slug substring filter + tool category multi-select checkboxes
+- AC6: Max 500 rows retained in memory; oldest evicted on overflow
+- AC7: Nav link to `/ticker` added to NavDropdown under Observability
+
+---
+
+## P70 — Cross-Project Memory Similarity Matrix
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+No view reveals which projects share similar memory topics or concerns. Operators cannot identify when two projects are independently solving the same problem, when a memory from one project would be valuable to another, or which projects are most topically isolated.
+
+### Proposed Solution
+
+Add a `/similarity` page showing a project × project heatmap where each cell's intensity represents the co-mention overlap between the two projects' memory content (simple word-frequency intersection over union after stop-word removal). Rows and columns are sorted by cluster (projects with highest average similarity grouped together). Each cell is colored from dark (0% overlap) to bright cyan (100% overlap). Hovering a cell shows the top 5 shared keywords. The diagonal is always 100% (excluded from sorting). A minimum threshold slider (default 10%) hides cells below threshold (gray). Data computed server-side at `/api/similarity` by reading all `~/.claude/projects/<encoded>/memory/*.md` files.
+
+### Acceptance Criteria
+
+- AC1: `/similarity` page renders an N×N heatmap where N = number of projects with memory files
+- AC2: Cell intensity maps to word-overlap score (intersection/union of non-stop keywords, 0–1)
+- AC3: Rows/columns sorted by cluster (greedy: row with highest average similarity placed first)
+- AC4: Hover tooltip shows top 5 shared keywords for that cell pair
+- AC5: Threshold slider (0–50%) grays out cells below threshold
+- AC6: `/api/similarity` endpoint computes scores server-side; result cached 5 min
+- AC7: Nav link to `/similarity` added to NavDropdown under Intelligence
