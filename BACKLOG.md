@@ -1605,7 +1605,7 @@ Add a global "Project Spotlight" right-side drawer (400px wide, slides in over c
 
 ## P68 — Fleet Ambient Display
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
@@ -1725,7 +1725,7 @@ Update `ForceGraph3D.tsx` and the `/graph3d` page to open `?spotlight=<slug>` on
 
 ## P73 — Broadcast Send History
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem

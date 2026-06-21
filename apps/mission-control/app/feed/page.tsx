@@ -38,11 +38,12 @@ const STATE_COLOR: Record<ProjectState, string> = {
 }
 
 const STAGE_COLOR: Record<PipelineStage, string> = {
-  propose: '#F59E0B',
-  plan:    '#22D3EE',
-  build:   '#A78BFA',
-  verify:  '#FB923C',
-  pr:      '#4ADE80',
+  propose:   '#F59E0B',
+  plan:      '#22D3EE',
+  build:     '#A78BFA',
+  verify:    '#FB923C',
+  pr:        '#4ADE80',
+  completed: '#22D3EE',
 }
 
 const PLATFORM_ICON: Record<string, string> = {

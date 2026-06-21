@@ -3,7 +3,7 @@ import * as path from 'path'
 
 export const dynamic = 'force-dynamic'
 
-export type PipelineStage = 'propose' | 'plan' | 'build' | 'verify' | 'pr'
+export type PipelineStage = 'propose' | 'plan' | 'build' | 'verify' | 'pr' | 'completed'
 
 export interface PipelineCard {
   slug: string
@@ -35,6 +35,7 @@ function detectStage(changeDir: string): PipelineStage {
 }
 
 function stageAnchorFile(stage: PipelineStage): string {
+  if (stage === 'completed') return 'verify-report.md'
   if (stage === 'pr') return 'verify-report.md'
   if (stage === 'verify') return 'verify-report.md'
   if (stage === 'build') return 'tasks.md'
@@ -104,6 +105,14 @@ export async function GET(): Promise<Response> {
       const prUrl = verifyContent ? extractPrUrl(verifyContent) : null
       if (prUrl) stage = 'pr'
 
+      const tasksContent = readFile(path.join(changeDir, 'tasks.md'))
+      const tasksChecklist = tasksContent ? parseTasks(tasksContent) : []
+      const tasksDone = tasksChecklist.filter((t) => t.done).length
+      const tasksTotal = tasksChecklist.length
+
+      // Completed: PR found + all tasks checked (or no tasks.md at all)
+      if (prUrl && (tasksTotal === 0 || tasksDone === tasksTotal)) stage = 'completed'
+
       const anchorFile = path.join(changeDir, stageAnchorFile(stage))
       const anchorMtime = fileMtimeMs(anchorFile) ?? nowMs
       const daysInStage = Math.floor((nowMs - anchorMtime) / 86_400_000)
@@ -118,11 +127,6 @@ export async function GET(): Promise<Response> {
       } catch {}
 
       const stalled = (stage === 'build' || stage === 'verify') && daysInStage >= 1
-
-      const tasksContent = readFile(path.join(changeDir, 'tasks.md'))
-      const tasksChecklist = tasksContent ? parseTasks(tasksContent) : []
-      const tasksDone = tasksChecklist.filter((t) => t.done).length
-      const tasksTotal = tasksChecklist.length
 
       const proposalContent = readFile(path.join(changeDir, 'proposal.md'))
       const proposalSnippet = proposalContent ? snippet(proposalContent) : null
