@@ -1,12 +1,13 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { AnimatePresence } from 'framer-motion'
 import CommandPalette, { type InjectRequest } from './CommandPalette'
 import InjectTerminal from './InjectTerminal'
 import FleetAdvisorPanel from './FleetAdvisorPanel'
+import SpotlightDrawer from './SpotlightDrawer'
 import { FleetContextProvider } from './FleetContext'
 import { authClient } from '../src/auth-client'
 
@@ -113,6 +114,7 @@ export default function ClientShell({ children }: { children: React.ReactNode })
       <LogoutButton />
       <CommandPalette onInject={handleInject} />
       <FleetAdvisorPanel />
+      <Suspense><SpotlightDrawer /></Suspense>
       <AnimatePresence>
         {injectState !== null && (
           <InjectTerminal

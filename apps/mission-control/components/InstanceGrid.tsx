@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import GlassCard from './ui/GlassCard'
 import PulseRing from './ui/PulseRing'
@@ -130,6 +131,24 @@ function MemoryModal({ slug, onClose }: MemoryModalProps) {
         </div>
       </motion.div>
     </div>
+  )
+}
+
+function SpotlightButton({ slug }: { slug: string }) {
+  const router = useRouter()
+  function open(e: React.MouseEvent) {
+    e.stopPropagation()
+    router.push(`?spotlight=${encodeURIComponent(slug)}`)
+  }
+  return (
+    <button
+      title={`Spotlight ${slug}`}
+      onClick={open}
+      className="text-[10px] font-mono px-1 py-0.5 rounded transition-colors"
+      style={{ color: 'rgb(168 139 250 / 0.5)', background: 'transparent', lineHeight: 1 }}
+    >
+      ◎
+    </button>
   )
 }
 
@@ -623,6 +642,7 @@ export default function InstanceGrid({ events = [], filterSlugs = null, fleetPro
                                 >
                                   ⧉
                                 </a>
+                                <SpotlightButton slug={slug} />
                                 {fp?.queuedCount != null && fp.queuedCount > 0 && (
                                   <span
                                     className="text-[0.55rem] font-mono px-1 py-0.5 rounded shrink-0"
