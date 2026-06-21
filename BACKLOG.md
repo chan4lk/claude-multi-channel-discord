@@ -1408,7 +1408,7 @@ Add a context action menu to the Project Graph node detail drawer (small "⋯" b
 
 ## P60 — Pipeline Impact All-Stages Leaderboard
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem

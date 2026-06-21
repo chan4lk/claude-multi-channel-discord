@@ -377,14 +377,45 @@ export default function PipelinePage() {
   const [lastRefresh, setLastRefresh] = useState<number>(0)
   const [selectedCard, setSelectedCard] = useState<PipelineCard | null>(null)
   const [leaderboard, setLeaderboard] = useState<ImpactStats[]>([])
-  const leaderboardFetchedRef = useRef(false)
+  const [leaderboardLoading, setLeaderboardLoading] = useState(false)
+  const [stageFilter, setStageFilter] = useState<PipelineStage | 'all'>('all')
+  const leaderboardCardsKey = useRef<string>('')
+
+  async function fetchLeaderboard(cardList: PipelineCard[]) {
+    if (cardList.length === 0) return
+    const key = cardList.map((c) => `${c.slug}:${c.name}`).sort().join(',')
+    if (leaderboardCardsKey.current === key) return
+    leaderboardCardsKey.current = key
+    setLeaderboardLoading(true)
+
+    const BATCH = 5
+    const all: ImpactStats[] = []
+    for (let i = 0; i < cardList.length; i += BATCH) {
+      const batch = cardList.slice(i, i + BATCH)
+      const results = await Promise.allSettled(
+        batch.map((c) =>
+          fetch(`/api/pipeline/impact/${encodeURIComponent(c.slug)}/${encodeURIComponent(c.name)}`)
+            .then((r) => r.json() as Promise<ImpactStats>)
+        )
+      )
+      for (const r of results) {
+        if (r.status === 'fulfilled') all.push(r.value)
+      }
+    }
+    all.sort((a, b) => (b.commits + b.linesAdded) - (a.commits + a.linesAdded))
+    setLeaderboard(all)
+    setLeaderboardLoading(false)
+  }
 
   async function fetchCards() {
     try {
       const res = await fetch('/api/pipeline')
       if (res.ok) {
-        setCards(await res.json())
+        const data: PipelineCard[] = await res.json()
+        setCards(data)
         setLastRefresh(Date.now())
+        leaderboardCardsKey.current = ''
+        fetchLeaderboard(data)
       }
     } catch {}
     setLoading(false)
@@ -397,22 +428,8 @@ export default function PipelinePage() {
   }, [])
 
   useEffect(() => {
-    if (leaderboardFetchedRef.current || cards.length === 0) return
-    const eligibleCards = cards.filter((c) => c.stage === 'verify' || c.stage === 'pr')
-    if (eligibleCards.length === 0) return
-    leaderboardFetchedRef.current = true
-    Promise.allSettled(
-      eligibleCards.map((c) =>
-        fetch(`/api/pipeline/impact/${encodeURIComponent(c.slug)}/${encodeURIComponent(c.name)}`)
-          .then((r) => r.json() as Promise<ImpactStats>)
-      )
-    ).then((results) => {
-      const stats = results
-        .filter((r): r is PromiseFulfilledResult<ImpactStats> => r.status === 'fulfilled')
-        .map((r) => r.value)
-        .sort((a, b) => (b.commits + b.linesAdded) - (a.commits + a.linesAdded))
-      setLeaderboard(stats)
-    })
+    if (cards.length > 0) fetchLeaderboard(cards)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cards])
 
   const byStage = (stage: PipelineStage) => cards.filter((c) => c.stage === stage)
@@ -521,44 +538,109 @@ export default function PipelinePage() {
         )}
 
         {/* Impact Leaderboard */}
-        {leaderboard.length > 0 && (
+        {(leaderboard.length > 0 || leaderboardLoading) && (
           <div className="mt-8">
-            <div className="text-[0.6rem] font-mono uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-2">
-              <span style={{ color: '#A78BFA' }}>◆</span> Impact Leaderboard — verify &amp; PR stage, ranked by commits + lines added
+            <div className="text-[0.6rem] font-mono uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-2 flex-wrap">
+              <span style={{ color: '#A78BFA' }}>◆</span>
+              <span>Impact Leaderboard — all stages, ranked by commits + lines</span>
+              {leaderboardLoading && <span className="text-slate-600 animate-pulse">updating…</span>}
             </div>
-            <div className="overflow-x-auto rounded border border-white/6">
-              <table className="w-full text-[0.65rem] font-mono">
-                <thead>
-                  <tr className="border-b border-white/6">
-                    {['#', 'Change', 'Slug', 'Commits', '+Lines', '-Lines', 'Files', 'Tool Calls', 'Age'].map((h) => (
-                      <th key={h} className="text-left px-3 py-2 text-slate-500 uppercase tracking-wider font-semibold">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {leaderboard.map((s, i) => (
-                    <tr
-                      key={`${s.slug}::${s.changeName}`}
-                      className="border-b border-white/4 hover:bg-white/3 cursor-pointer transition-colors"
-                      onClick={() => {
-                        const c = cards.find((c) => c.slug === s.slug && c.name === s.changeName)
-                        if (c) setSelectedCard(c)
-                      }}
-                    >
-                      <td className="px-3 py-2 text-slate-600">{i + 1}</td>
-                      <td className="px-3 py-2 text-slate-200 font-semibold">{s.changeName}</td>
-                      <td className="px-3 py-2 text-slate-500">{s.slug}</td>
-                      <td className="px-3 py-2" style={{ color: '#4ADE80' }}>{s.commits}</td>
-                      <td className="px-3 py-2" style={{ color: '#34D399' }}>+{s.linesAdded}</td>
-                      <td className="px-3 py-2" style={{ color: '#F87171' }}>-{s.linesDeleted}</td>
-                      <td className="px-3 py-2" style={{ color: '#60A5FA' }}>{s.filesChanged}</td>
-                      <td className="px-3 py-2" style={{ color: '#A78BFA' }}>{s.toolCalls}</td>
-                      <td className="px-3 py-2 text-slate-600">{s.durationDays}d</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+
+            {/* Stage filter */}
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {(['all', ...STAGES] as const).map((s) => {
+                const active = stageFilter === s
+                const color = s === 'all' ? '#A78BFA' : STAGE_COLORS[s as PipelineStage]
+                const count = s === 'all' ? leaderboard.length : leaderboard.filter((lb) => {
+                  const card = cards.find((c) => c.slug === lb.slug && c.name === lb.changeName)
+                  return card?.stage === s
+                }).length
+                return (
+                  <button
+                    key={s}
+                    onClick={() => setStageFilter(s)}
+                    className="text-[0.6rem] font-mono px-2.5 py-1 rounded border transition-colors"
+                    style={{
+                      borderColor: active ? `${color}60` : `${color}20`,
+                      color: active ? color : '#475569',
+                      background: active ? `${color}14` : 'transparent',
+                    }}
+                  >
+                    {s === 'all' ? 'All' : STAGE_LABELS[s as PipelineStage]} ({count})
+                  </button>
+                )
+              })}
             </div>
+
+            {(() => {
+              const filtered = stageFilter === 'all'
+                ? leaderboard
+                : leaderboard.filter((lb) => {
+                    const card = cards.find((c) => c.slug === lb.slug && c.name === lb.changeName)
+                    return card?.stage === stageFilter
+                  })
+              const totals = {
+                commits: filtered.reduce((s, r) => s + r.commits, 0),
+                linesAdded: filtered.reduce((s, r) => s + r.linesAdded, 0),
+                linesDeleted: filtered.reduce((s, r) => s + r.linesDeleted, 0),
+                toolCalls: filtered.reduce((s, r) => s + r.toolCalls, 0),
+              }
+              return (
+                <div className="overflow-x-auto rounded border border-white/6">
+                  <table className="w-full text-[0.65rem] font-mono">
+                    <thead>
+                      <tr className="border-b border-white/6">
+                        {['#', 'Change', 'Slug', 'Stage', 'Commits', '+Lines', '-Lines', 'Files', 'Tool Calls', 'Age'].map((h) => (
+                          <th key={h} className="text-left px-3 py-2 text-slate-500 uppercase tracking-wider font-semibold">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filtered.map((s, i) => {
+                        const card = cards.find((c) => c.slug === s.slug && c.name === s.changeName)
+                        const stageColor = card ? STAGE_COLORS[card.stage] : '#475569'
+                        const hasCommits = s.commits > 0
+                        return (
+                          <tr
+                            key={`${s.slug}::${s.changeName}`}
+                            className="border-b border-white/4 hover:bg-white/3 cursor-pointer transition-colors"
+                            onClick={() => { if (card) setSelectedCard(card) }}
+                          >
+                            <td className="px-3 py-2 text-slate-600">{i + 1}</td>
+                            <td className="px-3 py-2 text-slate-200 font-semibold">{s.changeName}</td>
+                            <td className="px-3 py-2 text-slate-500">{s.slug}</td>
+                            <td className="px-3 py-2">
+                              <span className="px-1.5 py-0.5 rounded text-[0.55rem] uppercase" style={{ color: stageColor, background: `${stageColor}18` }}>
+                                {card?.stage ?? '—'}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2" style={{ color: '#4ADE80' }}>{hasCommits ? s.commits : '—'}</td>
+                            <td className="px-3 py-2" style={{ color: '#34D399' }}>{hasCommits ? `+${s.linesAdded}` : '—'}</td>
+                            <td className="px-3 py-2" style={{ color: '#F87171' }}>{hasCommits ? `-${s.linesDeleted}` : '—'}</td>
+                            <td className="px-3 py-2" style={{ color: '#60A5FA' }}>{s.filesChanged}</td>
+                            <td className="px-3 py-2" style={{ color: '#A78BFA' }}>{s.toolCalls}</td>
+                            <td className="px-3 py-2 text-slate-600">{s.durationDays}d</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                    {filtered.length > 0 && (
+                      <tfoot>
+                        <tr className="border-t border-white/10" style={{ background: 'rgba(167,139,250,0.04)' }}>
+                          <td className="px-3 py-2 text-slate-600 font-semibold" colSpan={4}>Fleet Total</td>
+                          <td className="px-3 py-2 font-semibold" style={{ color: '#4ADE80' }}>{totals.commits}</td>
+                          <td className="px-3 py-2 font-semibold" style={{ color: '#34D399' }}>+{totals.linesAdded}</td>
+                          <td className="px-3 py-2 font-semibold" style={{ color: '#F87171' }}>-{totals.linesDeleted}</td>
+                          <td className="px-3 py-2 text-slate-500">—</td>
+                          <td className="px-3 py-2 font-semibold" style={{ color: '#A78BFA' }}>{totals.toolCalls}</td>
+                          <td className="px-3 py-2 text-slate-600">—</td>
+                        </tr>
+                      </tfoot>
+                    )}
+                  </table>
+                </div>
+              )
+            })()}
           </div>
         )}
       </main>
