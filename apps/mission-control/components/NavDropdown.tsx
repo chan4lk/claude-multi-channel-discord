@@ -21,6 +21,8 @@ const NAV_GROUPS: NavGroup[] = [
     category: 'Observability',
     color: '#22D3EE',
     items: [
+      { href: '/feed', label: 'Project Feed', icon: '≣' },
+      { href: '/galaxy', label: 'Galaxy Map', icon: '✵' },
       { href: '/graph', label: 'Project Graph', icon: '⬡' },
       { href: '/timeline', label: 'Timeline', icon: '◫' },
       { href: '/memory-graph', label: 'Memory Graph', icon: '✦' },
