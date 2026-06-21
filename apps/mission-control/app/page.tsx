@@ -369,9 +369,34 @@ function DashboardClient() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3 sm:gap-5 overflow-x-auto pb-0.5 sm:pb-0 shrink-0" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' } as React.CSSProperties}>
+          <div className="flex items-center gap-2 sm:gap-4 flex-wrap justify-end">
+            {/* Sections toggle (P62) — always visible, first */}
+            <div className="relative shrink-0">
+              <button
+                onClick={() => setSectionsOpen((v) => !v)}
+                className="flex items-center gap-1 cursor-pointer rounded px-2 py-1 border transition-colors"
+                style={{
+                  borderColor: sectionsOpen ? 'rgba(0,245,255,0.4)' : '#1e3a5f',
+                  color: sectionsOpen ? '#00F5FF' : '#64748b',
+                  background: sectionsOpen ? 'rgba(0,245,255,0.08)' : 'transparent',
+                }}
+                title="Customize dashboard sections"
+              >
+                <span className="text-xs font-mono">⊞</span>
+                <span className="text-[0.6rem] uppercase tracking-widest font-mono">
+                  Sections{hiddenCount > 0 ? ` (${hiddenCount} hidden)` : ''}
+                </span>
+              </button>
+              <SectionsPopover
+                open={sectionsOpen}
+                onClose={() => setSectionsOpen(false)}
+                sections={sections}
+                onToggle={toggleSection}
+              />
+            </div>
+
             {/* Fleet state badges with sparklines (P63) */}
-            <div className="flex items-center gap-3 sm:gap-5 border-r border-cyber-cyan/10 pr-3 sm:pr-5 shrink-0">
+            <div className="flex items-center gap-3 sm:gap-4 border-l border-cyber-cyan/10 pl-2 sm:pl-4 shrink-0">
               {FLEET_STATES.map((state) => (
                 <FleetBadge
                   key={state}
@@ -413,46 +438,11 @@ function DashboardClient() {
                 </span>
               </div>
             )}
-            {/* MC instance counters */}
-            <CountBadge value={instances.length} label="Instances" color="#00F5FF" className="shrink-0" />
-            <CountBadge value={eventsPerMin} label="Events/min" color="#00F5FF" className="shrink-0 hidden sm:flex" />
-            <CountBadge value={healthy} label="Healthy" color="#4ADE80" className="shrink-0" />
-            <CountBadge value={degraded} label="Degraded" color="#EF4444" className="shrink-0" />
-            <div className="flex flex-col items-center gap-0.5 shrink-0">
-              <span className="text-xl font-bold font-mono text-slate-400 tabular-nums">
-                {formatUptime(uptime)}
-              </span>
-              <span className="text-[0.6rem] text-slate-500 uppercase tracking-widest">Uptime</span>
-            </div>
-            {/* Hidden sections badge (P62) */}
-            {hiddenCount > 0 && (
-              <span
-                className="text-[0.6rem] px-1.5 py-0.5 rounded border font-mono shrink-0"
-                style={{ color: '#00F5FF', borderColor: 'rgba(0,245,255,0.3)', background: 'rgba(0,245,255,0.06)' }}
-              >
-                {hiddenCount} hidden
-              </span>
-            )}
-            {/* Sections toggle (P62) */}
-            <div className="relative shrink-0">
-              <button
-                onClick={() => setSectionsOpen((v) => !v)}
-                className="flex flex-col items-center gap-0.5 cursor-pointer rounded px-1 transition-opacity"
-                style={{ opacity: sectionsOpen ? 1 : 0.65 }}
-                title="Customize dashboard sections"
-              >
-                <span className="text-sm font-mono" style={{ color: sectionsOpen ? '#00F5FF' : '#94a3b8' }}>⊞</span>
-                <span className="text-[0.6rem] uppercase tracking-widest" style={{ color: sectionsOpen ? '#00F5FF' : '#64748b' }}>
-                  Sections
-                </span>
-              </button>
-              <SectionsPopover
-                open={sectionsOpen}
-                onClose={() => setSectionsOpen(false)}
-                sections={sections}
-                onToggle={toggleSection}
-              />
-            </div>
+            {/* MC instance counters — hidden on small screens to reduce clutter */}
+            <CountBadge value={instances.length} label="Instances" color="#00F5FF" className="shrink-0 hidden lg:flex" />
+            <CountBadge value={eventsPerMin} label="Events/min" color="#00F5FF" className="shrink-0 hidden xl:flex" />
+            <CountBadge value={healthy} label="Healthy" color="#4ADE80" className="shrink-0 hidden lg:flex" />
+            <CountBadge value={degraded} label="Degraded" color="#EF4444" className="shrink-0 hidden lg:flex" />
             <div
               className="flex flex-col items-center gap-0.5 shrink-0"
               title={`SSE: ${sseStatus}`}
@@ -517,16 +507,16 @@ function DashboardClient() {
                 <AdvisorTile />
               </section>
             </AnimatedSection>
-            <AnimatedSection visible={sections.pipeline}>
-              <section>
-                <SectionLabel label="Specclaw Pipeline" />
-                <SpecclawPipeline events={events} />
-              </section>
-            </AnimatedSection>
             <AnimatedSection visible={sections.memories}>
               <section>
                 <SectionLabel label="Memories" />
                 <MemoryPanel />
+              </section>
+            </AnimatedSection>
+            <AnimatedSection visible={sections.pipeline}>
+              <section>
+                <SectionLabel label="Specclaw Pipeline" />
+                <SpecclawPipeline events={events} />
               </section>
             </AnimatedSection>
           </div>
