@@ -1095,7 +1095,7 @@ Add a "Pulse Mode" toggle button in the Project Graph header. When enabled, each
 
 ## P47 — Context Fill ETA Badge
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
@@ -1119,7 +1119,7 @@ Add a `contextFillEtaMinutes` field to `/api/fleet` response. Computed by: readi
 
 ## P48 — CLAUDE.md Live Editor
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem

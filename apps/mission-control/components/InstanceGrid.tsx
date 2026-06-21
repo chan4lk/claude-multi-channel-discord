@@ -276,6 +276,30 @@ function ContextUsageGauge({ pct, size }: { pct: number; size: number }) {
   )
 }
 
+function ContextFillEtaBadge({ etaMinutes, tokensPerTurn, headroom }: { etaMinutes: number; tokensPerTurn?: number; headroom?: number }) {
+  const color = etaMinutes < 20 ? '#EF4444' : etaMinutes < 60 ? '#F59E0B' : '#4ADE80'
+  let label: string
+  if (etaMinutes >= 60) {
+    const h = Math.floor(etaMinutes / 60)
+    const m = etaMinutes % 60
+    label = m > 0 ? `ctx ~${h}h ${m}m` : `ctx ~${h}h`
+  } else {
+    label = `ctx ~${etaMinutes}m`
+  }
+  const tooltip = tokensPerTurn != null && headroom != null
+    ? `Context fill ETA: ${label}\nVelocity: ${tokensPerTurn.toLocaleString()} tokens/turn\nHeadroom: ${headroom.toLocaleString()} tokens`
+    : `Context fill ETA: ${label}`
+  return (
+    <span
+      title={tooltip}
+      className="text-[0.5rem] font-mono font-bold px-1 py-0.5 rounded border cursor-default"
+      style={{ color, borderColor: `${color}40`, background: `${color}12` }}
+    >
+      ⏱ {label}
+    </span>
+  )
+}
+
 function SlugAnnotation({ slug }: { slug: string }) {
   const [note, setNote] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
@@ -632,6 +656,9 @@ export default function InstanceGrid({ events = [], filterSlugs = null, fleetPro
                                 )}
                                 {(fleetProject?.contextUsagePct ?? 0) > 60 && (
                                   <ContextUsageGauge pct={fleetProject!.contextUsagePct!} size={28} />
+                                )}
+                                {fleetProject?.contextFillEtaMinutes != null && (
+                                  <ContextFillEtaBadge etaMinutes={fleetProject.contextFillEtaMinutes} />
                                 )}
                                 {health && (
                                   <HealthScoreRing

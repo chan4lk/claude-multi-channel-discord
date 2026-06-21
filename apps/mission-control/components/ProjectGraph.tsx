@@ -86,9 +86,15 @@ export default function ProjectGraph({ showBacklog }: Props) {
     try { return localStorage.getItem('mc_graph_pulse') === '1' } catch { return false }
   })
   const [drawer, setDrawer] = useState<DetailDrawer | null>(null)
-  const [drawerTab, setDrawerTab] = useState<'info' | 'diff'>('info')
+  const [drawerTab, setDrawerTab] = useState<'info' | 'diff' | 'prompt'>('info')
   const [diffData, setDiffData] = useState<{ log: string; diff: string } | null>(null)
   const [diffLoading, setDiffLoading] = useState(false)
+  const [promptContent, setPromptContent] = useState<string>('')
+  const [promptDraft, setPromptDraft] = useState<string>('')
+  const [promptLastModified, setPromptLastModified] = useState<string | null>(null)
+  const [promptSaving, setPromptSaving] = useState(false)
+  const [promptSaveMsg, setPromptSaveMsg] = useState<string | null>(null)
+  const [promptLoading, setPromptLoading] = useState(false)
   const [dims, setDims] = useState({ w: 800, h: 500 })
   const simRef = useRef<d3.Simulation<GraphNode, undefined> | null>(null)
   const nodesRef = useRef<GraphNode[]>([])
@@ -427,6 +433,46 @@ export default function ProjectGraph({ showBacklog }: Props) {
       .finally(() => setDiffLoading(false))
   }, [drawer?.slug, drawerTab])
 
+  useEffect(() => {
+    if (!drawer || drawerTab !== 'prompt') return
+    setPromptLoading(true)
+    fetch(`/api/projects/${encodeURIComponent(drawer.slug)}/claude-md`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data: { content: string; lastModified: string } | null) => {
+        if (data) {
+          setPromptContent(data.content)
+          setPromptDraft(data.content)
+          setPromptLastModified(data.lastModified)
+        }
+      })
+      .catch(() => {})
+      .finally(() => setPromptLoading(false))
+  }, [drawer?.slug, drawerTab])
+
+  async function savePrompt() {
+    if (!drawer || promptSaving) return
+    setPromptSaving(true)
+    setPromptSaveMsg(null)
+    try {
+      const r = await fetch(`/api/projects/${encodeURIComponent(drawer.slug)}/claude-md`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: promptDraft }),
+      })
+      if (r.ok) {
+        setPromptContent(promptDraft)
+        setPromptSaveMsg('Saved ✓')
+        setTimeout(() => setPromptSaveMsg(null), 2000)
+      } else {
+        setPromptSaveMsg('Save failed')
+      }
+    } catch {
+      setPromptSaveMsg('Save failed')
+    } finally {
+      setPromptSaving(false)
+    }
+  }
+
   function formatAge(mins: number): string {
     if (mins >= 60) return `${Math.floor(mins / 60)}h ${mins % 60}m`
     if (mins > 9000) return 'no transcript'
@@ -535,7 +581,7 @@ export default function ProjectGraph({ showBacklog }: Props) {
           </div>
           {/* Tabs */}
           <div className="flex border-b shrink-0" style={{ borderColor: `${STATE_COLORS[drawer.state]}15` }}>
-            {(['info', 'diff'] as const).map((tab) => (
+            {(['info', 'diff', 'prompt'] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setDrawerTab(tab)}
@@ -691,6 +737,61 @@ export default function ProjectGraph({ showBacklog }: Props) {
               )}
               {!diffLoading && !diffData && (
                 <p className="text-[0.6rem] font-mono text-cyber-crimson/70 text-center py-4">Failed to load diff</p>
+              )}
+            </div>
+          )}
+
+          {/* Prompt tab */}
+          {drawerTab === 'prompt' && (
+            <div className="flex flex-col gap-2 p-3 overflow-y-auto flex-1">
+              {promptLoading && (
+                <p className="text-[0.6rem] font-mono text-slate-500 text-center py-4">Loading…</p>
+              )}
+              {!promptLoading && (
+                <>
+                  {promptLastModified && (
+                    <p className="text-[0.5rem] font-mono text-slate-600">
+                      Last modified: {new Date(promptLastModified).toLocaleString()}
+                    </p>
+                  )}
+                  <textarea
+                    value={promptDraft}
+                    onChange={(e) => setPromptDraft(e.target.value)}
+                    onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); savePrompt() } }}
+                    className="flex-1 min-h-[300px] text-[0.6rem] font-mono bg-slate-900 border border-slate-700 rounded p-2 text-slate-300 focus:outline-none focus:border-slate-500 resize-none leading-relaxed"
+                    placeholder="CLAUDE.md content…"
+                    spellCheck={false}
+                  />
+                  <div className="flex items-center justify-between">
+                    <span
+                      className="text-[0.5rem] font-mono"
+                      style={{
+                        color: promptDraft.length > 8000 ? '#EF4444' : promptDraft.length > 6000 ? '#F59E0B' : '#475569'
+                      }}
+                    >
+                      {promptDraft.length.toLocaleString()} chars
+                      {promptDraft.length > 8000 && ' — very large'}
+                      {promptDraft.length > 6000 && promptDraft.length <= 8000 && ' — large'}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {promptSaveMsg && (
+                        <span
+                          className="text-[0.55rem] font-mono"
+                          style={{ color: promptSaveMsg.includes('✓') ? '#4ADE80' : '#EF4444' }}
+                        >
+                          {promptSaveMsg}
+                        </span>
+                      )}
+                      <button
+                        disabled={promptSaving || promptDraft === promptContent}
+                        onClick={savePrompt}
+                        className="text-[0.6rem] font-mono px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500 transition-colors disabled:opacity-40"
+                      >
+                        {promptSaving ? '…' : 'Save'}
+                      </button>
+                    </div>
+                  </div>
+                </>
               )}
             </div>
           )}
