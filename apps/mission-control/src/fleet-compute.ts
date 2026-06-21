@@ -4,6 +4,7 @@ import * as os from 'os'
 
 export type ProjectState = 'idle' | 'active' | 'stalled' | 'autonomous'
 export type GoalStatus = 'active' | 'paused' | 'completed'
+export type BudgetStatus = 'ok' | 'warning' | 'critical' | 'exhausted'
 
 export interface FleetProject {
   slug: string
@@ -12,6 +13,7 @@ export interface FleetProject {
   stuckThresholdMinutes: number
   monthlyTokenBudget?: number
   monthlyTokensUsed?: number
+  budgetStatus?: BudgetStatus
   circuitOpen?: boolean
   contextUsagePct?: number
   goalText?: string
@@ -173,6 +175,14 @@ function readGoal(slug: string, mcdDir: string): { goalText: string; goalStatus:
   }
 }
 
+function computeBudgetStatus(used: number, budget: number): BudgetStatus {
+  const pct = used / budget
+  if (pct >= 1) return 'exhausted'
+  if (pct >= 0.8) return 'critical'
+  if (pct >= 0.5) return 'warning'
+  return 'ok'
+}
+
 function stallReason(ageMins: number): string {
   if (ageMins > 60) return `Inactive ${ageMins}m — likely waiting for operator input`
   if (ageMins > 30) return `Inactive ${ageMins}m — may be blocked on a question`
@@ -278,7 +288,9 @@ export function computeFleet(mcdDir: string | undefined): FleetResponse {
     const result: FleetProject = { slug, state, ageMins, stuckThresholdMinutes }
     if (monthlyTokenBudget != null) {
       result.monthlyTokenBudget = monthlyTokenBudget
-      result.monthlyTokensUsed = computeMonthlyTokensUsed(slug, mcdDir)
+      const used = computeMonthlyTokensUsed(slug, mcdDir)
+      result.monthlyTokensUsed = used
+      result.budgetStatus = computeBudgetStatus(used, monthlyTokenBudget)
     }
     // Add circuit state (auto-expire after 10 min)
     const circuit = circuitState[chatId]

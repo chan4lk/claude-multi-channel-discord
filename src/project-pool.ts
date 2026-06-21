@@ -1,3 +1,6 @@
+import * as fs from 'fs'
+import * as path from 'path'
+import * as os from 'os'
 import type { ChannelsConfig, Project } from './channels-config.ts'
 import type { InboundEnvelope, OutboundReply, ProjectProcess, ToolProgressEvent } from './project-process.ts'
 
@@ -12,6 +15,9 @@ export type PoolEvent =
   | { kind: 'respawn-scheduled'; chatId: string; slug: string; backoffMs: number; attempt: number }
   | { kind: 'circuit-open'; chatId: string; slug: string; failureCount: number }
   | { kind: 'circuit-reset'; chatId: string; slug: string }
+  | { kind: 'budget-exhausted'; chatId: string; slug: string; used: number; budget: number; queuedCount: number }
+  | { kind: 'budget-alert'; chatId: string; slug: string; threshold: 50 | 80 | 100; used: number; budget: number }
+  | { kind: 'budget-restored'; chatId: string; slug: string; drained: number }
 
 interface FailureLedger {
   count: number
@@ -54,7 +60,18 @@ export class ProjectPool {
    */
   private readonly recentMessages = new Map<string, Map<string, number>>()
   private readonly failureLedger = new Map<string, FailureLedger>()
+  /** Messages queued while a project's budget is exhausted. Drained on month reset. */
+  private readonly budgetQueue = new Map<string, InboundEnvelope[]>()
+  /** Tracks which budget thresholds (50/80/100) have fired per chat per month. */
+  private readonly budgetAlertFired = new Map<string, Set<50 | 80 | 100>>()
+  /** Last UTC year-month string seen, for detecting month rollovers. */
+  private lastYearMonth = ProjectPool.currentYearMonth()
   private static readonly MSG_DEDUP_TTL_MS = 60_000
+
+  private static currentYearMonth(): string {
+    const now = new Date()
+    return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`
+  }
 
   /**
    * If a chat has received messages we've delivered (`lastActivityMs`)
@@ -90,6 +107,9 @@ export class ProjectPool {
 
   /** Push a Discord message to the right project process. */
   async deliver(chatId: string, envelope: InboundEnvelope): Promise<void> {
+    // Check for month rollover — drain queues and reset alert state on month boundary.
+    this.checkMonthRollover()
+
     const config = this.opts.getConfig()
     const project = config.projects[chatId]
     if (!project) {
@@ -115,6 +135,21 @@ export class ProjectPool {
       return
     }
 
+    // Budget enforcement: check thresholds and queue at exhaustion.
+    if (project.monthlyTokenBudget != null) {
+      const used = this.computeMonthlyTokensUsed(project.slug, config)
+      const budget = project.monthlyTokenBudget
+      this.checkBudgetThresholds(chatId, project.slug, used, budget)
+      if (used >= budget) {
+        const queue = this.budgetQueue.get(chatId) ?? []
+        queue.push(envelope)
+        this.budgetQueue.set(chatId, queue)
+        process.stderr.write(`pool: budget exhausted for ${project.slug}, queued msg (queue=${queue.length})\n`)
+        this.fireEvent({ kind: 'budget-exhausted', chatId, slug: project.slug, used, budget, queuedCount: queue.length })
+        return
+      }
+    }
+
     const existing = this.processes.get(chatId)
     let proc: ProjectProcess
     if (existing && existing.isAlive()) {
@@ -126,6 +161,86 @@ export class ProjectPool {
     }
 
     await proc.deliver(envelope)
+  }
+
+  /** Check budget thresholds (50/80/100%) and fire events on first crossing per month. */
+  private checkBudgetThresholds(chatId: string, slug: string, used: number, budget: number): void {
+    const pct = (used / budget) * 100
+    let fired = this.budgetAlertFired.get(chatId)
+    if (!fired) { fired = new Set(); this.budgetAlertFired.set(chatId, fired) }
+    for (const threshold of [50, 80, 100] as const) {
+      if (pct >= threshold && !fired.has(threshold)) {
+        fired.add(threshold)
+        this.fireEvent({ kind: 'budget-alert', chatId, slug, threshold, used, budget })
+      }
+    }
+  }
+
+  /** Detect UTC month rollover; on rollover, drain queued messages and reset alert state. */
+  private checkMonthRollover(): void {
+    const currentYM = ProjectPool.currentYearMonth()
+    if (currentYM === this.lastYearMonth) return
+    this.lastYearMonth = currentYM
+    // Reset alert fired state — new month, new thresholds.
+    this.budgetAlertFired.clear()
+    // Drain all queued messages from the previous month.
+    void this.drainBudgetQueues()
+  }
+
+  /** Drain all budget queues (called on month rollover). */
+  async drainBudgetQueues(): Promise<void> {
+    for (const [chatId, queue] of this.budgetQueue) {
+      if (queue.length === 0) continue
+      const config = this.opts.getConfig()
+      const project = config.projects[chatId]
+      if (!project) { this.budgetQueue.delete(chatId); continue }
+      const drained = queue.length
+      this.budgetQueue.delete(chatId)
+      this.fireEvent({ kind: 'budget-restored', chatId, slug: project.slug, drained })
+      for (const envelope of queue) {
+        await this.deliver(chatId, envelope)
+      }
+    }
+  }
+
+  /** Return queued message count for a chat (for dashboard display). */
+  getBudgetQueuedCount(chatId: string): number {
+    return this.budgetQueue.get(chatId)?.length ?? 0
+  }
+
+  private computeMonthlyTokensUsed(slug: string, _config: ChannelsConfig): number {
+    const mcdDir = process.env.MCD_CHANNELS_DIR
+    if (!mcdDir) return 0
+    const now = new Date()
+    const currentYearMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`
+    const projectPath = path.join(mcdDir, 'projects', slug)
+    let realPath = projectPath
+    try { realPath = fs.realpathSync(projectPath) } catch { return 0 }
+    const encoded = realPath.replace(/[^a-zA-Z0-9]/g, '-')
+    const transcriptDir = path.join(os.homedir(), '.claude', 'projects', encoded)
+    let files: string[] = []
+    try {
+      files = fs.readdirSync(transcriptDir)
+        .filter((f) => f.endsWith('.jsonl'))
+        .map((f) => path.join(transcriptDir, f))
+    } catch { return 0 }
+    let total = 0
+    for (const file of files) {
+      let raw = ''
+      try { raw = fs.readFileSync(file, 'utf-8') } catch { continue }
+      for (const line of raw.trim().split('\n').filter(Boolean)) {
+        let rec: Record<string, unknown>
+        try { rec = JSON.parse(line) } catch { continue }
+        if (rec.type !== 'assistant') continue
+        const ts = typeof rec.timestamp === 'string' ? rec.timestamp : null
+        if (!ts) continue
+        const recYearMonth = ts.slice(0, 7)
+        if (recYearMonth !== currentYearMonth) continue
+        const usage = (rec as { message?: { usage?: { input_tokens?: number; output_tokens?: number } } }).message?.usage
+        total += (usage?.input_tokens ?? 0) + (usage?.output_tokens ?? 0)
+      }
+    }
+    return total
   }
 
   /**

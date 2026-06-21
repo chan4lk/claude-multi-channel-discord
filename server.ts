@@ -1339,6 +1339,30 @@ async function maybeInitProjectsBackend(): Promise<void> {
         mcEmit('circuit_reset', { slug: evt.slug, chatId: evt.chatId })
         writeCircuitState(evt.chatId, evt.slug, false)
       }
+      if (evt.kind === 'budget-alert') {
+        const emoji = evt.threshold === 100 ? '🚫' : evt.threshold === 80 ? '🔶' : '🟡'
+        const masterChatId = loadChannelsConfig().master?.chatId ?? evt.chatId
+        const notice: OutboundReply = {
+          kind: 'text',
+          chatId: masterChatId,
+          text: `${emoji} \`${evt.slug}\`: monthly token budget at ${evt.threshold}% ` +
+            `(${evt.used.toLocaleString()} / ${evt.budget.toLocaleString()} tokens).` +
+            (evt.threshold === 100 ? ' New messages queued until next month.' : ''),
+        }
+        routeNotification(loadChannelsConfig(), notice, `budget-alert-${evt.threshold}`)
+      }
+      if (evt.kind === 'budget-restored') {
+        const masterChatId = loadChannelsConfig().master?.chatId ?? evt.chatId
+        const notice: OutboundReply = {
+          kind: 'text',
+          chatId: masterChatId,
+          text: `✅ \`${evt.slug}\`: budget reset for new month — draining ${evt.drained} queued message(s).`,
+        }
+        routeNotification(loadChannelsConfig(), notice, 'budget-restored')
+      }
+      if (evt.kind === 'budget-exhausted') {
+        process.stderr.write(`pool: budget-exhausted for ${evt.slug}, queue=${evt.queuedCount}\n`)
+      }
       if (evt.kind === 'tool-progress') {
         void handleToolProgressEvent(evt.chatId, evt.slug, evt.event).catch((err) => {
           process.stderr.write(`discord: tool-progress dispatch failed: ${err}\n`)
