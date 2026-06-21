@@ -1240,7 +1240,7 @@ Add a collapsible "Advisor" panel to the dashboard (bottom-right corner, togglea
 
 ## P53 — Proposal-to-Impact Traceability Matrix
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
@@ -1288,7 +1288,7 @@ Add a "Thought Stream" overlay mode to the Project Graph (toggle button in graph
 
 ## P55 — Autonomous Weekly Fleet Report
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
