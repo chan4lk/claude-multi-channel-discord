@@ -209,6 +209,24 @@ export default function CommandPalette({ onInject }: Props) {
         category: 'navigate',
         action: () => router.push('/knowledge'),
       },
+      {
+        id: 'nav:advisor',
+        label: 'Toggle Fleet Advisor',
+        description: 'Open the proactive fleet intelligence panel (A)',
+        icon: '⚡',
+        category: 'navigate',
+        action: () => {
+          window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }))
+        },
+      },
+      {
+        id: 'nav:reports',
+        label: 'Go to Weekly Report',
+        description: 'Autonomous fleet performance digest',
+        icon: '◉',
+        category: 'navigate',
+        action: () => router.push('/reports'),
+      },
     ]
 
     const projects: Command[] = (fleet?.projects ?? []).flatMap((p) => [

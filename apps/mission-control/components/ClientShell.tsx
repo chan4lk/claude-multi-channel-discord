@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import CommandPalette, { type InjectRequest } from './CommandPalette'
 import InjectTerminal from './InjectTerminal'
+import FleetAdvisorPanel from './FleetAdvisorPanel'
 import { FleetContextProvider } from './FleetContext'
 
 interface InjectState {
@@ -31,6 +32,7 @@ export default function ClientShell({ children }: { children: React.ReactNode })
     <FleetContextProvider>
       {children}
       <CommandPalette onInject={handleInject} />
+      <FleetAdvisorPanel />
       <AnimatePresence>
         {injectState !== null && (
           <InjectTerminal
