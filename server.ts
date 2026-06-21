@@ -1286,6 +1286,18 @@ async function maybeInitProjectsBackend(): Promise<void> {
       if (evt.kind !== 'tool-progress') {
         process.stderr.write(`pool: ${JSON.stringify(evt)}\n`)
       }
+      if (evt.kind === 'tool-progress') {
+        const tp = evt.event
+        mcEmit('tool_progress', {
+          slug: evt.slug,
+          chatId: evt.chatId,
+          phase: tp.phase,
+          toolName: tp.toolName,
+          toolId: tp.toolId,
+          ...(tp.phase === 'start' ? { inputSummary: tp.inputSummary } : {}),
+          ...(tp.phase === 'done' ? { durationMs: tp.durationMs, isError: tp.isError } : {}),
+        })
+      }
       // Surface stuck-watchdog kills to Discord. The user otherwise sees
       // their channel go silent for hours after the first hung turn —
       // tell them the agent was torn down so the next message respawns.
