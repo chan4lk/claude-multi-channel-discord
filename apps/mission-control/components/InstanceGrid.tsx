@@ -335,6 +335,19 @@ export default function InstanceGrid({ events = [], filterSlugs = null, fleetPro
                           })()}
                           </div>
                           <SlugAnnotation slug={slug} />
+                          {(() => {
+                            const fp = fleetProjects.find((p) => p.slug === slug)
+                            if (!fp?.goalText) return null
+                            return (
+                              <span
+                                className="text-[0.55rem] font-mono px-1.5 py-0.5 rounded mt-0.5 truncate max-w-[140px]"
+                                style={{ color: '#a78bfa', background: '#a78bfa15', border: '1px solid #a78bfa30' }}
+                                title={`Goal: ${fp.goalText}`}
+                              >
+                                🎯 {fp.goalText.slice(0, 40)}{fp.goalText.length > 40 ? '…' : ''}
+                              </span>
+                            )
+                          })()}
                         </div>
                       ))}
                       {inst.activeSlugs.length > 3 && (
