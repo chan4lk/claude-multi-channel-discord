@@ -22,6 +22,7 @@ export interface FleetProject {
   monthlyTokenBudget?: number
   monthlyTokensUsed?: number
   budgetStatus?: BudgetStatus
+  queuedCount?: number
   circuitOpen?: boolean
   contextUsagePct?: number
   goalText?: string
@@ -143,9 +144,18 @@ function readMemoryStatus(slug: string, mcdDir: string): MemoryStatus {
 function readGoal(slug: string, mcdDir: string): { goalText: string; goalStatus: GoalStatus } | null {
   const goalPath = path.join(mcdDir, 'projects', slug, 'GOAL.md')
   try {
-    const text = fs.readFileSync(goalPath, 'utf-8').trim()
-    if (!text) return null
-    return { goalText: text.slice(0, 200), goalStatus: 'active' }
+    const raw = fs.readFileSync(goalPath, 'utf-8').trim()
+    if (!raw) return null
+    const match = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/)
+    if (match) {
+      const frontmatter = match[1]
+      const body = match[2].trim()
+      const statusMatch = frontmatter.match(/^status:\s*(\w+)$/m)
+      const status = statusMatch?.[1] as GoalStatus | undefined
+      const goalStatus: GoalStatus = (status === 'paused' || status === 'completed') ? status : 'active'
+      return { goalText: (body || raw).slice(0, 200), goalStatus }
+    }
+    return { goalText: raw.slice(0, 200), goalStatus: 'active' }
   } catch {
     return null
   }
@@ -190,6 +200,7 @@ function classifyState(
   scheduledSlugs: Set<string>,
   stuckThresholdMinutes: number,
   circuitState: Record<string, { circuitOpen: boolean; slug: string; ts: string }>,
+  budgetQueueState: Record<string, { slug: string; count: number; updatedAt: string }>,
   monthlyTokenBudget?: number
 ): FleetProject {
   const mtime = getTranscriptMtime(slug, mcdDir)
@@ -216,6 +227,10 @@ function classifyState(
     result.monthlyTokensUsed = used
     const pct = used / monthlyTokenBudget
     result.budgetStatus = pct >= 1 ? 'exhausted' : pct >= 0.8 ? 'critical' : pct >= 0.5 ? 'warning' : 'ok'
+    if (result.budgetStatus === 'exhausted') {
+      const qe = budgetQueueState[chatId]
+      if (qe && qe.count > 0) result.queuedCount = qe.count
+    }
   }
 
   // Add circuit state (auto-expire after 10 min)
@@ -285,8 +300,12 @@ export async function GET(): Promise<Response> {
     path.join(mcdDir, 'circuit-state.json')
   ) ?? {}
 
+  const budgetQueueState = readJson<Record<string, { slug: string; count: number; updatedAt: string }>>(
+    path.join(mcdDir, 'budget-queue-state.json')
+  ) ?? {}
+
   const projects: FleetProject[] = projectEntries.map(({ chatId, slug, stuckThresholdMinutes, monthlyTokenBudget }) =>
-    classifyState(chatId, slug, mcdDir, scheduledSlugs, stuckThresholdMinutes, circuitState, monthlyTokenBudget)
+    classifyState(chatId, slug, mcdDir, scheduledSlugs, stuckThresholdMinutes, circuitState, budgetQueueState, monthlyTokenBudget)
   )
 
   const counts = { idle: 0, active: 0, stalled: 0, autonomous: 0 }

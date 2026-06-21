@@ -340,6 +340,127 @@ function SlugAnnotation({ slug }: { slug: string }) {
   )
 }
 
+const GOAL_STATUS_COLORS: Record<string, string> = {
+  active: '#a78bfa',
+  paused: '#94a3b8',
+  completed: '#4ADE80',
+}
+
+type GoalStatus = 'active' | 'paused' | 'completed'
+
+function GoalChip({ slug, initialText, initialStatus }: { slug: string; initialText?: string; initialStatus?: GoalStatus }) {
+  const [goalText, setGoalText] = useState<string | null>(initialText ?? null)
+  const [goalStatus, setGoalStatus] = useState<GoalStatus>(initialStatus ?? 'active')
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [draftStatus, setDraftStatus] = useState<GoalStatus>('active')
+
+  useEffect(() => {
+    fetch(`/api/projects/${encodeURIComponent(slug)}/goal`)
+      .then((r) => r.json())
+      .then((d: { goalText: string | null; goalStatus: GoalStatus | null }) => {
+        setGoalText(d.goalText ?? null)
+        setGoalStatus(d.goalStatus ?? 'active')
+      })
+      .catch(() => {})
+  }, [slug])
+
+  const save = useCallback(async () => {
+    const trimmed = draft.trim()
+    if (!trimmed) {
+      await fetch(`/api/projects/${encodeURIComponent(slug)}/goal`, { method: 'DELETE' })
+      setGoalText(null)
+    } else {
+      await fetch(`/api/projects/${encodeURIComponent(slug)}/goal`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: trimmed, status: draftStatus }),
+      })
+      setGoalText(trimmed)
+      setGoalStatus(draftStatus)
+    }
+    setEditing(false)
+  }, [slug, draft, draftStatus])
+
+  const openEditor = useCallback(() => {
+    setDraft(goalText ?? '')
+    setDraftStatus(goalStatus)
+    setEditing(true)
+  }, [goalText, goalStatus])
+
+  if (editing) {
+    const statuses: GoalStatus[] = ['active', 'paused', 'completed']
+    return (
+      <div className="mt-0.5 flex flex-col gap-1">
+        <textarea
+          autoFocus
+          className="w-full text-[0.6rem] font-mono bg-slate-900/80 border border-purple-500/30 rounded px-2 py-1 text-slate-300 resize-none outline-none focus:border-purple-500/60"
+          rows={2}
+          maxLength={500}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void save() }
+            if (e.key === 'Escape') { setEditing(false) }
+          }}
+          placeholder="Goal… (Enter=save, blank=delete)"
+        />
+        <div className="flex items-center gap-1">
+          {statuses.map((s) => (
+            <button
+              key={s}
+              onClick={() => setDraftStatus(s)}
+              className="text-[0.5rem] font-mono px-1.5 py-0.5 rounded transition-colors"
+              style={draftStatus === s
+                ? { color: GOAL_STATUS_COLORS[s], background: `${GOAL_STATUS_COLORS[s]}20`, border: `1px solid ${GOAL_STATUS_COLORS[s]}60` }
+                : { color: '#64748b', background: 'transparent', border: '1px solid #64748b40' }
+              }
+            >
+              {s}
+            </button>
+          ))}
+          <button
+            onClick={() => void save()}
+            className="text-[0.5rem] font-mono px-1.5 py-0.5 rounded ml-auto transition-colors"
+            style={{ color: '#4ADE80', background: '#4ADE8015', border: '1px solid #4ADE8040' }}
+          >
+            save
+          </button>
+          <button
+            onClick={() => setEditing(false)}
+            className="text-[0.5rem] font-mono text-slate-600 hover:text-slate-400 px-1 transition-colors"
+          >
+            esc
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  const color = GOAL_STATUS_COLORS[goalStatus] ?? GOAL_STATUS_COLORS.active
+
+  return (
+    <div className="flex items-center gap-1 mt-0.5">
+      {goalText && (
+        <span
+          className="text-[0.55rem] font-mono px-1.5 py-0.5 rounded truncate max-w-[120px]"
+          style={{ color, background: `${color}15`, border: `1px solid ${color}30` }}
+          title={`Goal (${goalStatus}): ${goalText}`}
+        >
+          🎯 {goalText.slice(0, 35)}{goalText.length > 35 ? '…' : ''}
+        </span>
+      )}
+      <button
+        onClick={openEditor}
+        className="text-[0.55rem] text-slate-600 hover:text-cyber-cyan transition-colors shrink-0"
+        title={goalText ? 'Edit goal' : 'Add goal'}
+      >
+        {goalText ? '✎' : '🎯'}
+      </button>
+    </div>
+  )
+}
+
 export default function InstanceGrid({ events = [], filterSlugs = null, fleetProjects = [] }: Props) {
   const [instances, setInstances] = useState<InstanceEntry[]>([])
   const [loading, setLoading] = useState(true)
@@ -448,23 +569,34 @@ export default function InstanceGrid({ events = [], filterSlugs = null, fleetPro
                               : bs === 'warning' ? 'Budget warning (≥50%)'
                               : `Inject into ${slug}`
                             return (
-                              <button
-                                title={budgetTitle + ' (Ctrl+click: audit log)'}
-                                onClick={(e) => {
-                                  if (e.ctrlKey || e.metaKey) {
-                                    window.open(`/audit?slug=${encodeURIComponent(slug)}`, '_blank')
-                                  } else {
-                                    window.dispatchEvent(new CustomEvent('mc:inject', { detail: { slug } }))
+                              <>
+                                <button
+                                  title={budgetTitle + ' (Ctrl+click: audit log)'}
+                                  onClick={(e) => {
+                                    if (e.ctrlKey || e.metaKey) {
+                                      window.open(`/audit?slug=${encodeURIComponent(slug)}`, '_blank')
+                                    } else {
+                                      window.dispatchEvent(new CustomEvent('mc:inject', { detail: { slug } }))
+                                    }
+                                  }}
+                                  className="text-[10px] font-mono px-1.5 py-0.5 rounded transition-colors cursor-pointer"
+                                  style={budgetColor
+                                    ? { color: budgetColor, background: `${budgetColor}20`, border: `1px solid ${budgetColor}50` }
+                                    : { color: 'rgb(103 232 249 / 0.7)', background: 'rgb(103 232 249 / 0.1)', border: '1px solid rgb(103 232 249 / 0.2)' }
                                   }
-                                }}
-                                className="text-[10px] font-mono px-1.5 py-0.5 rounded transition-colors cursor-pointer"
-                                style={budgetColor
-                                  ? { color: budgetColor, background: `${budgetColor}20`, border: `1px solid ${budgetColor}50` }
-                                  : { color: 'rgb(103 232 249 / 0.7)', background: 'rgb(103 232 249 / 0.1)', border: '1px solid rgb(103 232 249 / 0.2)' }
-                                }
-                              >
-                                {slug} ⟳
-                              </button>
+                                >
+                                  {slug} ⟳
+                                </button>
+                                {fp?.queuedCount != null && fp.queuedCount > 0 && (
+                                  <span
+                                    className="text-[0.55rem] font-mono px-1 py-0.5 rounded shrink-0"
+                                    style={{ color: '#94a3b8', background: '#94a3b820', border: '1px solid #94a3b840' }}
+                                    title={`${fp.queuedCount} message(s) queued for next month`}
+                                  >
+                                    ⏳{fp.queuedCount}
+                                  </span>
+                                )}
+                              </>
                             )
                           })()}
                           {fleetProjects.length > 0 && (
@@ -508,15 +640,12 @@ export default function InstanceGrid({ events = [], filterSlugs = null, fleetPro
                           <SlugAnnotation slug={slug} />
                           {(() => {
                             const fp = fleetProjects.find((p) => p.slug === slug)
-                            if (!fp?.goalText) return null
                             return (
-                              <span
-                                className="text-[0.55rem] font-mono px-1.5 py-0.5 rounded mt-0.5 truncate max-w-[140px]"
-                                style={{ color: '#a78bfa', background: '#a78bfa15', border: '1px solid #a78bfa30' }}
-                                title={`Goal: ${fp.goalText}`}
-                              >
-                                🎯 {fp.goalText.slice(0, 40)}{fp.goalText.length > 40 ? '…' : ''}
-                              </span>
+                              <GoalChip
+                                slug={slug}
+                                initialText={fp?.goalText}
+                                initialStatus={fp?.goalStatus as GoalStatus | undefined}
+                              />
                             )
                           })()}
                         </div>
