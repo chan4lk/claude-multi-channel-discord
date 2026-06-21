@@ -80,11 +80,11 @@ function LogoutButton() {
     <button
       onClick={handleLogout}
       disabled={loading}
-      className="fixed top-3 right-4 z-50 text-[0.6rem] font-mono px-2.5 py-1 rounded border border-slate-700 text-slate-500 hover:text-red-400 hover:border-red-500/40 transition-colors disabled:opacity-40"
+      className="fixed bottom-16 sm:bottom-4 right-4 z-50 text-[0.6rem] font-mono px-2 py-1 rounded border border-slate-700/60 text-slate-600 hover:text-red-400 hover:border-red-500/40 transition-colors disabled:opacity-40"
       style={{ background: 'rgba(4,10,20,0.85)', backdropFilter: 'blur(4px)' }}
       title="Sign out"
     >
-      {loading ? '…' : '⏻ logout'}
+      {loading ? '…' : '⏻'}
     </button>
   )
 }

@@ -174,9 +174,14 @@ export default function MemoryPanel() {
       {loading ? (
         <div className="text-xs text-slate-600 font-mono py-6 text-center">loading…</div>
       ) : records.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-10 gap-2">
+        <div className="flex flex-col items-center justify-center py-10 gap-2 text-center">
           <div className="text-2xl opacity-30">✦</div>
           <p className="text-xs text-slate-600 font-mono">No memories yet</p>
+          <p className="text-[0.6rem] text-slate-700 font-mono max-w-xs leading-relaxed">
+            Memories are created automatically when an agent runs <span style={{ color: '#a78bfa' }}>memory distillation</span>.
+            Check that <code className="text-slate-500">memory.db</code> exists in <code className="text-slate-500">MCD_CHANNELS_DIR</code>,
+            or trigger distillation via Inject → <code className="text-slate-500">/memory distill</code>.
+          </p>
         </div>
       ) : (
         <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
