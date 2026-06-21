@@ -14,11 +14,12 @@ const STATE_COLOR: Record<string, string> = {
 }
 
 const PHASE_BADGE: Record<string, { label: string; color: string }> = {
-  propose: { label: 'PROPOSE', color: '#F59E0B' },
-  plan:    { label: 'PLAN',    color: '#3B82F6' },
-  build:   { label: 'BUILD',   color: '#F97316' },
-  verify:  { label: 'VERIFY',  color: '#A78BFA' },
-  pr:      { label: 'PR',      color: '#4ADE80' },
+  propose:   { label: 'PROPOSE',   color: '#F59E0B' },
+  plan:      { label: 'PLAN',      color: '#3B82F6' },
+  build:     { label: 'BUILD',     color: '#F97316' },
+  verify:    { label: 'VERIFY',    color: '#A78BFA' },
+  pr:        { label: 'PR',        color: '#4ADE80' },
+  completed: { label: 'COMPLETED', color: '#22D3EE' },
 }
 
 function fmtDate(iso: string | null): string {

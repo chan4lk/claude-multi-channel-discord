@@ -42,12 +42,13 @@ const PRESETS = [
 
 type Tab = 'send' | 'history'
 
-function BroadcastHistoryTab() {
+function BroadcastHistoryTab({ onResend }: { onResend: (message: string, targets: string[]) => void }) {
   const [items, setItems] = useState<BroadcastHistoryItem[]>([])
   const [loading, setLoading] = useState(true)
   const [nextCursor, setNextCursor] = useState<number | null>(null)
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
   const [deleting, setDeleting] = useState<Set<number>>(new Set())
+  const [clearing, setClearing] = useState(false)
 
   const loadHistory = useCallback((cursor?: number) => {
     const url = cursor ? `/api/broadcast/history?cursor=${cursor}` : '/api/broadcast/history'
@@ -82,6 +83,17 @@ function BroadcastHistoryTab() {
     }
   }
 
+  async function handleClearAll() {
+    setClearing(true)
+    try {
+      await fetch('/api/broadcast/history?all=1', { method: 'DELETE' })
+      setItems([])
+      setNextCursor(null)
+    } finally {
+      setClearing(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-48 text-xs font-mono text-slate-600 animate-pulse">
@@ -101,6 +113,15 @@ function BroadcastHistoryTab() {
 
   return (
     <div className="flex flex-col gap-2">
+      <div className="flex justify-end mb-1">
+        <button
+          onClick={() => void handleClearAll()}
+          disabled={clearing}
+          className="text-[0.6rem] font-mono px-2 py-1 rounded border border-red-500/20 text-slate-600 hover:text-red-400 hover:border-red-500/40 transition-colors disabled:opacity-40"
+        >
+          {clearing ? 'Clearing…' : 'Clear history'}
+        </button>
+      </div>
       {items.map((item) => {
         const isExpanded = expanded.has(item.id)
         const isDeleting = deleting.has(item.id)
@@ -134,6 +155,13 @@ function BroadcastHistoryTab() {
                 <span className="text-[0.6rem] font-mono text-slate-600">{item.targets.length} targets</span>
               </div>
               <button
+                onClick={(e) => { e.stopPropagation(); onResend(item.message, item.targets) }}
+                className="text-[0.6rem] font-mono text-slate-600 hover:text-cyber-cyan transition-colors px-1.5 py-0.5 rounded border border-transparent hover:border-cyber-cyan/30"
+                title="Re-send"
+              >
+                ↺
+              </button>
+              <button
                 onClick={(e) => { e.stopPropagation(); void handleDelete(item.id) }}
                 disabled={isDeleting}
                 className="text-[0.6rem] font-mono text-slate-700 hover:text-red-400 transition-colors disabled:opacity-40 px-1"
@@ -151,21 +179,30 @@ function BroadcastHistoryTab() {
                     {item.message}
                   </pre>
                 </div>
-                <div>
-                  <p className="text-[0.55rem] font-mono text-slate-600 uppercase tracking-wider mb-1">
-                    Targets ({item.targets.length})
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {item.targets.map((slug) => (
-                      <span
-                        key={slug}
-                        className="text-[0.6rem] font-mono px-1.5 py-0.5 rounded"
-                        style={{ border: '1px solid rgba(0,245,255,0.2)', color: '#00F5FF', background: 'rgba(0,245,255,0.06)' }}
-                      >
-                        {slug}
-                      </span>
-                    ))}
+                <div className="flex items-center gap-3">
+                  <div className="flex-1">
+                    <p className="text-[0.55rem] font-mono text-slate-600 uppercase tracking-wider mb-1">
+                      Targets ({item.targets.length})
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {item.targets.map((slug) => (
+                        <span
+                          key={slug}
+                          className="text-[0.6rem] font-mono px-1.5 py-0.5 rounded"
+                          style={{ border: '1px solid rgba(0,245,255,0.2)', color: '#00F5FF', background: 'rgba(0,245,255,0.06)' }}
+                        >
+                          {slug}
+                        </span>
+                      ))}
+                    </div>
                   </div>
+                  <button
+                    onClick={() => onResend(item.message, item.targets)}
+                    className="text-[0.6rem] font-mono px-2.5 py-1.5 rounded border transition-colors shrink-0"
+                    style={{ borderColor: 'rgba(0,245,255,0.25)', color: '#00F5FF', background: 'rgba(0,245,255,0.06)' }}
+                  >
+                    ↺ Re-send
+                  </button>
                 </div>
               </div>
             )}
@@ -255,6 +292,18 @@ export default function BroadcastPage() {
     } else {
       void sendBroadcast()
     }
+  }
+
+  function handleResend(resendMessage: string, targets: string[]) {
+    setMessage(resendMessage)
+    if (fleet) {
+      const validSlugs = new Set(fleet.projects.map((p) => p.slug))
+      setSelected(new Set(targets.filter((s) => validSlugs.has(s))))
+    } else {
+      setSelected(new Set(targets))
+    }
+    setTab('send')
+    setTimeout(() => textareaRef.current?.focus(), 50)
   }
 
   const canSend = selected.size > 0 && message.trim().length > 0 && !sending
@@ -439,7 +488,7 @@ export default function BroadcastPage() {
             <h2 className="text-xs font-mono text-slate-400 uppercase tracking-wider">Broadcast History</h2>
             <span className="text-[0.55rem] font-mono text-slate-600">Most recent first · click to expand</span>
           </div>
-          <BroadcastHistoryTab />
+          <BroadcastHistoryTab onResend={handleResend} />
         </main>
       )}
 

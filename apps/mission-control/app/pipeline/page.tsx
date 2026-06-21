@@ -7,7 +7,7 @@ import GlassCard from '../../components/ui/GlassCard'
 import type { PipelineCard, PipelineStage } from '../api/pipeline/route'
 import type { ImpactStats } from '../api/pipeline/impact/[slug]/[changeName]/route'
 
-const STAGES: PipelineStage[] = ['propose', 'plan', 'build', 'verify', 'pr']
+const STAGES: PipelineStage[] = ['propose', 'plan', 'build', 'verify', 'pr', 'completed']
 
 const STAGE_LABELS: Record<PipelineStage, string> = {
   propose: 'Propose',
@@ -15,6 +15,7 @@ const STAGE_LABELS: Record<PipelineStage, string> = {
   build: 'Build',
   verify: 'Verify',
   pr: 'PR',
+  completed: 'Done',
 }
 
 const STAGE_COLORS: Record<PipelineStage, string> = {
@@ -23,6 +24,7 @@ const STAGE_COLORS: Record<PipelineStage, string> = {
   build: '#F59E0B',
   verify: '#34D399',
   pr: '#4ADE80',
+  completed: '#22D3EE',
 }
 
 const STAGE_ICONS: Record<PipelineStage, string> = {
@@ -31,6 +33,7 @@ const STAGE_ICONS: Record<PipelineStage, string> = {
   build: '🔨',
   verify: '🔍',
   pr: '🔀',
+  completed: '✓',
 }
 
 function formatAge(ms: number): string {
@@ -46,7 +49,7 @@ interface DrawerProps {
   onClose: () => void
 }
 
-const DIFF_STAGES: PipelineStage[] = ['build', 'verify', 'pr']
+const DIFF_STAGES: PipelineStage[] = ['build', 'verify', 'pr', 'completed']
 
 interface DiffData {
   log: string

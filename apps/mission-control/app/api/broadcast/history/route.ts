@@ -25,8 +25,13 @@ export async function GET(req: NextRequest): Promise<Response> {
 
 export async function DELETE(req: NextRequest): Promise<Response> {
   const url = new URL(req.url)
+  if (url.searchParams.get('all') === '1') {
+    const rows = getBroadcastHistory(1000)
+    for (const r of rows) deleteBroadcast(r.id)
+    return Response.json({ ok: true, cleared: rows.length })
+  }
   const id = parseInt(url.searchParams.get('id') ?? '', 10)
-  if (!id || isNaN(id)) return Response.json({ error: 'id required' }, { status: 400 })
+  if (!id || isNaN(id)) return Response.json({ error: 'id or all=1 required' }, { status: 400 })
   deleteBroadcast(id)
   return Response.json({ ok: true })
 }
