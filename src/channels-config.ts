@@ -107,6 +107,8 @@ const ProjectSchema = z.object({
   voice: VoiceProjectConfigSchema.optional(),
   /** Run a session-distillation job after the project's claude process stops. */
   distillOnStop: z.boolean().optional(),
+  /** Monthly token budget for this project. null / omitted = unlimited. */
+  monthlyTokenBudget: z.number().int().positive().optional(),
   heartbeat: z.object({
     mode: z.enum(['supervised', 'autonomous']).default('supervised'),
     window: z.string().regex(/^\d{2}:\d{2}-\d{2}:\d{2}$/).optional(),

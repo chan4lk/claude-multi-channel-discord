@@ -933,7 +933,7 @@ Add a `GOAL.md` per project under `projects/<slug>/GOAL.md`. Operators set the g
 
 ## P40 — Token Budget Enforcement & Alerts
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem

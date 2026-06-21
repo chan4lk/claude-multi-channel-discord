@@ -294,13 +294,31 @@ export default function InstanceGrid({ events = [], filterSlugs = null, fleetPro
                       {inst.activeSlugs.slice(0, 3).map((slug) => (
                         <div key={slug} className="flex flex-col gap-0.5">
                           <div className="flex items-center gap-1">
-                          <button
-                            title={`Inject into ${slug}`}
-                            onClick={() => window.dispatchEvent(new CustomEvent('mc:inject', { detail: { slug } }))}
-                            className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyber-cyan/10 text-cyber-cyan/70 border border-cyber-cyan/20 hover:bg-cyber-cyan/20 hover:text-cyber-cyan transition-colors cursor-pointer"
-                          >
-                            {slug} ⟳
-                          </button>
+                          {(() => {
+                            const fp = fleetProjects.find((p) => p.slug === slug)
+                            const bs = fp?.budgetStatus
+                            const budgetColor = bs === 'exhausted' ? '#94a3b8'
+                              : bs === 'critical' ? '#EF4444'
+                              : bs === 'warning' ? '#F59E0B'
+                              : null
+                            const budgetTitle = bs === 'exhausted' ? 'Budget exhausted — messages queued'
+                              : bs === 'critical' ? 'Budget critical (≥80%)'
+                              : bs === 'warning' ? 'Budget warning (≥50%)'
+                              : `Inject into ${slug}`
+                            return (
+                              <button
+                                title={budgetTitle}
+                                onClick={() => window.dispatchEvent(new CustomEvent('mc:inject', { detail: { slug } }))}
+                                className="text-[10px] font-mono px-1.5 py-0.5 rounded transition-colors cursor-pointer"
+                                style={budgetColor
+                                  ? { color: budgetColor, background: `${budgetColor}20`, border: `1px solid ${budgetColor}50` }
+                                  : { color: 'rgb(103 232 249 / 0.7)', background: 'rgb(103 232 249 / 0.1)', border: '1px solid rgb(103 232 249 / 0.2)' }
+                                }
+                              >
+                                {slug} ⟳
+                              </button>
+                            )
+                          })()}
                           {fleetProjects.length > 0 && (
                             <WatchdogBadge slug={slug} fleetProjects={fleetProjects} />
                           )}

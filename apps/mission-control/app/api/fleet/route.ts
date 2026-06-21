@@ -6,6 +6,7 @@ export const dynamic = 'force-dynamic'
 
 export type ProjectState = 'idle' | 'active' | 'stalled' | 'autonomous'
 export type GoalStatus = 'active' | 'paused' | 'completed'
+export type BudgetStatus = 'ok' | 'warning' | 'critical' | 'exhausted'
 
 export interface FleetProject {
   slug: string
@@ -14,6 +15,7 @@ export interface FleetProject {
   stuckThresholdMinutes: number
   monthlyTokenBudget?: number
   monthlyTokensUsed?: number
+  budgetStatus?: BudgetStatus
   circuitOpen?: boolean
   contextUsagePct?: number
   goalText?: string
@@ -193,7 +195,10 @@ function classifyState(
 
   if (monthlyTokenBudget != null) {
     result.monthlyTokenBudget = monthlyTokenBudget
-    result.monthlyTokensUsed = computeMonthlyTokensUsed(slug, mcdDir)
+    const used = computeMonthlyTokensUsed(slug, mcdDir)
+    result.monthlyTokensUsed = used
+    const pct = used / monthlyTokenBudget
+    result.budgetStatus = pct >= 1 ? 'exhausted' : pct >= 0.8 ? 'critical' : pct >= 0.5 ? 'warning' : 'ok'
   }
 
   // Add circuit state (auto-expire after 10 min)
