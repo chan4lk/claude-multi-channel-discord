@@ -1427,3 +1427,126 @@ Expand the Impact Leaderboard to include all pipeline stages. Add a stage filter
 - AC4: Impact stats fetched in batches of 5 (not all-at-once)
 - AC5: Total row at bottom shows fleet-wide sums: commits, +lines, -lines, tool calls
 - AC6: Leaderboard updates on same 60s poll as pipeline page
+
+---
+
+## P61 — 3D Force-Graph View
+
+**Status:** `[x] done`
+**Created:** 2026-06-21
+
+### Problem
+
+The 2D Project Graph (P2) shows project relationships as a flat node-link diagram. With many projects, nodes overlap and edges become hard to trace. There is no spatial depth cue to help operators distinguish clusters of related projects from isolated ones.
+
+### Proposed Solution
+
+Add a `/graph3d` page that renders the fleet as a 3D force-directed graph using `react-force-graph-3d` (three.js underneath). Nodes are spheres colored by project state (cyan=idle, green=active, red=stalled, purple=autonomous). Edges represent cross-channel injection links. Camera orbits automatically; operators can drag to rotate, scroll to zoom, click a node for a floating info card. Node size scales with memory file size.
+
+### Acceptance Criteria
+
+- AC1: `/graph3d` page renders all fleet projects as 3D spheres
+- AC2: Node color matches fleet state (idle/active/stalled/autonomous)
+- AC3: Camera auto-orbits; drag to rotate, scroll to zoom
+- AC4: Click node opens floating info card (slug, state, last-seen)
+- AC5: Node size proportional to memory size
+- AC6: Nav link to `/graph3d` in navigation
+
+---
+
+## P62 — Dashboard Section Visibility Controls
+
+**Status:** `[x] done`
+**Created:** 2026-06-21
+
+### Problem
+
+The main dashboard has 8 sections: Instances, Stall Alerts, Transcript, Scheduler, Fleet Advisor, Event Feed, Specclaw Pipeline, and Memories. Operators focused on a single workflow (e.g., stall triage or schedule management) must scroll past irrelevant sections. There is no way to collapse or hide sections to declutter the view.
+
+### Proposed Solution
+
+Add a `⊞ Sections` icon button in the dashboard header (right side, before the SSE indicator). Clicking opens a compact popover listing all 8 dashboard sections with toggle switches. Toggling a section off animates it to zero height and removes it from layout flow (not just `visibility: hidden`). State persisted to `localStorage` under key `mc-dashboard-sections`. A pill badge `N hidden` appears in the header when any sections are off. All sections visible by default on first load.
+
+### Acceptance Criteria
+
+- AC1: Header has `⊞ Sections` button that opens/closes a popover
+- AC2: Popover lists all 8 sections with on/off toggles
+- AC3: Toggling off a section collapses it with a 200ms height animation; content unmounts
+- AC4: Visibility state persisted to `localStorage`; survives page refresh
+- AC5: `N hidden` pill badge visible in header when ≥1 section is hidden
+- AC6: All sections on by default for new visitors (no prior localStorage entry)
+
+---
+
+## P63 — Fleet State History Sparklines
+
+**Status:** `[x] done`
+**Created:** 2026-06-21
+
+### Problem
+
+The fleet header badges (Idle / Active / Stalled / Autonomous) show only the current point-in-time count. An operator seeing "3 Stalled" has no idea whether that number is rising, falling, or stable — critical context when deciding whether to intervene.
+
+### Proposed Solution
+
+Beneath each fleet state badge, render a 20-point micro-sparkline (40×16 px inline SVG) that records the badge's count every 30 seconds in a client-side ring buffer (max 20 samples = 10 minutes of history). Line color matches the state color. A rising stalled sparkline draws in red; a falling one in green. Ring buffer stored in a `useRef`; no server round-trips needed.
+
+### Acceptance Criteria
+
+- AC1: Each fleet badge (Idle/Active/Stalled/Autonomous) shows a 40×16 sparkline below the count
+- AC2: Sparkline sampled every 30s; buffer holds last 20 samples (10 min)
+- AC3: Stalled sparkline: green if last 3 points trend downward, red if upward, default color if flat
+- AC4: Sparklines render without layout overflow on ≥320px viewport
+- AC5: On first load, sparkline shows a single flat dot (only one sample yet)
+- AC6: Sparklines are purely client-side (no new API endpoints)
+
+---
+
+## P64 — Project Galaxy Map
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+Both the 2D Project Graph and 3D Force Graph lay out projects by connection topology. Projects with no cross-channel injection links appear as isolated floating nodes with no meaningful placement. There is no visualization that places ALL projects in a spatial context based on their intrinsic properties (activity, age, memory richness).
+
+### Proposed Solution
+
+Add a `/galaxy` page. Render projects as stars on a dark canvas using canvas2d or SVG. Position each project on a spiral-arm layout where: radial distance from center = days since last activity (recent projects near center), angular position = project creation order. Star size = memory file size (log scale). Star brightness/glow = current state (active=bright green, idle=dim cyan, stalled=red pulse, autonomous=purple nebula). Hovering a star shows a floating tooltip (slug, state, last-seen, memory size). Clicking navigates to `/projects/<slug>`. A legend panel in the bottom-left explains the encoding. Auto-animates with a slow rotation of the whole galaxy.
+
+### Acceptance Criteria
+
+- AC1: `/galaxy` page renders all fleet projects as stars on a dark canvas
+- AC2: Radial distance from center proportional to recency (recent = close to center)
+- AC3: Star size proportional to memory file size (log scale, min 4px, max 20px)
+- AC4: Star color/glow reflects fleet state (active=green, idle=cyan, stalled=red, autonomous=purple)
+- AC5: Hover shows tooltip with slug, state, last-seen, memory size
+- AC6: Click star navigates to `/projects/<slug>`
+- AC7: Legend panel in bottom-left explains size/color/position encoding
+- AC8: Canvas rotates slowly (1 full rotation per 120s); pauses on hover
+
+---
+
+## P65 — Holistic Project Feed
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+No single view shows the complete picture of each project in one place. To understand a project's current state, an operator must visit the Dashboard (instance state), `/projects/<slug>` (memory + transcript), `/pipeline` (specclaw stage), `/metrics` (turn counts), `/branches` (git branch), and `/goals` (current goal) — six pages for what should be a single glance.
+
+### Proposed Solution
+
+Add a `/feed` page: a vertically-scrolling "project cards" feed where each card shows everything about one project in a compact 200px-tall card: slug + platform badge, fleet state dot, current goal (first 80 chars), active specclaw change (stage badge), latest transcript snippet (last tool call), memory size, git branch, last-active timestamp, and quick-action buttons (Inject, Stop, Graph). Cards sorted by last-active descending. Filtered by a search bar (slug/goal text match) and a state filter row (All / Idle / Active / Stalled / Auto). Data fetched from existing `/api/fleet`, `/api/goals`, `/api/pipeline` endpoints in parallel; refreshes every 30s.
+
+### Acceptance Criteria
+
+- AC1: `/feed` page renders one card per project, sorted by last-active descending
+- AC2: Each card shows: slug, platform, state dot, goal snippet, specclaw stage, transcript snippet, memory size, git branch, last-active
+- AC3: Search bar filters cards by slug or goal text (client-side, real-time)
+- AC4: State filter row (All / Idle / Active / Stalled / Auto) filters cards
+- AC5: Quick-action buttons on each card: Inject (opens InjectTerminal), Graph (links `/graph?highlight=<slug>`), Stop (with confirmation)
+- AC6: Data refreshes every 30s; cards animate in on first load
+- AC7: Nav link to `/feed` added to NavDropdown
