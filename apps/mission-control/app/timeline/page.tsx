@@ -135,8 +135,15 @@ export default function TimelinePage() {
   const [tooltip, setTooltip] = useState<{ x: number; y: number; tick: Tick } | null>(null)
   const [heatHistory, setHeatHistory] = useState<HistoryResponse | null>(null)
   const [heatTooltip, setHeatTooltip] = useState<HeatTooltipState | null>(null)
+  const [slugFilter, setSlugFilter] = useState<string | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const esRef = useRef<EventSource | null>(null)
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const slug = params.get('slug')
+    if (slug) setSlugFilter(slug)
+  }, [])
 
   // Tick clock
   useEffect(() => {
@@ -205,7 +212,8 @@ export default function TimelinePage() {
   }
 
   // Also include slugs that had no events (would need project list — skip for now)
-  const lanes: Swimlane[] = [...laneMap.entries()].map(([slug, ticks]) => ({ slug, ticks }))
+  let lanes: Swimlane[] = [...laneMap.entries()].map(([slug, ticks]) => ({ slug, ticks }))
+  if (slugFilter) lanes = lanes.filter((l) => l.slug === slugFilter)
   lanes.sort((a, b) => {
     const aLast = Math.max(...a.ticks.map((t) => t.ts))
     const bLast = Math.max(...b.ticks.map((t) => t.ts))
@@ -227,6 +235,12 @@ export default function TimelinePage() {
           <h1 className="text-lg font-black tracking-[0.18em] text-cyber-cyan" style={{ fontFamily: 'Orbitron, JetBrains Mono, monospace' }}>
             TIMELINE
           </h1>
+          {slugFilter && (
+            <span className="flex items-center gap-1.5 text-[0.6rem] font-mono px-2 py-0.5 rounded border border-cyber-cyan/30 bg-cyber-cyan/8 text-cyber-cyan">
+              {slugFilter}
+              <button onClick={() => setSlugFilter(null)} className="text-cyber-cyan/60 hover:text-cyber-cyan">×</button>
+            </span>
+          )}
           <div className="flex-1" />
           <div className="flex rounded overflow-hidden border border-cyber-cyan/20">
             {WINDOW_OPTIONS.map((opt) => (

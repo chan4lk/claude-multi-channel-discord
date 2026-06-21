@@ -1360,7 +1360,7 @@ Add a collapsible "Advisor" tile to the main dashboard page, positioned below th
 
 ## P58 — Reports Page Sortable Table + Sparklines
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
@@ -1384,7 +1384,7 @@ Add client-side sort to every column header in the `/reports` per-project table 
 
 ## P59 — Cross-Page Deep Link: Graph → Metrics → Report
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem

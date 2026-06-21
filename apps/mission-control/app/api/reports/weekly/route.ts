@@ -16,6 +16,7 @@ export interface WeeklyProjectStats {
   prCount: number
   memoriesWritten: number
   impactScore: number
+  dailyTurns: number[]
 }
 
 export interface FleetWeeklyStats {
@@ -68,6 +69,7 @@ function analyzeJsonl(jsonlFiles: string[], weekStartMs: number, weekEndMs: numb
   toolCalls: number
   totalLatencyMs: number
   model: string
+  dailyTurns: number[]
 } {
   let turns = 0
   let inputTokens = 0
@@ -77,6 +79,7 @@ function analyzeJsonl(jsonlFiles: string[], weekStartMs: number, weekEndMs: numb
   let totalLatencyMs = 0
   let model = 'sonnet'
   let prevAssistantTs: number | null = null
+  const dayTurnCounts: number[] = [0, 0, 0, 0, 0, 0, 0]
 
   for (const file of jsonlFiles) {
     let raw = ''
@@ -91,6 +94,9 @@ function analyzeJsonl(jsonlFiles: string[], weekStartMs: number, weekEndMs: numb
 
       if (rec.type === 'assistant') {
         turns++
+        const dayIndex = Math.floor((ts - weekStartMs) / (24 * 60 * 60 * 1000))
+        if (dayIndex >= 0 && dayIndex < 7) dayTurnCounts[dayIndex]++
+
         if (typeof rec.costUSD === 'number' || rec.usage) {
           const usage = rec.usage as { input_tokens?: number; output_tokens?: number } | undefined
           if (usage?.input_tokens) inputTokens += usage.input_tokens
@@ -108,7 +114,6 @@ function analyzeJsonl(jsonlFiles: string[], weekStartMs: number, weekEndMs: numb
 
         const stopReason = (rec.message as { stop_reason?: string } | undefined)?.stop_reason
         if (stopReason === 'max_tokens' || stopReason === 'end_turn') {
-          // check for stall pattern — no tool calls in content
           const hasTools = (content as Array<{ type?: string }>).some((b) => b.type === 'tool_use')
           if (!hasTools && turns > 1) stalls++
         }
@@ -118,7 +123,7 @@ function analyzeJsonl(jsonlFiles: string[], weekStartMs: number, weekEndMs: numb
       }
     }
   }
-  return { turns, inputTokens, outputTokens, stalls, toolCalls, totalLatencyMs, model }
+  return { turns, inputTokens, outputTokens, stalls, toolCalls, totalLatencyMs, model, dailyTurns: dayTurnCounts }
 }
 
 function countPrs(realDir: string, weekStartIso: string): number {
@@ -190,7 +195,7 @@ export async function GET(): Promise<Response> {
         })
     } catch {}
 
-    const { turns, inputTokens, outputTokens, stalls, toolCalls, totalLatencyMs, model } =
+    const { turns, inputTokens, outputTokens, stalls, toolCalls, totalLatencyMs, model, dailyTurns } =
       analyzeJsonl(jsonlFiles, weekStartMs, nowMs)
 
     if (turns === 0 && inputTokens === 0) continue
@@ -216,6 +221,7 @@ export async function GET(): Promise<Response> {
       prCount,
       memoriesWritten,
       impactScore,
+      dailyTurns,
     })
   }
 
