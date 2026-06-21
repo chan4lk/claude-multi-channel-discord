@@ -7,6 +7,7 @@ interface CountBadgeProps {
   value: number
   label: string
   color?: string
+  className?: string
 }
 
 function AnimatedNumber({ value }: { value: number }) {
@@ -20,9 +21,9 @@ function AnimatedNumber({ value }: { value: number }) {
   return <motion.span>{display}</motion.span>
 }
 
-export default function CountBadge({ value, label, color = '#00F5FF' }: CountBadgeProps) {
+export default function CountBadge({ value, label, color = '#00F5FF', className }: CountBadgeProps) {
   return (
-    <div className="flex flex-col items-center gap-0.5">
+    <div className={`flex flex-col items-center gap-0.5${className ? ` ${className}` : ''}`}>
       <span className="text-xl font-bold font-mono" style={{ color }}>
         <AnimatedNumber value={value} />
       </span>
