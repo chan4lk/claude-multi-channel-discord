@@ -369,9 +369,9 @@ function DashboardClient() {
             </div>
           </div>
 
-          <div className="flex items-center gap-4 sm:gap-6 flex-wrap">
+          <div className="flex items-center gap-3 sm:gap-5 overflow-x-auto pb-0.5 sm:pb-0 shrink-0" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' } as React.CSSProperties}>
             {/* Fleet state badges with sparklines (P63) */}
-            <div className="flex items-center gap-3 sm:gap-5 border-r border-cyber-cyan/10 pr-4 sm:pr-6">
+            <div className="flex items-center gap-3 sm:gap-5 border-r border-cyber-cyan/10 pr-3 sm:pr-5 shrink-0">
               {FLEET_STATES.map((state) => (
                 <FleetBadge
                   key={state}
@@ -386,7 +386,7 @@ function DashboardClient() {
             {/* WhatsApp badge — only when configured */}
             {whatsapp?.enabled && (
               <div
-                className="flex flex-col items-center gap-0.5 cursor-pointer rounded px-1"
+                className="flex flex-col items-center gap-0.5 cursor-pointer rounded px-1 shrink-0"
                 title={`WhatsApp: ${whatsapp.status} · ${whatsapp.projectCount} project${whatsapp.projectCount !== 1 ? 's' : ''}`}
                 onClick={() => {
                   const url = new URL(window.location.href)
@@ -414,11 +414,11 @@ function DashboardClient() {
               </div>
             )}
             {/* MC instance counters */}
-            <CountBadge value={instances.length} label="Instances" color="#00F5FF" />
-            <CountBadge value={eventsPerMin} label="Events/min" color="#00F5FF" />
-            <CountBadge value={healthy} label="Healthy" color="#4ADE80" />
-            <CountBadge value={degraded} label="Degraded" color="#EF4444" />
-            <div className="flex flex-col items-center gap-0.5">
+            <CountBadge value={instances.length} label="Instances" color="#00F5FF" className="shrink-0" />
+            <CountBadge value={eventsPerMin} label="Events/min" color="#00F5FF" className="shrink-0 hidden sm:flex" />
+            <CountBadge value={healthy} label="Healthy" color="#4ADE80" className="shrink-0" />
+            <CountBadge value={degraded} label="Degraded" color="#EF4444" className="shrink-0" />
+            <div className="flex flex-col items-center gap-0.5 shrink-0">
               <span className="text-xl font-bold font-mono text-slate-400 tabular-nums">
                 {formatUptime(uptime)}
               </span>
@@ -427,14 +427,14 @@ function DashboardClient() {
             {/* Hidden sections badge (P62) */}
             {hiddenCount > 0 && (
               <span
-                className="text-[0.6rem] px-1.5 py-0.5 rounded border font-mono"
+                className="text-[0.6rem] px-1.5 py-0.5 rounded border font-mono shrink-0"
                 style={{ color: '#00F5FF', borderColor: 'rgba(0,245,255,0.3)', background: 'rgba(0,245,255,0.06)' }}
               >
                 {hiddenCount} hidden
               </span>
             )}
             {/* Sections toggle (P62) */}
-            <div className="relative">
+            <div className="relative shrink-0">
               <button
                 onClick={() => setSectionsOpen((v) => !v)}
                 className="flex flex-col items-center gap-0.5 cursor-pointer rounded px-1 transition-opacity"
@@ -454,7 +454,7 @@ function DashboardClient() {
               />
             </div>
             <div
-              className="flex flex-col items-center gap-0.5"
+              className="flex flex-col items-center gap-0.5 shrink-0"
               title={`SSE: ${sseStatus}`}
             >
               <span
