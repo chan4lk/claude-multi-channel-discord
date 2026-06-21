@@ -841,7 +841,7 @@ Add a per-project failure ledger (`failureCount`, `lastFailedAt`, `backoffUntil`
 
 ## P36 — Comprehensive Audit Trail
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
@@ -864,7 +864,7 @@ Add an `audit_log` table to `mc.db` with columns `(id INTEGER PK, ts INTEGER, ac
 
 ## P37 — Context Window Optimizer (Token Saver)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem

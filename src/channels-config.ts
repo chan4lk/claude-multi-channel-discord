@@ -102,6 +102,8 @@ const ProjectSchema = z.object({
    * Set higher for channels that run long pipelines (TTS, video rendering).
    */
   stuckThresholdMinutes: z.number().int().positive().optional(),
+  /** Inject a compression prompt when input tokens exceed this % of the model context (0–100). Default 80. */
+  contextWarningThresholdPct: z.number().int().min(1).max(100).optional(),
   voice: VoiceProjectConfigSchema.optional(),
   heartbeat: z.object({
     mode: z.enum(['supervised', 'autonomous']).default('supervised'),
@@ -161,6 +163,8 @@ const DefaultsSchema = z.object({
   provider: z.string().optional(),
   /** Global default for progressMode. Projects can override per-channel. */
   progressMode: ProgressModeSchema.default('off'),
+  /** Default context-warning threshold % (0–100). Default 80. */
+  contextWarningThresholdPct: z.number().int().min(1).max(100).default(80),
   memory: MemoryConfigSchema,
 })
 

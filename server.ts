@@ -1237,6 +1237,10 @@ async function maybeInitProjectsBackend(): Promise<void> {
         claudeArgs: resolveClaudeArgs(config, project),
         gitCredential: project.git?.credentials ?? config.defaults.git.credentials,
         ...(provider ? { provider } : {}),
+        contextWarningThresholdPct: project.contextWarningThresholdPct ?? config.defaults.contextWarningThresholdPct,
+        onContextWarning: (inputTokens, thresholdPct) => {
+          mcEmit('context_warning', { slug: project.slug, chatId, inputTokens, thresholdPct })
+        },
       })
       // Fire-and-forget; the pool may call deliver() before start() resolves
       // for the very first message — ClaudeProjectProcess deliver() awaits
@@ -1735,13 +1739,23 @@ async function tryMasterCommand(msg: Message, access: Access): Promise<boolean> 
         process.stderr.write(`discord: unauthorized reply failed: ${err}\n`)
       }
       return true
-    case 'reply':
+    case 'reply': {
+      // Emit command_executed audit event
+      const verbMatch = msg.content.trim().split(/\s+/)[1]
+      mcEmit('command_executed', {
+        verb: verbMatch ?? 'unknown',
+        actor: msg.author.username,
+        actor_id: msg.author.id,
+        target: '',
+        raw: msg.content.slice(0, 200),
+      })
       try {
         await msg.reply({ content: result.text, allowedMentions: { parse: [] } })
       } catch (err) {
         process.stderr.write(`discord: master reply failed: ${err}\n`)
       }
       return true
+    }
   }
 }
 

@@ -8,7 +8,9 @@ export type McEventType =
   | 'specclaw_status_changed'
   | 'respawn_scheduled'
   | 'circuit_open'
-  | 'circuit_reset';
+  | 'circuit_reset'
+  | 'command_executed'
+  | 'context_warning';
 
 export interface McEvent {
   instance_id: string;   // SHA1(realpath(MCD_CHANNELS_DIR))

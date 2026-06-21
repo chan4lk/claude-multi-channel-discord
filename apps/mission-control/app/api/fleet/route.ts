@@ -14,6 +14,7 @@ export interface FleetProject {
   monthlyTokenBudget?: number
   monthlyTokensUsed?: number
   circuitOpen?: boolean
+  contextUsagePct?: number
 }
 
 export interface FleetResponse {
@@ -75,6 +76,46 @@ function computeMonthlyTokensUsed(slug: string, mcdDir: string): number {
   }
 
   return total
+}
+
+function computeContextUsagePct(slug: string, mcdDir: string): number | undefined {
+  const projectPath = path.join(mcdDir, 'projects', slug)
+  let realPath = projectPath
+  try { realPath = fs.realpathSync(projectPath) } catch { return undefined }
+  const encoded = encodeProjectCwd(realPath)
+  const transcriptDir = path.join(os.homedir(), '.claude', 'projects', encoded)
+  let jsonlFiles: string[] = []
+  try {
+    jsonlFiles = fs.readdirSync(transcriptDir)
+      .filter((f) => f.endsWith('.jsonl'))
+      .map((f) => path.join(transcriptDir, f))
+  } catch { return undefined }
+  if (jsonlFiles.length === 0) return undefined
+
+  // Find the most recently modified JSONL
+  let latestFile = ''
+  let latestMtime = 0
+  for (const file of jsonlFiles) {
+    try {
+      const mtime = fs.statSync(file).mtimeMs
+      if (mtime > latestMtime) { latestMtime = mtime; latestFile = file }
+    } catch {}
+  }
+  if (!latestFile) return undefined
+
+  let raw = ''
+  try { raw = fs.readFileSync(latestFile, 'utf-8') } catch { return undefined }
+  const lines = raw.trim().split('\n').filter(Boolean).reverse()
+  for (const line of lines.slice(0, 100)) {
+    try {
+      const rec = JSON.parse(line) as { type?: string; message?: { usage?: { input_tokens?: number } } }
+      if (rec.type === 'assistant' && rec.message?.usage?.input_tokens != null) {
+        const pct = (rec.message.usage.input_tokens / 200_000) * 100
+        return Math.min(Math.round(pct), 100)
+      }
+    } catch {}
+  }
+  return undefined
 }
 
 function getTranscriptMtime(slug: string, mcdDir: string): number | null {
@@ -150,6 +191,9 @@ function classifyState(
     }
   }
 
+  const ctxPct = computeContextUsagePct(slug, mcdDir)
+  if (ctxPct != null) result.contextUsagePct = ctxPct
+
   return result
 }
 
@@ -171,13 +215,14 @@ export async function GET(): Promise<Response> {
   const defaultThreshold = channels?.defaults?.stuckThresholdMinutes ?? 5
 
   const chatIdToSlug = new Map<string, string>()
-  const projectEntries: Array<{ slug: string; stuckThresholdMinutes: number; monthlyTokenBudget?: number }> = []
+  const projectEntries: Array<{ chatId: string; slug: string; stuckThresholdMinutes: number; monthlyTokenBudget?: number }> = []
 
   if (channels?.projects) {
     for (const [chatId, proj] of Object.entries(channels.projects)) {
       if (proj.slug) {
         chatIdToSlug.set(chatId, proj.slug)
         projectEntries.push({
+          chatId,
           slug: proj.slug,
           stuckThresholdMinutes: proj.stuckThresholdMinutes ?? defaultThreshold,
           monthlyTokenBudget: proj.monthlyTokenBudget,
@@ -194,8 +239,12 @@ export async function GET(): Promise<Response> {
     }
   }
 
-  const projects: FleetProject[] = projectEntries.map(({ slug, stuckThresholdMinutes, monthlyTokenBudget }) =>
-    classifyState(slug, mcdDir, scheduledSlugs, stuckThresholdMinutes, monthlyTokenBudget)
+  const circuitState = readJson<Record<string, { circuitOpen: boolean; slug: string; ts: string }>>(
+    path.join(mcdDir, 'circuit-state.json')
+  ) ?? {}
+
+  const projects: FleetProject[] = projectEntries.map(({ chatId, slug, stuckThresholdMinutes, monthlyTokenBudget }) =>
+    classifyState(chatId, slug, mcdDir, scheduledSlugs, stuckThresholdMinutes, circuitState, monthlyTokenBudget)
   )
 
   const counts = { idle: 0, active: 0, stalled: 0, autonomous: 0 }

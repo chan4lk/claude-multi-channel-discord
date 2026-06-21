@@ -46,6 +46,7 @@ function makeConfig(): ChannelsConfig {
       claude: { permissionMode: 'auto' },
       providers: {},
       progressMode: 'off',
+      contextWarningThresholdPct: 80,
     },
     projects: {
       [BOUND_CHAT_ID]: {

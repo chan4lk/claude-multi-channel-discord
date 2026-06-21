@@ -269,6 +269,14 @@ export interface ClaudeProjectProcessOptions {
   claudeBin?: string
   /** Diagnostics. Defaults to stderr with a slug prefix. */
   log?: (msg: string) => void
+  /**
+   * Context window usage % that triggers a compression prompt injection.
+   * 0–100, default 80 (i.e. 80% of the model's context limit).
+   * Model context assumed to be 200k tokens.
+   */
+  contextWarningThresholdPct?: number
+  /** Called when a context-warning is emitted (for MC event emission). */
+  onContextWarning?: (inputTokens: number, thresholdPct: number) => void
 }
 
 function summarizeToolInput(name: string, input: Record<string, unknown>): string {
@@ -317,6 +325,8 @@ export class ClaudeProjectProcess implements ProjectProcess {
   private observedSessionId: string | null = null
   private replyHandlers = new Set<(reply: OutboundReply) => void>()
   private toolProgressHandlers = new Set<(ev: ToolProgressEvent) => void>()
+  private _lastContextWarnAt = 0
+  private _latestInputTokens = 0
   private readonly turnHistory: number[] = []
   private exitHandlers = new Set<(info: { code: number | null; signal: NodeJS.Signals | null }) => void>()
 
@@ -887,6 +897,31 @@ export class ClaudeProjectProcess implements ProjectProcess {
    * per-project CLAUDE.md guidance ("respond by calling the reply tool")
    * stays in effect.
    */
+  private checkContextWarning(): void {
+    if (this._latestInputTokens === 0) return
+    const thresholdPct = this.opts.contextWarningThresholdPct ?? 80
+    const MODEL_CONTEXT_TOKENS = 200_000
+    const thresholdTokens = Math.floor(MODEL_CONTEXT_TOKENS * thresholdPct / 100)
+    if (this._latestInputTokens < thresholdTokens) return
+    const COOLDOWN_MS = 10 * 60_000
+    if (Date.now() - this._lastContextWarnAt < COOLDOWN_MS) return
+    if (!this._alive || !this.tmuxSessionName) return
+    this._lastContextWarnAt = Date.now()
+    this.log(`context-warning: input_tokens=${this._latestInputTokens} >= ${thresholdTokens} (${thresholdPct}%), injecting compression prompt`)
+    const prompt = 'Your context window is large. Please summarise completed work, close finished tasks, and compact your working memory before continuing.'
+    const session = this.tmuxSessionName
+    spawnSync('tmux', ['send-keys', '-t', session, '-l', prompt], { stdio: 'ignore' })
+    spawnSync('tmux', ['send-keys', '-t', session, 'C-m'], { stdio: 'ignore' })
+    if (this.opts.onContextWarning) {
+      try { this.opts.onContextWarning(this._latestInputTokens, thresholdPct) } catch {}
+    }
+  }
+
+  /** Expose latest observed input token count for fleet reporting. */
+  latestInputTokens(): number {
+    return this._latestInputTokens
+  }
+
   private formatPrompt(envelope: InboundEnvelope): string {
     const meta = [
       `source="discord"`,
@@ -963,6 +998,11 @@ export class ClaudeProjectProcess implements ProjectProcess {
         const msg = obj.message as { role?: string; content?: unknown[] } | undefined
         if (!msg) continue
         if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+          // Track input_tokens for context-window saturation detection
+          const usage = (obj as { message?: { usage?: { input_tokens?: number } } }).message?.usage
+          if (usage?.input_tokens != null) {
+            this._latestInputTokens = usage.input_tokens
+          }
           for (const block of msg.content) {
             const b = block as { type?: string; id?: string; name?: string; input?: Record<string, unknown> }
             if (b.type === 'tool_use' && b.id && b.name) {
@@ -986,6 +1026,8 @@ export class ClaudeProjectProcess implements ProjectProcess {
           }
         }
       }
+      // Context saturation check — after processing all new lines
+      this.checkContextWarning()
     }
     this.transcriptWatcherTimer = setInterval(poll, 2_000)
     if (typeof this.transcriptWatcherTimer.unref === 'function') this.transcriptWatcherTimer.unref()
