@@ -60,6 +60,12 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS idx_events_instance   ON events(instance_id);
 CREATE INDEX IF NOT EXISTS idx_events_type       ON events(type);
 CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
+
+CREATE TABLE IF NOT EXISTS project_annotations (
+  slug       TEXT PRIMARY KEY,
+  note       TEXT NOT NULL DEFAULT '',
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
 `);
 
 // Prune old events on startup
@@ -147,6 +153,27 @@ export function getInstanceActivity(instanceId: string): InstanceActivity {
     activeSlugs: slugRows.map((r) => r.slug).filter(Boolean),
     lastActivity: lastRow?.type ?? null,
   };
+}
+
+export function getAnnotation(slug: string): string | null {
+  const row = db.prepare('SELECT note FROM project_annotations WHERE slug = ?').get(slug) as { note: string } | undefined
+  return row?.note ?? null
+}
+
+export function upsertAnnotation(slug: string, note: string): void {
+  if (note.trim() === '') {
+    db.prepare('DELETE FROM project_annotations WHERE slug = ?').run(slug)
+  } else {
+    db.prepare(
+      `INSERT INTO project_annotations (slug, note, updated_at)
+       VALUES (?, ?, unixepoch())
+       ON CONFLICT(slug) DO UPDATE SET note = excluded.note, updated_at = unixepoch()`
+    ).run(slug, note.slice(0, 500))
+  }
+}
+
+export function getAllAnnotations(): Array<{ slug: string; note: string; updated_at: number }> {
+  return db.prepare('SELECT slug, note, updated_at FROM project_annotations').all() as Array<{ slug: string; note: string; updated_at: number }>
 }
 
 export default db;

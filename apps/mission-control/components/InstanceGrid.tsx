@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import GlassCard from './ui/GlassCard'
 import PulseRing from './ui/PulseRing'
@@ -107,6 +107,70 @@ function WatchdogBadge({ slug, fleetProjects }: WatchdogBadgeProps) {
   )
 }
 
+function SlugAnnotation({ slug }: { slug: string }) {
+  const [note, setNote] = useState<string | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    fetch(`/api/projects/${slug}/annotation`)
+      .then((r) => r.json())
+      .then((d: { note: string | null }) => setNote(d.note ?? null))
+      .catch(() => {})
+  }, [slug])
+
+  const save = useCallback(async (value: string) => {
+    const trimmed = value.trim()
+    await fetch(`/api/projects/${slug}/annotation`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note: trimmed }),
+    })
+    setNote(trimmed || null)
+    setEditing(false)
+  }, [slug])
+
+  if (editing) {
+    return (
+      <div className="mt-1">
+        <textarea
+          ref={inputRef}
+          autoFocus
+          className="w-full text-[0.6rem] font-mono bg-slate-900/80 border border-cyber-cyan/30 rounded px-2 py-1 text-slate-300 resize-none outline-none focus:border-cyber-cyan/60"
+          rows={2}
+          maxLength={500}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => save(draft)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); save(draft) }
+            if (e.key === 'Escape') { setEditing(false) }
+          }}
+          placeholder="Add a note… (Enter to save, Esc to cancel)"
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex items-center gap-1 mt-0.5">
+      {note && (
+        <span className="text-[0.6rem] font-mono text-slate-500 truncate max-w-[120px]" title={note}>
+          {note.slice(0, 60)}{note.length > 60 ? '…' : ''}
+        </span>
+      )}
+      <button
+        onClick={() => { setDraft(note ?? ''); setEditing(true) }}
+        className="text-[0.55rem] text-slate-600 hover:text-cyber-cyan transition-colors shrink-0"
+        title={note ? 'Edit note' : 'Add note'}
+      >
+        {note ? '✎' : '＋'}
+      </button>
+    </div>
+  )
+}
+
 export default function InstanceGrid({ events = [], filterSlugs = null, fleetProjects = [] }: Props) {
   const [instances, setInstances] = useState<InstanceEntry[]>([])
   const [loading, setLoading] = useState(true)
@@ -201,7 +265,8 @@ export default function InstanceGrid({ events = [], filterSlugs = null, fleetPro
                   {inst.activeSlugs && inst.activeSlugs.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-0.5">
                       {inst.activeSlugs.slice(0, 3).map((slug) => (
-                        <div key={slug} className="flex items-center gap-1">
+                        <div key={slug} className="flex flex-col gap-0.5">
+                          <div className="flex items-center gap-1">
                           <button
                             title={`Inject into ${slug}`}
                             onClick={() => window.dispatchEvent(new CustomEvent('mc:inject', { detail: { slug } }))}
@@ -238,6 +303,8 @@ export default function InstanceGrid({ events = [], filterSlugs = null, fleetPro
                               </>
                             )
                           })()}
+                          </div>
+                          <SlugAnnotation slug={slug} />
                         </div>
                       ))}
                       {inst.activeSlugs.length > 3 && (

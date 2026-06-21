@@ -674,7 +674,7 @@ Add a `/api/events/stream` Server-Sent Events endpoint that pushes fleet-state d
 
 ## P29 — Browser Push Notifications for Stall Alerts
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
@@ -766,7 +766,7 @@ Extend the `/api/broadcast` POST handler to persist each broadcast to `mc.db` (n
 
 ## P33 — Project Annotation Panel
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-21
 
 ### Problem
