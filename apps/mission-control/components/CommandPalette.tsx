@@ -193,6 +193,14 @@ export default function CommandPalette({ onInject }: Props) {
         category: 'navigate',
         action: () => router.push('/admin/audit'),
       },
+      {
+        id: 'nav:goals',
+        label: 'Goals board',
+        description: 'Cross-project goal kanban',
+        icon: '◎',
+        category: 'navigate',
+        action: () => router.push('/goals'),
+      },
     ]
 
     const projects: Command[] = (fleet?.projects ?? []).flatMap((p) => [
