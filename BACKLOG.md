@@ -650,7 +650,7 @@ Add a Scheduler Heatmap section to the `/timeline` page (or as a new tab). Displ
 
 ## P28 — SSE Live Event Stream
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-20
 
 ### Problem
@@ -669,3 +669,118 @@ Add a `/api/events/stream` Server-Sent Events endpoint that pushes fleet-state d
 - AC4: `StallAlertPanel` receives `stall-alert` events; no separate 30s poll needed
 - AC5: On disconnect, `EventSource` reconnects with exponential back-off (1s→2s→4s… cap 30s)
 - AC6: Existing poll endpoints (`/api/fleet`, `/api/stalls`) retained; components fall back to polling if SSE unavailable
+
+---
+
+## P29 — Browser Push Notifications for Stall Alerts
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+When a project stalls while the operator is away from the dashboard tab, there is no out-of-band signal. The stall panel only shows alerts to operators actively viewing the dashboard. Critical stalls (e.g. blocked PRs, stuck builds) can go unnoticed for hours.
+
+### Proposed Solution
+
+Use the browser Notifications API to deliver push-style alerts when new stalls are detected via SSE. A "Enable Notifications" button in the Stall Alert Panel requests `Notification.permission`. When `FleetContext` receives a `stall-alert` event with slugs not in the current dismissed set, fire a browser notification: title `⚠ Stall: <slug>`, body `<reason>`. Throttle: max 1 notification per slug per 5 minutes. Persist permission granted/revoked state in `localStorage`.
+
+### Acceptance Criteria
+
+- AC1: "Enable Notifications" button in StallAlertPanel; only shown if `Notification.permission !== 'granted'`
+- AC2: New stall events via SSE trigger browser notification within 2s of detection
+- AC3: Dismissed stalls do not trigger notifications; cleared when no longer stalled
+- AC4: Max 1 notification per slug per 5 minutes (throttle)
+- AC5: Permission request only on explicit user gesture (button click), not on page load
+
+---
+
+## P30 — Fleet Activity Heatmap
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+The Scheduler Heatmap (P27) shows when scheduled jobs fire, but operators have no way to see the actual activity density per project over time. Distinguishing projects with regular autonomous activity from truly idle/abandoned ones requires manually inspecting transcripts.
+
+### Proposed Solution
+
+Add an `/api/metrics/activity-heatmap` endpoint that reads transcript `.jsonl` files for all projects, buckets assistant turns by hour-of-day × day-of-week (7×24 grid), and returns activity density per cell. Render a heatmap at `/metrics#activity` using a CSS grid with color intensity (dark→neon-cyan) scaled to max cell value. Rows = day-of-week (Mon–Sun), columns = hour (0–23). Tooltip on hover shows exact turn count. Rolling 30-day window.
+
+### Acceptance Criteria
+
+- AC1: `/api/metrics/activity-heatmap` returns `{ slug, grid: number[7][24] }[]` for all projects
+- AC2: Heatmap component renders at `/metrics` page (new tab below existing charts)
+- AC3: Project selector chips filter the heatmap to selected projects
+- AC4: Tooltip on cell hover shows exact count and period
+- AC5: Rolling 30-day window; endpoint returns `generatedAt` ISO timestamp
+
+---
+
+## P31 — Agent Turn Duration Histogram
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+Operators set `stuckThresholdMinutes` per project manually with no data to guide the choice. There is no visibility into how long typical agent turns actually take (first tool call → reply). Thresholds set too low cause false-positive watchdog kills; too high means real stalls go undetected.
+
+### Proposed Solution
+
+Add `/api/metrics/turn-durations` that parses transcript `.jsonl` files, pairs each user-turn start with the next assistant reply, and returns a distribution of turn durations per project (p50, p90, p99, max, last 30 days). Add a "Turn Duration" histogram widget to the `/metrics` page. Show per-project bars, highlight the current `stuckThresholdMinutes` as a vertical threshold line. Include a "Recommended threshold" (p99 × 1.5) suggestion per project.
+
+### Acceptance Criteria
+
+- AC1: `/api/metrics/turn-durations` returns `{ slug, p50, p90, p99, max, count, recommendedThresholdMins }[]`
+- AC2: Histogram widget on `/metrics` page renders per-project bars with threshold overlay
+- AC3: Recommended threshold shown as a dashed line; color-coded (green=current≥recommended, amber=close, red=below)
+- AC4: Clicking a bar opens that project's transcript in TranscriptPanel
+- AC5: Rolling 30-day window; minimum 5 turns required before showing recommendation
+
+---
+
+## P32 — Broadcast History Log
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+Multi-Project Broadcast (P26) sends messages to multiple channels but leaves no audit trail. Operators cannot review what was broadcast, to which projects, or when. If a broadcast was sent with a typo or to wrong targets, there is no way to verify what actually happened.
+
+### Proposed Solution
+
+Extend the `/api/broadcast` POST handler to persist each broadcast to `mc.db` (new `broadcasts` table: id, ts, message, targets JSON, status). Add a `/broadcast/history` page at `/broadcast#history` that lists past broadcasts in reverse-chronological order with expandable details (targets, message, timestamp). Add a delete/dismiss action per entry. Use the existing SQLite `db.ts` for storage.
+
+### Acceptance Criteria
+
+- AC1: Each broadcast POST inserts a row in `broadcasts` table (mc.db) with ts, message, targets[]
+- AC2: `/api/broadcast/history` GET returns rows paginated (limit 50, cursor-based)
+- AC3: Broadcast history tab visible at `/broadcast` page below the send form
+- AC4: Each row is expandable: shows full message text, target slugs, sent timestamp
+- AC5: Delete button removes entry from history (soft-delete with `deleted_at`)
+
+---
+
+## P33 — Project Annotation Panel
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+Project metadata in `channels.json` is machine-configured. Operators need a way to attach human-readable notes (owner, status, blockers) to a project without editing JSON. Currently annotations must be added to the project's CLAUDE.md or noted externally, where they're invisible in the dashboard.
+
+### Proposed Solution
+
+Add a `notes` column to the existing `instances` or a new `project_annotations` table in `mc.db`. Expose `/api/projects/[slug]/annotation` (GET/PUT). Add a collapsible annotation input to each project card in `InstanceGrid` (click a pencil icon to reveal a textarea, auto-saves on blur). Show the first 60 chars of the note as a subtitle on the card. Notes persist in SQLite across restarts and bot redeployments.
+
+### Acceptance Criteria
+
+- AC1: `project_annotations` table in mc.db with columns `slug TEXT PK, note TEXT, updated_at INTEGER`
+- AC2: GET `/api/projects/[slug]/annotation` returns `{ note: string | null }`; PUT upserts
+- AC3: Pencil icon on each InstanceGrid card; click reveals textarea; saves on blur
+- AC4: First 60 chars of note shown as subtitle on card when note is non-empty
+- AC5: Empty/blank note PUT deletes the row; card subtitle hidden

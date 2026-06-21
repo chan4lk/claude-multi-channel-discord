@@ -1,0 +1,255 @@
+import * as fs from 'fs'
+import * as path from 'path'
+import * as os from 'os'
+
+export type ProjectState = 'idle' | 'active' | 'stalled' | 'autonomous'
+
+export interface FleetProject {
+  slug: string
+  state: ProjectState
+  ageMins: number
+  stuckThresholdMinutes: number
+  monthlyTokenBudget?: number
+  monthlyTokensUsed?: number
+}
+
+export interface FleetResponse {
+  idle: number
+  active: number
+  stalled: number
+  autonomous: number
+  projects: FleetProject[]
+}
+
+export interface StallEntry {
+  slug: string
+  stallAgeMins: number
+  stallReason: string
+  snippet: string | null
+}
+
+export interface StallsResponse {
+  stalls: StallEntry[]
+  checkedAt: string
+}
+
+function readJson<T>(filePath: string): T | null {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as T
+  } catch {
+    return null
+  }
+}
+
+function encodeProjectCwd(realPath: string): string {
+  return realPath.replace(/[^a-zA-Z0-9]/g, '-')
+}
+
+function getTranscriptMtime(slug: string, mcdDir: string): number | null {
+  const projectPath = path.join(mcdDir, 'projects', slug)
+  let realPath = projectPath
+  try {
+    realPath = fs.realpathSync(projectPath)
+  } catch {
+    return null
+  }
+  const encoded = encodeProjectCwd(realPath)
+  const transcriptDir = path.join(os.homedir(), '.claude', 'projects', encoded)
+  let jsonlFiles: string[] = []
+  try {
+    jsonlFiles = fs.readdirSync(transcriptDir).filter((f) => f.endsWith('.jsonl'))
+  } catch {
+    return null
+  }
+  if (jsonlFiles.length === 0) return null
+  let latestMtime = 0
+  for (const file of jsonlFiles) {
+    try {
+      const mtime = fs.statSync(path.join(transcriptDir, file)).mtimeMs
+      if (mtime > latestMtime) latestMtime = mtime
+    } catch {}
+  }
+  return latestMtime || null
+}
+
+function getTranscriptInfo(slug: string, mcdDir: string): { mtime: number | null; latestFile: string | null } {
+  const projectPath = path.join(mcdDir, 'projects', slug)
+  let realPath = projectPath
+  try {
+    realPath = fs.realpathSync(projectPath)
+  } catch {
+    return { mtime: null, latestFile: null }
+  }
+  const encoded = encodeProjectCwd(realPath)
+  const transcriptDir = path.join(os.homedir(), '.claude', 'projects', encoded)
+  let jsonlFiles: string[] = []
+  try {
+    jsonlFiles = fs.readdirSync(transcriptDir).filter((f) => f.endsWith('.jsonl'))
+  } catch {
+    return { mtime: null, latestFile: null }
+  }
+  if (jsonlFiles.length === 0) return { mtime: null, latestFile: null }
+  let latestFile = ''
+  let latestMtime = 0
+  for (const file of jsonlFiles) {
+    try {
+      const mtime = fs.statSync(path.join(transcriptDir, file)).mtimeMs
+      if (mtime > latestMtime) {
+        latestMtime = mtime
+        latestFile = path.join(transcriptDir, file)
+      }
+    } catch {}
+  }
+  return { mtime: latestMtime || null, latestFile: latestFile || null }
+}
+
+function extractSnippet(transcriptFile: string): string | null {
+  try {
+    const content = fs.readFileSync(transcriptFile, 'utf-8')
+    const lines = content.trim().split('\n').filter(Boolean).reverse()
+    for (const line of lines.slice(0, 50)) {
+      try {
+        const entry = JSON.parse(line)
+        if (entry.type === 'assistant' && Array.isArray(entry.message?.content)) {
+          for (const block of entry.message.content) {
+            if (block.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
+              return block.text.slice(0, 200).trim()
+            }
+          }
+        }
+      } catch {}
+    }
+  } catch {}
+  return null
+}
+
+function stallReason(ageMins: number): string {
+  if (ageMins > 60) return `Inactive ${ageMins}m — likely waiting for operator input`
+  if (ageMins > 30) return `Inactive ${ageMins}m — may be blocked on a question`
+  return `Inactive ${ageMins}m — possible stall or slow tool call`
+}
+
+function computeMonthlyTokensUsed(slug: string, mcdDir: string): number {
+  const now = new Date()
+  const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  const files: string[] = []
+  const projectPath = path.join(mcdDir, 'projects', slug)
+  let realPath = projectPath
+  try { realPath = fs.realpathSync(projectPath) } catch { return 0 }
+  const encoded = encodeProjectCwd(realPath)
+  const transcriptDir = path.join(os.homedir(), '.claude', 'projects', encoded)
+  try {
+    files.push(...fs.readdirSync(transcriptDir).filter((f) => f.endsWith('.jsonl')).map((f) => path.join(transcriptDir, f)))
+  } catch { return 0 }
+  let total = 0
+  for (const file of files) {
+    let raw = ''
+    try { raw = fs.readFileSync(file, 'utf-8') } catch { continue }
+    for (const line of raw.trim().split('\n').filter(Boolean)) {
+      let rec: Record<string, unknown>
+      try { rec = JSON.parse(line) } catch { continue }
+      if (rec.type !== 'assistant') continue
+      const ts = typeof rec.timestamp === 'string' ? rec.timestamp : null
+      if (!ts || !ts.startsWith(currentYearMonth)) continue
+      const usage = (rec as { message?: { usage?: { input_tokens?: number; output_tokens?: number } } }).message?.usage
+      total += (usage?.input_tokens ?? 0) + (usage?.output_tokens ?? 0)
+    }
+  }
+  return total
+}
+
+interface ProjectEntry {
+  slug: string
+  stuckThresholdMinutes: number
+  monthlyTokenBudget?: number
+}
+
+interface ChannelsJson {
+  projects?: Record<string, { slug?: string; stuckThresholdMinutes?: number; monthlyTokenBudget?: number }>
+  defaults?: { stuckThresholdMinutes?: number }
+}
+
+interface SchedulesJson {
+  schedules?: Array<{ chatId?: string; enabled?: boolean }>
+}
+
+function loadChannelEntries(mcdDir: string): { entries: ProjectEntry[]; chatIdToSlug: Map<string, string>; defaultThreshold: number } {
+  const channels = readJson<ChannelsJson>(path.join(mcdDir, 'channels.json'))
+  const defaultThreshold = channels?.defaults?.stuckThresholdMinutes ?? 5
+  const chatIdToSlug = new Map<string, string>()
+  const entries: ProjectEntry[] = []
+  if (channels?.projects) {
+    for (const [chatId, proj] of Object.entries(channels.projects)) {
+      if (proj.slug) {
+        chatIdToSlug.set(chatId, proj.slug)
+        entries.push({
+          slug: proj.slug,
+          stuckThresholdMinutes: proj.stuckThresholdMinutes ?? defaultThreshold,
+          monthlyTokenBudget: proj.monthlyTokenBudget,
+        })
+      }
+    }
+  }
+  return { entries, chatIdToSlug, defaultThreshold }
+}
+
+function loadScheduledSlugs(mcdDir: string, chatIdToSlug: Map<string, string>): Set<string> {
+  const schedules = readJson<SchedulesJson>(path.join(mcdDir, 'schedules.json'))
+  const scheduledSlugs = new Set<string>()
+  for (const s of schedules?.schedules ?? []) {
+    if (s.enabled !== false && s.chatId) {
+      const slug = chatIdToSlug.get(s.chatId)
+      if (slug) scheduledSlugs.add(slug)
+    }
+  }
+  return scheduledSlugs
+}
+
+export function computeFleet(mcdDir: string | undefined): FleetResponse {
+  if (!mcdDir) return { idle: 0, active: 0, stalled: 0, autonomous: 0, projects: [] }
+  const { entries, chatIdToSlug } = loadChannelEntries(mcdDir)
+  const scheduledSlugs = loadScheduledSlugs(mcdDir, chatIdToSlug)
+
+  const projects: FleetProject[] = entries.map(({ slug, stuckThresholdMinutes, monthlyTokenBudget }) => {
+    const mtime = getTranscriptMtime(slug, mcdDir)
+    const ageMs = mtime ? Date.now() - mtime : Infinity
+    const ageMins = Math.min(Math.floor(ageMs / 60_000), 9999)
+    const hasSchedule = scheduledSlugs.has(slug)
+    let state: ProjectState
+    if (ageMs < 30_000) state = 'active'
+    else if (ageMs < 5 * 60_000) state = hasSchedule ? 'autonomous' : 'idle'
+    else if (ageMs < 2 * 60 * 60_000) state = hasSchedule ? 'autonomous' : 'stalled'
+    else state = hasSchedule ? 'autonomous' : 'idle'
+    const result: FleetProject = { slug, state, ageMins, stuckThresholdMinutes }
+    if (monthlyTokenBudget != null) {
+      result.monthlyTokenBudget = monthlyTokenBudget
+      result.monthlyTokensUsed = computeMonthlyTokensUsed(slug, mcdDir)
+    }
+    return result
+  })
+
+  const counts = { idle: 0, active: 0, stalled: 0, autonomous: 0 }
+  for (const p of projects) counts[p.state]++
+  return { ...counts, projects }
+}
+
+export function computeStalls(mcdDir: string | undefined): StallsResponse {
+  if (!mcdDir) return { stalls: [], checkedAt: new Date().toISOString() }
+  const { entries, chatIdToSlug } = loadChannelEntries(mcdDir)
+  const scheduledSlugs = loadScheduledSlugs(mcdDir, chatIdToSlug)
+
+  const stalls: StallEntry[] = []
+  for (const { slug } of entries) {
+    if (slug === 'master') continue
+    const { mtime, latestFile } = getTranscriptInfo(slug, mcdDir)
+    if (!mtime) continue
+    const ageMs = Date.now() - mtime
+    const ageMins = Math.floor(ageMs / 60_000)
+    if (ageMs >= 5 * 60_000 && ageMs < 2 * 60 * 60_000 && !scheduledSlugs.has(slug)) {
+      const snippet = latestFile ? extractSnippet(latestFile) : null
+      stalls.push({ slug, stallAgeMins: ageMins, stallReason: stallReason(ageMins), snippet })
+    }
+  }
+  stalls.sort((a, b) => b.stallAgeMins - a.stallAgeMins)
+  return { stalls, checkedAt: new Date().toISOString() }
+}

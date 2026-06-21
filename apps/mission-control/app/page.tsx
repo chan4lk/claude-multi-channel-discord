@@ -12,6 +12,7 @@ import SpecclawPipeline from '../components/SpecclawPipeline'
 import StallAlertPanel from '../components/StallAlertPanel'
 import TranscriptPanel from '../components/TranscriptPanel'
 import CountBadge from '../components/ui/CountBadge'
+import { useFleet } from '../components/FleetContext'
 import type { FleetResponse, ProjectState } from './api/fleet/route'
 import type { WhatsAppResponse } from './api/whatsapp/route'
 
@@ -91,11 +92,14 @@ function FleetBadge({ state, count, active, onClick }: FleetBadgeProps) {
   )
 }
 
+const EMPTY_FLEET: FleetResponse = { idle: 0, active: 0, stalled: 0, autonomous: 0, projects: [] }
+
 function DashboardClient() {
   const [events, setEvents] = useState<McEventEntry[]>([])
   const [instances, setInstances] = useState<InstanceRow[]>([])
-  const [fleet, setFleet] = useState<FleetResponse>({ idle: 0, active: 0, stalled: 0, autonomous: 0, projects: [] })
   const [whatsapp, setWhatsapp] = useState<WhatsAppResponse | null>(null)
+  const { fleet: contextFleet, sseStatus } = useFleet()
+  const fleet = contextFleet ?? EMPTY_FLEET
   const [fleetFilter, setFleetFilter] = useState<ProjectState | null>(null)
   const [scheduleView, setScheduleView] = useState<'table' | 'timeline'>('timeline')
   const [showTranscript, setShowTranscript] = useState(false)
@@ -113,18 +117,6 @@ function DashboardClient() {
     }
     fetchInstances()
     const interval = setInterval(fetchInstances, 30_000)
-    return () => clearInterval(interval)
-  }, [])
-
-  useEffect(() => {
-    async function fetchFleet() {
-      try {
-        const res = await fetch('/api/fleet')
-        if (res.ok) setFleet(await res.json())
-      } catch {}
-    }
-    fetchFleet()
-    const interval = setInterval(fetchFleet, 30_000)
     return () => clearInterval(interval)
   }, [])
 
@@ -282,6 +274,19 @@ function DashboardClient() {
                 {formatUptime(uptime)}
               </span>
               <span className="text-[0.6rem] text-slate-500 uppercase tracking-widest">Uptime</span>
+            </div>
+            <div
+              className="flex flex-col items-center gap-0.5"
+              title={`SSE: ${sseStatus}`}
+            >
+              <span
+                className={`w-3 h-3 rounded-full ${
+                  sseStatus === 'connected' ? 'bg-cyber-cyan' :
+                  sseStatus === 'reconnecting' ? 'bg-cyber-amber animate-pulse' :
+                  'bg-slate-600'
+                }`}
+              />
+              <span className="text-[0.6rem] text-slate-500 uppercase tracking-widest">SSE</span>
             </div>
           </div>
         </div>
