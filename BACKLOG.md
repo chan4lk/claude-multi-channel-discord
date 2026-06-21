@@ -784,3 +784,170 @@ Add a `notes` column to the existing `instances` or a new `project_annotations` 
 - AC3: Pencil icon on each InstanceGrid card; click reveals textarea; saves on blur
 - AC4: First 60 chars of note shown as subtitle on card when note is non-empty
 - AC5: Empty/blank note PUT deletes the row; card subtitle hidden
+
+---
+
+## North Star
+
+MCD's goal: **fully featured autonomous agent harness** — one-liner install, graceful error handling, audit trails, token saving, memory saving, minimal operator toil. All proposals below serve this direction.
+
+---
+
+## P34 — Cross-Platform One-Liner Installer
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+Setting up MCD requires manual steps: install bun, tmux, clone repo, run setup script, configure env. There is no single install command. This blocks adoption and makes self-hosted deployments fragile. macOS and Windows users face extra friction.
+
+### Proposed Solution
+
+Ship a `bin/install.sh` (curl-pipe compatible) and `bin/install.ps1` (PowerShell) that detect OS/arch, install bun and tmux via the appropriate package manager (brew/apt/scoop/winget), clone or update the repo, run `setup-new-instance.sh` interactively, and write a systemd unit (Linux) or launchd plist (macOS) or Windows service wrapper for auto-start. Also publish an `npx mcd-setup` shim that delegates to the shell installer. Document the one-liner in README.
+
+### Acceptance Criteria
+
+- AC1: `curl -fsSL https://raw.githubusercontent.com/chan4lk/claude-multi-channel-discord/main/bin/install.sh | bash` completes on Ubuntu 22+, Debian 12+, macOS 13+
+- AC2: `bin/install.ps1` completes on Windows 11 with PowerShell 7+
+- AC3: Installer detects existing bun/tmux and skips reinstall; idempotent
+- AC4: Systemd/launchd/Windows service registered and started on completion
+- AC5: `npx mcd-setup` delegates to the platform installer
+
+---
+
+## P35 — Graceful Error Recovery Framework
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+When a project's claude subprocess crashes, the bot waits for the next inbound message to lazy-respawn. If tmux dies, the session is silently lost. If the Discord gateway reconnects after a long outage, in-flight messages may be lost. There is no retry budget, circuit breaker, or operator notification for repeated failures.
+
+### Proposed Solution
+
+Add a per-project failure ledger (`failureCount`, `lastFailedAt`, `backoffUntil`) stored in memory inside `ProjectPool`. On subprocess exit, schedule a respawn with exponential backoff (5s→10s→30s→2min, cap 5min). After 5 consecutive failures within 30min, mark the project as `circuit-open` and emit a `watchdog` event to the master channel. Circuit auto-resets after 10min of no failures. All respawn/backoff/circuit events are logged to `mc.db` events table. Expose current circuit state in `/api/fleet`.
+
+### Acceptance Criteria
+
+- AC1: Subprocess crash triggers respawn with exponential backoff; no operator action needed for transient failures
+- AC2: After 5 failures in 30min, circuit opens; master channel receives notification
+- AC3: Circuit state visible in InstanceGrid card (`circuit-open` badge)
+- AC4: Circuit auto-resets after 10min clean window
+- AC5: All respawn/backoff/circuit events logged to `mc.db` with slug, ts, reason
+
+---
+
+## P36 — Comprehensive Audit Trail
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+There is no tamper-evident log of who did what to MCD. `!project` commands, spawn/stop events, config mutations, and inject actions leave no persistent audit record beyond ephemeral Discord messages. Post-incident reconstruction is impossible.
+
+### Proposed Solution
+
+Add an `audit_log` table to `mc.db` with columns `(id INTEGER PK, ts INTEGER, actor TEXT, actor_id TEXT, verb TEXT, target TEXT, payload TEXT, ip TEXT)`. Every `!project` command, spawn, stop, kill, config change, inject, and broadcast writes a row. Expose `/api/admin/audit` (paginated, admin-key gated). Add an Audit Log tab to the `/admin` page with filter by actor/verb/target and ISO timestamp range. Rows are append-only (no delete API).
+
+### Acceptance Criteria
+
+- AC1: `audit_log` table in mc.db; schema migration runs on startup if table absent
+- AC2: All `!project` verbs, spawn/stop/kill/inject events write a row with actor Discord user ID
+- AC3: `/api/admin/audit` returns rows paginated by cursor; requires admin API key
+- AC4: `/admin` page shows audit tab: filter by actor, verb, target, date range
+- AC5: Rows are append-only; no DELETE endpoint; export as NDJSON available
+
+---
+
+## P37 — Context Window Optimizer (Token Saver)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+Long-running project sessions accumulate context that bloats token usage. Claude Code's context grows unbounded across many turns until the session is evicted or the operator manually restarts. There is no mechanism to detect context saturation or prompt the agent to self-compress before hitting limits.
+
+### Proposed Solution
+
+Track token usage per turn from transcript `.jsonl` (`message.usage.input_tokens`). When a project's rolling-window input tokens exceed a configurable threshold (default 80% of model context, e.g. 160k for claude-sonnet-4-6's 200k window), emit a `context-warning` event and inject a compression prompt: _"Your context is large. Please summarise completed work, close finished tasks, and compact your working memory before continuing."_ Log the injection as an audit event. Expose `contextUsagePct` in `/api/fleet` and show a gauge in InstanceGrid.
+
+### Acceptance Criteria
+
+- AC1: Per-project rolling input-token tracker reads from transcript `.jsonl` each poll cycle
+- AC2: `contextWarningThresholdPct` configurable per-project in `channels.json` (default 80)
+- AC3: Compression prompt injected when threshold crossed; max once per 10min per project
+- AC4: `context-warning` event emitted to `mc.db` and SSE stream
+- AC5: `contextUsagePct` in `/api/fleet` response; InstanceGrid card shows gauge when > 60%
+
+---
+
+## P38 — Cross-Session Memory Distillation
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+Each project's Claude session accumulates memory files during a run, but when sessions are evicted and respawned, only `--resume` carries forward the conversation. Learned facts, patterns, and decisions from one session are not distilled into durable per-project knowledge that survives a full restart.
+
+### Proposed Solution
+
+After a session ends (clean stop or watchdog kill), schedule a distillation job: spawn a short-lived `claude -p` process in the project directory with prompt: _"Summarise the key facts, decisions, and open questions from this session into MEMORY.md in ≤500 words. Merge with existing content."_ The distillation job runs in the background with a 90-second timeout. On next session start, `--resume` plus the updated MEMORY.md give continuity. Log distillation events to `mc.db`. Configurable: `distillOnStop: true` per-project.
+
+### Acceptance Criteria
+
+- AC1: `distillOnStop: true` in project config triggers distillation within 30s of clean stop
+- AC2: Distillation uses `claude -p` with a fixed prompt; 90s hard timeout; retried once on failure
+- AC3: Distillation output is merged (not replaced) into `projects/<slug>/MEMORY.md`
+- AC4: Distillation event logged to audit trail with duration and token count
+- AC5: `distillationEnabled` visible in `!project show` output
+
+---
+
+## P39 — Autonomous Goal Persistence
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+When a project agent restarts (watchdog kill, manual stop, server restart), it resumes the conversation but has no explicit record of its current high-level goal or task. The agent must re-infer intent from conversation history. Long-running autonomous tasks (multi-day builds, research) lose momentum across restarts.
+
+### Proposed Solution
+
+Add a `GOAL.md` per project under `projects/<slug>/GOAL.md`. Operators set the goal via `!project set goal "..."` (or via a new dashboard field). After each `reply` tool call, a background watcher checks if the reply contains a goal-completion signal (configurable regex or LLM check). On restart, the GOAL.md is prepended to the system prompt injection so the agent immediately knows its mission. Include `lastGoalUpdate` and `goalStatus` (active/paused/completed) in `/api/fleet`. Dashboard shows goal text in InstanceGrid card.
+
+### Acceptance Criteria
+
+- AC1: `!project set goal "<text>"` writes `projects/<slug>/GOAL.md`; `!project show` displays it
+- AC2: `GOAL.md` contents injected into per-turn system context wrapper on session start
+- AC3: `goalStatus` (active/paused/completed) in `/api/fleet`; InstanceGrid card shows goal chip
+- AC4: `!project set goal ""` clears the goal file
+- AC5: Goal text max 500 chars; truncated with warning if exceeded
+
+---
+
+## P40 — Token Budget Enforcement & Alerts
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-21
+
+### Problem
+
+`monthlyTokenBudget` is already stored per-project in `channels.json` and the TokenBudgetGauge shows usage, but there is no enforcement. When a project exceeds its budget, Claude continues generating tokens at cost. There are no proactive alerts at threshold milestones (50%, 80%, 100%).
+
+### Proposed Solution
+
+Extend the fleet broadcaster to check `monthlyTokensUsed / monthlyTokenBudget` each tick. At 50%, 80%, and 100% thresholds, emit a `budget-alert` SSE event and post a master-channel notification (once per threshold per calendar month). At 100%, automatically pause new inbound messages to the project (queue them, drain when budget resets at month start). Expose `budgetStatus: 'ok' | 'warning' | 'critical' | 'exhausted'` in `/api/fleet`. Dashboard shows budget status in InstanceGrid card with color coding.
+
+### Acceptance Criteria
+
+- AC1: 50%/80%/100% budget milestones each emit a `budget-alert` SSE event and master-channel message (once per threshold per month)
+- AC2: At 100%, new inbound messages queued; queued count shown in InstanceGrid card
+- AC3: Budget reset at calendar month start (UTC midnight on 1st) restores message flow
+- AC4: `budgetStatus` in `/api/fleet`; InstanceGrid card color: green/amber/red/grey
+- AC5: `monthlyTokenBudget: null` means unlimited; enforcement skipped
