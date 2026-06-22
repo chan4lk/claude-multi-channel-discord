@@ -224,6 +224,14 @@ CREATE TABLE IF NOT EXISTS memory_diff_log (
 
 CREATE INDEX IF NOT EXISTS idx_memory_diff_slug ON memory_diff_log(slug);
 CREATE INDEX IF NOT EXISTS idx_memory_diff_ts ON memory_diff_log(ts);
+
+CREATE TABLE IF NOT EXISTS constellation_coords (
+  slug        TEXT PRIMARY KEY,
+  x           REAL NOT NULL DEFAULT 0,
+  y           REAL NOT NULL DEFAULT 0,
+  z           REAL NOT NULL DEFAULT 0,
+  computed_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
 `);
 
 // Prune old events on startup
@@ -836,6 +844,25 @@ export function getMemoryDiffCacheAge(slug: string): number | null {
     `SELECT MAX(cached_at) as last FROM memory_diff_log WHERE slug = ?`
   ).get(slug) as { last: number | null } | undefined
   return row?.last ?? null
+}
+
+export interface ConstellationCoord {
+  slug: string
+  x: number
+  y: number
+  z: number
+  computed_at: number
+}
+
+export function upsertConstellationCoord(slug: string, x: number, y: number, z: number): void {
+  db.prepare(
+    `INSERT INTO constellation_coords (slug, x, y, z, computed_at) VALUES (?, ?, ?, ?, unixepoch())
+     ON CONFLICT(slug) DO UPDATE SET x=excluded.x, y=excluded.y, z=excluded.z, computed_at=excluded.computed_at`
+  ).run(slug, x, y, z)
+}
+
+export function getConstellationCoords(): ConstellationCoord[] {
+  return db.prepare(`SELECT * FROM constellation_coords`).all() as ConstellationCoord[]
 }
 
 export default db;

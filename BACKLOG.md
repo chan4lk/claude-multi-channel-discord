@@ -3138,7 +3138,7 @@ Add a "Diff" mode to the turn viewer (`/turns`) page. When two assistant turns a
 
 ## P132 — Fleet 3-D Constellation
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
