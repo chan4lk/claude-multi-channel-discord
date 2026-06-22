@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
+import dynamic from 'next/dynamic'
 import GlassCard from './ui/GlassCard'
 import PulseRing from './ui/PulseRing'
 import Sparkline from './ui/Sparkline'
@@ -10,6 +11,8 @@ import TokenBudgetGauge from './TokenBudgetGauge'
 import HealthScoreRing from './HealthScoreRing'
 import type { FleetProject } from '../app/api/fleet/route'
 import type { HealthScore } from '../app/api/health/[slug]/route'
+
+const DeepDiveDrawer = dynamic(() => import('./DeepDiveDrawer'), { ssr: false })
 
 function fmtBytes(b: number): string {
   if (b < 1024) return `${b} B`
@@ -509,6 +512,7 @@ export default function InstanceGrid({ events = [], filterSlugs = null, fleetPro
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [healthScores, setHealthScores] = useState<Record<string, HealthScore>>({})
+  const [deepDiveSlug, setDeepDiveSlug] = useState<string | null>(null)
 
   const stuckInstances = new Set<string>(
     events
@@ -643,6 +647,14 @@ export default function InstanceGrid({ events = [], filterSlugs = null, fleetPro
                                   ⧉
                                 </a>
                                 <SpotlightButton slug={slug} />
+                                <button
+                                  title={`Deep dive: ${slug} (Shift+D)`}
+                                  onClick={(e) => { e.stopPropagation(); setDeepDiveSlug(slug) }}
+                                  className="text-[10px] font-mono px-1 py-0.5 rounded transition-colors"
+                                  style={{ color: 'rgb(168 85 247 / 0.6)', background: 'transparent', lineHeight: 1 }}
+                                >
+                                  D
+                                </button>
                                 {fp?.queuedCount != null && fp.queuedCount > 0 && (
                                   <span
                                     className="text-[0.55rem] font-mono px-1 py-0.5 rounded shrink-0"
@@ -734,6 +746,10 @@ export default function InstanceGrid({ events = [], filterSlugs = null, fleetPro
           )
         })}
       </AnimatePresence>
+
+      {deepDiveSlug && (
+        <DeepDiveDrawer slug={deepDiveSlug} onClose={() => setDeepDiveSlug(null)} />
+      )}
     </div>
   )
 }

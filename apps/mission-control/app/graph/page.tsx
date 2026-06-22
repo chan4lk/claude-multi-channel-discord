@@ -50,6 +50,12 @@ export default function GraphPage() {
           >
             ◆ Collab
           </Link>
+          <Link
+            href="/mindmap"
+            className="text-[0.6rem] px-2.5 py-1 rounded font-mono font-bold uppercase tracking-wider border border-cyan-500/20 text-slate-400 hover:text-cyan-400 hover:border-cyan-500/40 transition-colors"
+          >
+            ✦ Mind Map
+          </Link>
           <button
             onClick={() => setShowBacklog((b) => !b)}
             className="text-[0.6rem] px-2.5 py-1 rounded font-mono font-bold uppercase tracking-wider transition-all"

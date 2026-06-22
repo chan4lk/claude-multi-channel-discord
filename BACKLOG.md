@@ -2793,7 +2793,7 @@ Add a `/collaboration` page with a D3 force-directed graph. **Nodes** = projects
 
 ## P117 — Fleet Mind Map
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -2839,7 +2839,7 @@ Add a `/sequence` page with two panels: left panel = filterable proposal list (b
 
 ## P119 — Project Deep Dive Modal
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
