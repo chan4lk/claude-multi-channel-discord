@@ -2270,3 +2270,128 @@ Add a preset switcher (pill-shaped toggle group) to the dashboard header. Three 
 - AC4: Custom presets stored in localStorage; survive page refresh
 - AC5: Delete button on custom presets (built-ins cannot be deleted)
 - AC6: Active preset name shown in header; "Custom" shown when layout diverges from any saved preset
+
+---
+
+## P96 — Live Session Terminal View
+
+**Status:** `[x] done`
+**Created:** 2026-06-22
+
+### Problem
+
+When a project agent is misbehaving or stuck, debugging requires SSH into the server to inspect the tmux pane. There is no in-browser way to see the live Claude TUI output for a session. Operators lose visibility and must context-switch to a terminal.
+
+### Proposed Solution
+
+Add a `/projects/[slug]/terminal` page (linked from the per-project detail page) that streams the current tmux pane output in real time. A new `/api/projects/[slug]/terminal/stream` endpoint runs `tmux capture-pane -pt mcd-<slug>-* -e` on a 1.5s poll and SSE-streams the output as plain text. The browser renders it in a `<pre>` block with ANSI color stripping. The view is **read-only** — no input. A "Refresh" button forces a re-capture. A "Full history" toggle switches to `tmux save-buffer -S -` (full scrollback). Access-controlled: same auth as the dashboard.
+
+### Acceptance Criteria
+
+- AC1: `/projects/[slug]/terminal` page renders; linked from per-project detail quick-links
+- AC2: SSE stream delivers pane captures at ≤ 2s latency
+- AC3: ANSI color codes stripped (not shown as raw escape sequences)
+- AC4: Read-only — no keyboard input forwarded to tmux
+- AC5: "Full history" toggle fetches full pane scrollback
+- AC6: Page shows "session offline" state when no tmux session matches the slug
+- AC7: Stream auto-reconnects on SSE disconnect without page refresh
+
+---
+
+## P97 — Fleet Cost Breakdown
+
+**Status:** `[x] done`
+**Created:** 2026-06-22
+
+### Problem
+
+Token usage is tracked per project in `/api/metrics/[slug]` but there is no fleet-level cost attribution view. Operators cannot see which projects are most expensive, how cost trends over time, or what proportion of spend comes from tool calls vs. generated text. Budget alerts exist (P41) but show no historical breakdown.
+
+### Proposed Solution
+
+Add a `/cost` page with three panels: (1) a stacked bar chart showing estimated USD cost per project per day (last 30 days), with input/output/cache token tiers color-coded; (2) a pie chart of cumulative spend by project (trailing 30 days); (3) a sortable table: project slug, total tokens, cache-hit %, estimated cost, cost trend (↑↓). A new `/api/cost` endpoint aggregates token counts from transcript `.jsonl` files and applies Claude Sonnet 4.6 pricing ($3/$15 per M in/out). Hover on bar chart shows day's breakdown by project.
+
+### Acceptance Criteria
+
+- AC1: `/cost` page renders within 3s; all projects with token data appear
+- AC2: Stacked bar chart: one bar per day, color per project, last 30 days
+- AC3: Cost calculated using current model pricing (Haiku $0.80/$4, Sonnet $3/$15, Opus $15/$75 per M tokens)
+- AC4: Pie chart shows % share of cumulative 30-day cost by project
+- AC5: Table sortable by total cost, tokens, cache %, trend
+- AC6: Trend column shows 7-day delta: green (cost down ≥10%), red (up ≥10%), grey (flat)
+- AC7: JSON export via direct API link
+
+---
+
+## P98 — CLAUDE.md Version History
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+`CLAUDE.md` is the system prompt for each project agent. It evolves over time — operators add guidance, fix behavior, tune constraints. But there is no in-dashboard way to see what changed, when, or compare versions. Prompt regressions (e.g. removing a critical constraint) go undetected until the agent misbehaves.
+
+### Proposed Solution
+
+Add a `/projects/[slug]/claude-md` page (linked from per-project detail) that shows the full CLAUDE.md version history. A new `/api/projects/[slug]/claude-md/history` endpoint runs `git log --follow -p -- CLAUDE.md` in the project's working directory and parses the output into a list of commits with diff hunks. The page renders a timeline: each commit is a row showing timestamp, short SHA, and commit message. Clicking a row expands an inline diff (red/green line diff). A "Compare" mode lets the user select any two versions for a side-by-side diff.
+
+### Acceptance Criteria
+
+- AC1: `/projects/[slug]/claude-md` page renders git log within 2s
+- AC2: Each commit row shows: SHA (7 chars), date, author, message
+- AC3: Clicking a row expands inline line diff (red = removed, green = added)
+- AC4: "Compare" mode: select two commits → side-by-side diff panel
+- AC5: Works for symlinked project dirs (uses realpath before git log)
+- AC6: "No history" state when CLAUDE.md not yet committed or project has no git
+- AC7: Current live content shown at top; diff against HEAD available in one click
+
+---
+
+## P99 — Multi-Project Workflow Canvas
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+Orchestrating multi-step work across projects requires manually composing inject commands in sequence: inject to project A, wait, inject to project B with A's output, etc. The Inject Terminal (P7) and Broadcast (P9) handle single-shot operations, but there is no way to design, save, or trigger a multi-step inject workflow visually.
+
+### Proposed Solution
+
+Add a `/canvas` page with a drag-and-drop workflow builder. Nodes are projects (drag from a sidebar panel). Edges represent inject dependencies: "after project A replies, inject its output to project B." A "trigger text" field on each node seeds the first inject. A "wait for reply" checkbox on each edge controls whether the pipeline halts for confirmation before advancing. Saved workflows stored in `~/.claude/channels/discord-multi/canvas-workflows.json`. A "Run" button executes the workflow via sequential inject calls with the resolved outputs. A workflow execution log appears in a right-side panel.
+
+### Acceptance Criteria
+
+- AC1: `/canvas` page renders drag-and-drop canvas; project nodes draggable from sidebar
+- AC2: Edges can be drawn between nodes; directed (source → target)
+- AC3: Each node has: trigger text input, project selector, "wait for reply" toggle
+- AC4: "Save" button persists workflow to `canvas-workflows.json`; list of saved workflows in sidebar
+- AC5: "Run" button executes the workflow: injects in topological order; waits for reply when edge has "wait" set
+- AC6: Execution log panel shows: step, inject text sent, reply received, timestamp
+- AC7: Cycles detected and blocked (show error, not infinite loop)
+
+---
+
+## P100 — Agent Tool Permission Heatmap
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+Each project agent has a different tool permission configuration (`allowedTools`, `disallowedTools`, `permissionMode` in `channels.json`). There is no fleet-level view of which tools are available to which agents. Security audits are manual. Operators cannot spot misconfigured projects (e.g., a project accidentally granted Bash access) without reading raw JSON.
+
+### Proposed Solution
+
+Add a `/permissions` page with a matrix heatmap. Rows are projects; columns are known tool names (derived from the union of all `allowedTools` across the fleet). Each cell is colored: green = explicitly allowed, red = explicitly disallowed, grey = not configured (inherits default), yellow = permissionMode bypass. A `/api/permissions` endpoint reads `channels.json` defaults and per-project overrides and returns the matrix. Clicking a cell opens a tooltip showing the raw config value. A "Risky configs" panel below the matrix lists projects with `permissionMode: "bypass"` or broad `allowedTools: ["*"]`.
+
+### Acceptance Criteria
+
+- AC1: `/permissions` page renders matrix within 2s; all projects as rows, all known tools as columns
+- AC2: Cell colors: green = allowed, red = disallowed, grey = default, yellow = bypass mode
+- AC3: Clicking a cell shows tooltip with raw config value from `channels.json`
+- AC4: "Risky configs" panel lists projects with bypass mode or wildcard allow (sorted by risk level)
+- AC5: Column headers are tool names; truncated to 12 chars with full name on hover
+- AC6: Matrix scrollable horizontally when tool count exceeds viewport
+- AC7: Export as CSV: project × tool permission matrix
