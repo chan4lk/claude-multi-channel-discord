@@ -4,6 +4,17 @@ import { execSync } from 'child_process'
 
 export const dynamic = 'force-dynamic'
 
+export interface ProposalImpact {
+  riskScore: number       // 0-100
+  complexityScore: number // 0-100
+  surfaceScore: number    // 0-100
+  depsScore: number       // 0-100
+  acCount: number
+  estimatedMinutes: number
+  fileTypes: string[]
+  linkedProposals: string[]
+}
+
 export interface ProposalGraphNode {
   id: string
   number: number
@@ -12,6 +23,7 @@ export interface ProposalGraphNode {
   commitCount: number
   category: string
   body: string
+  impact?: ProposalImpact
 }
 
 export interface ProposalGraphEdge {
@@ -108,6 +120,48 @@ function getGitLog(repoRoot: string): Array<{ sha: string; message: string }> {
   }
 }
 
+const FILE_TYPE_RE = /\.(tsx?|json|md|sh|sql|css|ya?ml|toml)\b/gi
+
+function computeImpact(body: string, selfNum: number, knownNums: Set<number>, allNodes: Array<{ number: number }>): ProposalImpact {
+  // Count ACs
+  const acMatches = [...body.matchAll(/^- AC\d+:/gm)]
+  const acCount = acMatches.length
+
+  // Word count of AC section only
+  const acSection = acMatches.map((m) => {
+    const idx = body.indexOf(m[0])
+    return body.slice(idx, idx + 300)
+  }).join(' ')
+  const acWordCount = acSection.split(/\s+/).filter(Boolean).length
+  const estimatedMinutes = Math.round(acWordCount * 0.5)
+
+  // File types mentioned in solution text
+  const fileTypes = [...new Set([...body.matchAll(FILE_TYPE_RE)].map((m) => m[1].toLowerCase()))]
+
+  // Referenced proposal IDs
+  const linkedProposals: string[] = []
+  const refRe = /\bP(\d+)\b/g
+  let m: RegExpExecArray | null
+  while ((m = refRe.exec(body)) !== null) {
+    const n = parseInt(m[1], 10)
+    if (n !== selfNum && knownNums.has(n)) linkedProposals.push(`P${n}`)
+  }
+  const uniqueLinked = [...new Set(linkedProposals)]
+
+  // Scores normalised 0-100
+  // Complexity: saturates at 500 AC-words (~250 min)
+  const complexityScore = Math.min(100, Math.round((estimatedMinutes / 250) * 100))
+  // Surface: saturates at 6 distinct file types
+  const surfaceScore = Math.min(100, Math.round((fileTypes.length / 6) * 100))
+  // Deps: saturates at 10 cross-refs
+  const depsScore = Math.min(100, Math.round((uniqueLinked.length / 10) * 100))
+  // Risk
+  const riskScore = Math.round(complexityScore * 0.4 + surfaceScore * 0.4 + depsScore * 0.2)
+
+  void allNodes
+  return { riskScore, complexityScore, surfaceScore, depsScore, acCount, estimatedMinutes, fileTypes, linkedProposals: uniqueLinked }
+}
+
 export async function GET(): Promise<Response> {
   const repoRoot = path.join(process.cwd(), '..', '..')
   const backlogPath = path.join(repoRoot, 'BACKLOG.md')
@@ -126,6 +180,7 @@ export async function GET(): Promise<Response> {
   const nodes: ProposalGraphNode[] = raw.map((p) => {
     const pTag = new RegExp(`\\bP${p.number}\\b`)
     const commitCount = commits.filter((c) => pTag.test(c.message)).length
+    const impact = p.status === 'pending' ? computeImpact(p.body, p.number, knownNums, raw) : undefined
     return {
       id: `P${p.number}`,
       number: p.number,
@@ -134,6 +189,7 @@ export async function GET(): Promise<Response> {
       commitCount,
       category: classifyCategory(p.title),
       body: p.body,
+      impact,
     }
   })
 
