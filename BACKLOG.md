@@ -2151,7 +2151,7 @@ Add a "Templates" section to the InjectTerminal sidebar. Templates are saved in 
 
 ## P91 — Proposal Dependency Graph
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
