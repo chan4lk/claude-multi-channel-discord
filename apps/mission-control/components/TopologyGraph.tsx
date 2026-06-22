@@ -20,6 +20,8 @@ interface SimEdge {
   source: SimNode
   target: SimNode
   weight: number
+  edgeType?: string
+  sharedKeywords?: string[]
 }
 
 interface Particle {
@@ -156,7 +158,7 @@ export default function TopologyGraph() {
         const source = nodeById.get(e.source)
         const target = nodeById.get(e.target)
         if (!source || !target) return null
-        return { source, target, weight: e.weight }
+        return { source, target, weight: e.weight, edgeType: e.edgeType, sharedKeywords: e.sharedKeywords }
       })
       .filter(Boolean) as SimEdge[]
 
@@ -210,14 +212,21 @@ export default function TopologyGraph() {
         .attr('stroke', '#22D3EE08').attr('stroke-width', 1)
     }
 
+    // Defs for dashed edges
+    const defsEl = d3.select(svg).select<SVGDefsElement>('defs')
+    if (defsEl.empty()) d3.select(svg).insert('defs', ':first-child')
+
     // Edges
     const linkSel = zoomG.append('g')
       .selectAll<SVGLineElement, SimEdge>('line')
       .data(simEdges)
       .join('line')
-      .attr('stroke', '#22D3EE33')
-      .attr('stroke-width', (d) => Math.min(4, 1 + d.weight * 0.5))
+      .attr('stroke', (d) => d.edgeType === 'shared-remote' ? '#EF4444' : '#22D3EE33')
+      .attr('stroke-width', (d) => d.edgeType === 'shared-remote' ? 3 : Math.min(4, 1 + d.weight * 0.5))
+      .attr('stroke-dasharray', (d) => d.edgeType === 'inferred' ? '4,3' : 'none')
+      .attr('stroke-opacity', (d) => d.edgeType === 'shared-remote' ? 0.7 : 0.4)
       .attr('marker-end', 'url(#arrow)')
+      .attr('title', (d) => d.sharedKeywords?.length ? `Shared: ${d.sharedKeywords.join(', ')}` : '')
 
     // Nodes
     const nodeSel = zoomG.append('g')

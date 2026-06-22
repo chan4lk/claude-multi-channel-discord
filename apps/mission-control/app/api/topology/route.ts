@@ -13,10 +13,20 @@ export interface TopologyNode {
   convergenceScore?: number
 }
 
+export interface EdgeBreakdown {
+  transcript: number   // 0-1 based on slug reference count
+  memory: number       // 0-1 Jaccard of MEMORY.md keywords
+  goal: number         // 0-1 Jaccard of GOAL.md keywords
+  sharedRemote: boolean
+}
+
 export interface TopologyEdge {
   source: string
   target: string
-  weight: number // message references in last 15 min
+  weight: number
+  edgeType: 'shared-remote' | 'inferred' | 'transcript'
+  breakdown: EdgeBreakdown
+  sharedKeywords: string[]
 }
 
 export interface TopologyEvent {
@@ -38,6 +48,39 @@ function readJson<T>(filePath: string): T | null {
 
 function encodeProjectCwd(realPath: string): string {
   return realPath.replace(/[^a-zA-Z0-9]/g, '-')
+}
+
+const STOP_WORDS = new Set([
+  'a','an','the','and','or','but','in','on','at','to','for','of','with','by',
+  'from','is','was','are','were','be','been','have','has','had','do','does',
+  'did','will','would','could','should','that','this','it','its','they','we',
+  'you','i','me','my','not','no','so','all','any','use','when','which','what',
+  'project','claude','file','code','there','here','now','just','also','some',
+])
+
+function extractKeywords(text: string): Set<string> {
+  const words = text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)
+  return new Set(words.filter((w) => w.length >= 4 && !STOP_WORDS.has(w)))
+}
+
+function jaccardSimilarity(a: Set<string>, b: Set<string>): { score: number; shared: string[] } {
+  if (a.size === 0 && b.size === 0) return { score: 0, shared: [] }
+  const shared: string[] = []
+  for (const w of a) { if (b.has(w)) shared.push(w) }
+  const union = new Set([...a, ...b]).size
+  return { score: union === 0 ? 0 : shared.length / union, shared: shared.slice(0, 5) }
+}
+
+function readFileKeywords(filePath: string): Set<string> {
+  try { return extractKeywords(fs.readFileSync(filePath, 'utf-8')) } catch { return new Set() }
+}
+
+function getGitRemote(projectDir: string): string | null {
+  try {
+    const config = fs.readFileSync(path.join(projectDir, '.git', 'config'), 'utf-8')
+    const match = config.match(/url\s*=\s*(.+)/)
+    return match?.[1]?.trim() ?? null
+  } catch { return null }
 }
 
 function findLatestJsonl(slug: string, mcdDir: string): string | null {
@@ -132,8 +175,20 @@ export async function GET(): Promise<Response> {
   const WINDOW_1H = 60 * 60 * 1000
 
   const nodes: TopologyNode[] = []
-  const edgeMap = new Map<string, number>() // "src|tgt" -> count
+  const transcriptEdgeMap = new Map<string, number>() // "src|tgt" -> ref count
   const events: TopologyEvent[] = []
+
+  // Pre-compute memory/goal keywords and git remotes per slug
+  const memoryKw = new Map<string, Set<string>>()
+  const goalKw = new Map<string, Set<string>>()
+  const gitRemote = new Map<string, string | null>()
+
+  for (const slug of slugs) {
+    const projectDir = path.join(mcdDir, 'projects', slug)
+    memoryKw.set(slug, readFileKeywords(path.join(projectDir, 'MEMORY.md')))
+    goalKw.set(slug, readFileKeywords(path.join(projectDir, 'GOAL.md')))
+    gitRemote.set(slug, getGitRemote(projectDir))
+  }
 
   for (const slug of slugs) {
     const jsonlPath = findLatestJsonl(slug, mcdDir)
@@ -154,25 +209,20 @@ export async function GET(): Promise<Response> {
 
     nodes.push({ id: slug, slug, state, turnsPerHour, lastReplyAge })
 
-    // Detect cross-project references
-    const allSlugs = slugs
     for (const turn of turns15m) {
       if (turn.role !== 'assistant') continue
-      for (const otherSlug of allSlugs) {
+      for (const otherSlug of slugs) {
         if (otherSlug === slug) continue
         const count = (turn.text.match(new RegExp(otherSlug, 'gi')) ?? []).length
         if (count > 0) {
           const key = `${slug}|${otherSlug}`
-          edgeMap.set(key, (edgeMap.get(key) ?? 0) + count)
+          transcriptEdgeMap.set(key, (transcriptEdgeMap.get(key) ?? 0) + count)
         }
       }
-      // Emit event
       if (now - turn.ts < 60_000) {
         events.push({ ts: new Date(turn.ts).toISOString(), slug, action: 'reply' })
       }
     }
-
-    // Tool calls as events
     for (const turn of turns15m) {
       if (turn.role === 'tool') {
         events.push({ ts: new Date(turn.ts).toISOString(), slug, action: 'tool_call' })
@@ -180,10 +230,59 @@ export async function GET(): Promise<Response> {
     }
   }
 
+  // Build enhanced edges combining transcript refs + memory/goal overlap + shared remote
+  const edgePairs = new Set<string>()
+  // Seed from transcript refs
+  for (const key of transcriptEdgeMap.keys()) {
+    const [a, b] = key.split('|')
+    const canonical = [a, b].sort().join('|')
+    edgePairs.add(canonical)
+  }
+  // Add pairs with significant memory or goal overlap
+  for (let i = 0; i < slugs.length; i++) {
+    for (let j = i + 1; j < slugs.length; j++) {
+      const a = slugs[i], b = slugs[j]
+      const memSim = jaccardSimilarity(memoryKw.get(a) ?? new Set(), memoryKw.get(b) ?? new Set())
+      const goalSim = jaccardSimilarity(goalKw.get(a) ?? new Set(), goalKw.get(b) ?? new Set())
+      const sameRemote = gitRemote.get(a) && gitRemote.get(a) === gitRemote.get(b)
+      if (memSim.score >= 0.05 || goalSim.score >= 0.05 || sameRemote) {
+        edgePairs.add([a, b].sort().join('|'))
+      }
+    }
+  }
+
   const edges: TopologyEdge[] = []
-  for (const [key, weight] of edgeMap.entries()) {
-    const [source, target] = key.split('|')
-    edges.push({ source, target, weight })
+  const MAX_TRANSCRIPT_REFS = 10
+
+  for (const pair of edgePairs) {
+    const [a, b] = pair.split('|')
+    const fwdRefs = transcriptEdgeMap.get(`${a}|${b}`) ?? 0
+    const bwdRefs = transcriptEdgeMap.get(`${b}|${a}`) ?? 0
+    const totalRefs = fwdRefs + bwdRefs
+    const transcriptScore = Math.min(totalRefs / MAX_TRANSCRIPT_REFS, 1)
+
+    const memSim = jaccardSimilarity(memoryKw.get(a) ?? new Set(), memoryKw.get(b) ?? new Set())
+    const goalSim = jaccardSimilarity(goalKw.get(a) ?? new Set(), goalKw.get(b) ?? new Set())
+    const sameRemote = !!(gitRemote.get(a) && gitRemote.get(a) === gitRemote.get(b))
+
+    const weight = sameRemote ? 1.0 :
+      0.5 * transcriptScore + 0.3 * memSim.score + 0.2 * goalSim.score
+
+    if (weight < 0.05 && !sameRemote) continue
+
+    const edgeType: TopologyEdge['edgeType'] = sameRemote ? 'shared-remote' :
+      totalRefs > 0 ? 'transcript' : 'inferred'
+
+    const sharedKeywords = [...new Set([...memSim.shared, ...goalSim.shared])].slice(0, 3)
+
+    edges.push({
+      source: a,
+      target: b,
+      weight,
+      edgeType,
+      breakdown: { transcript: transcriptScore, memory: memSim.score, goal: goalSim.score, sharedRemote: sameRemote },
+      sharedKeywords,
+    })
   }
 
   events.sort((a, b) => b.ts.localeCompare(a.ts))

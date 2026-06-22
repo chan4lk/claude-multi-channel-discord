@@ -3046,7 +3046,7 @@ Add a `/session-health/[slug]` page as a per-project health aggregate. Top secti
 
 ## P128 — Operator Digest Email / Webhook Summary
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -3069,7 +3069,7 @@ Add a scheduled digest job (configurable: daily 08:00 UTC or on-demand via `POST
 
 ## P129 — Fleet Topology Edge Weights from Shared Memory
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
