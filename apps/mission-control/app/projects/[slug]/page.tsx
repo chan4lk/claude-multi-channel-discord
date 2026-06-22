@@ -321,6 +321,7 @@ export default function ProjectDetailPage() {
             {[
               { href: `/projects/${slug}/terminal`, label: '▶ Terminal' },
               { href: `/projects/${slug}/claude-md`, label: '⧖ CLAUDE.md' },
+              { href: `/projects/${slug}/conversation`, label: '◫ Chat Log' },
               { href: `/metrics?slug=${slug}`, label: '◱ Metrics' },
               { href: `/flamegraph?project=${slug}`, label: '↬ Flamegraph' },
               { href: `/replay?project=${slug}`, label: '⏮ Replay' },

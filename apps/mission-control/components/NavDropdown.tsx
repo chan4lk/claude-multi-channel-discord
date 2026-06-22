@@ -41,6 +41,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/pipeline', label: 'Specclaw Pipeline', icon: '⬒' },
       { href: '/canvas', label: 'Workflow Canvas', icon: '⊡' },
+      { href: '/inject-templates', label: 'Inject Templates', icon: '◈' },
       { href: '/branches', label: 'Git Branches', icon: '⑂' },
       { href: '/broadcast', label: 'Broadcast', icon: '◉' },
       { href: '/audit', label: 'Audit Log', icon: '≡' },
