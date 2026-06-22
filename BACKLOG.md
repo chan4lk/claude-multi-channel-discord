@@ -1907,3 +1907,122 @@ Add a `/commands` page showing recent `!project ...` command executions sourced 
 - AC5: Verb filter (multi-select) and operator filter (text substring)
 - AC6: Pagination: 50/page with prev/next
 - AC7: Nav link added under Operations
+
+---
+
+## P81 — Project Comparison Panel
+
+**Status:** `[x] done`
+**Created:** 2026-06-22
+
+### Problem
+
+Operators managing multiple similar projects (e.g., two agent channels working on related codebases) have no way to compare them side-by-side. Spotting divergence — one active, one stalled; one burning tokens, one idle — requires cross-referencing four different pages.
+
+### Proposed Solution
+
+Add a `/compare` page with two project pickers (dropdowns from `/api/instances` + channels.json slugs). Each column shows: state badge, last-reply time, total turns, token totals, estimated cost, avg/p95 latency, memory count, and most-recent 5 timeline events. A diff-style banner highlights where the two projects diverge significantly (e.g., cost >2× or latency >3×). URL encodes both slugs as query params so comparisons are shareable.
+
+### Acceptance Criteria
+
+- AC1: `/compare` page with two project selector dropdowns populated from known projects
+- AC2: Each column shows state, last-reply, turns, input/output tokens, cost, latency, memory count
+- AC3: Diff banner flags metrics where ratio between projects exceeds 2×
+- AC4: Last 5 timeline events shown per project (newest first)
+- AC5: URL encodes `?a=<slug>&b=<slug>`; page loads pre-selected from URL params
+- AC6: Nav link added under Intelligence category
+
+---
+
+## P82 — Fleet Turn Density Heatmap
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+Operators don't know when their agents are most active during the day. A project that fires 20 turns per day might cluster them all at 2am or spread evenly — this matters for deciding when to schedule heavy jobs.
+
+### Proposed Solution
+
+Add a `/heatmap` page showing a 2D grid: rows = projects, columns = hours-of-day (0–23). Each cell shaded by turn count in the last 7 days. Uses existing transcript JSONL files for data (same parsing as `/api/metrics`). Hovering a cell shows: project slug, hour, turn count. A row summary column shows total daily turns. Cells above a threshold pulse amber. Color scale: zero = dark slate, max = neon cyan.
+
+### Acceptance Criteria
+
+- AC1: `/heatmap` page with projects × hours grid
+- AC2: Cells shaded by turn count (last 7 days), zero = dark, max = neon cyan
+- AC3: Hover tooltip: slug, hour (UTC), turn count
+- AC4: Row summary column with total turns
+- AC5: Cells at or above 75th-percentile turn count pulse amber
+- AC6: Nav link under Observability
+
+---
+
+## P83 — Proposal → Commit Traceability View
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+The backlog has 80+ implemented proposals but no visual link between a proposal (P-number) and the git commits that fulfilled it. Operators reading the changelog cannot tell which commit corresponds to which feature, and the specclaw pipeline view shows changes but not the original proposal context.
+
+### Proposed Solution
+
+Add a `/traceability` page that reads BACKLOG.md, extracts all proposals (P-number, title, status), then reads `git log --oneline` for the main repo and attempts regex matching on P-number references in commit messages (e.g., `P78`, `feat(mc): P78`). Renders a two-column table: left = proposal row (number, title, status), right = linked commit list (sha, message, date). Proposals with no linked commits show "untraced". Filter by status (done/pending) and search by title.
+
+### Acceptance Criteria
+
+- AC1: `/traceability` page listing all backlog proposals with linked commits
+- AC2: Commit linking via regex match of `P\d+` in commit message subject
+- AC3: Proposals with no commit matches show "untraced" in amber
+- AC4: Filter by status (done / pending / all) and free-text search on title
+- AC5: Clicking a commit sha opens `github.com/<repo>/commit/<sha>` in new tab if remote is detected
+- AC6: Nav link under Intelligence
+
+---
+
+## P84 — Agent Behavior Scorecard
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+The `/metrics` page shows per-project token totals and turn counts, but doesn't surface behavioral patterns: which tools get called most, how many tool calls happen per turn, or how turn duration correlates with tool count. These patterns reveal whether an agent is working efficiently or spinning.
+
+### Proposed Solution
+
+Extend the existing per-project metrics API (`/api/metrics/[slug]`) to add a `toolStats` field: top-10 tools by call count, avg calls per turn, avg output tokens per turn. Add a `ScoreCard` section to the `/metrics` page (collapsible per project) showing: efficiency score (output tokens / tool calls ratio), top tools bar chart (horizontal, neon bars), and a "turn profile" showing the distribution of tool calls per turn as a small histogram.
+
+### Acceptance Criteria
+
+- AC1: `/api/metrics/[slug]` returns `toolStats`: top tools, avg calls/turn, avg output tokens/turn
+- AC2: `/metrics` page shows collapsible ScoreCard per project
+- AC3: ScoreCard: top-5 tools as horizontal bars, avg calls/turn, efficiency score
+- AC4: Efficiency score = output tokens / total tool calls, displayed as a gauge (0–100 scale)
+- AC5: ScoreCard expands in-place on click; default collapsed
+
+---
+
+## P85 — Fleet State Snapshot & Diff
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+When debugging a fleet regression ("why did three projects stall after the weekend?"), operators have no point-in-time record of fleet state to compare against. The audit log has individual events but no holistic "snapshot" of what everything looked like at a specific moment.
+
+### Proposed Solution
+
+Add a `/snapshots` page with a "Take Snapshot" button. Snapshots capture: all project slugs, states, last-reply timestamps, turn counts, and token totals as a JSON blob stored in the MC database. Snapshots are listed newest-first with a timestamp and project count. Selecting two snapshots shows a diff view: projects added/removed, state changes, turn delta, token delta. Each snapshot is tagged with a user-provided label (optional).
+
+### Acceptance Criteria
+
+- AC1: `/snapshots` page with "Take Snapshot" button; snapshots stored in MC SQLite DB
+- AC2: Snapshot captures: all projects, states, last-reply ts, turn count, token totals
+- AC3: Snapshot list newest-first with timestamp, label, and project count
+- AC4: Select two snapshots → diff view: added/removed projects, state changes, delta metrics
+- AC5: Optional label field when taking snapshot
+- AC6: Nav link under Operations

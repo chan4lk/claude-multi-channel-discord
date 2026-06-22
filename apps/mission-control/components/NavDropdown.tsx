@@ -52,6 +52,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/reports', label: 'Weekly Report', icon: '◻' },
       { href: '/advisor', label: 'Fleet Advisor', icon: '◆' },
       { href: '/similarity', label: 'Memory Similarity', icon: '⬡' },
+      { href: '/compare', label: 'Project Compare', icon: '⇌' },
     ],
   },
   {
