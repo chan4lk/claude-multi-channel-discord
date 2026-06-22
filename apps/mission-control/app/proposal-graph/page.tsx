@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as d3 from 'd3'
 import Link from 'next/link'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { Suspense } from 'react'
 import type { ProposalGraphNode, ProposalGraphEdge, ProposalGraphResponse } from '../api/proposal-graph/route'
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -72,7 +74,7 @@ function hullPath(points: [number, number][], padding = 18): string {
   return `M${padded.map(([x, y]) => `${x},${y}`).join('L')}Z`
 }
 
-export default function ProposalGraphPage() {
+function ProposalGraphInner() {
   const svgRef = useRef<SVGSVGElement>(null)
   const simRef = useRef<d3.Simulation<SimNode, SimEdge> | null>(null)
   const [data, setData] = useState<ProposalGraphResponse | null>(null)
@@ -80,6 +82,9 @@ export default function ProposalGraphPage() {
   const [selected, setSelected] = useState<ProposalGraphNode | null>(null)
   const [filterCat, setFilterCat] = useState<string | null>(null)
   const [filterStatus, setFilterStatus] = useState<'all' | 'done' | 'pending'>('all')
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const [quickWinsOnly, setQuickWinsOnly] = useState(searchParams.get('quickWins') === '1')
 
   useEffect(() => {
     fetch('/api/proposal-graph')
@@ -99,6 +104,7 @@ export default function ProposalGraphPage() {
     const filteredNodes = data.nodes.filter((n) => {
       if (filterCat && n.category !== filterCat) return false
       if (filterStatus !== 'all' && n.status !== filterStatus) return false
+      if (quickWinsOnly && (n.status !== 'pending' || (n.impact?.riskScore ?? 100) >= 30)) return false
       return true
     })
     const filteredIds = new Set(filteredNodes.map((n) => n.id))
@@ -194,8 +200,14 @@ export default function ProposalGraphPage() {
       .attr('r', (d) => radiusScale(d.commitCount))
       .attr('fill', (d) => STATUS_COLORS[d.status])
       .attr('fill-opacity', 0.15)
-      .attr('stroke', (d) => STATUS_COLORS[d.status])
-      .attr('stroke-width', 1.5)
+      .attr('stroke', (d) => {
+        if (d.status === 'pending' && d.impact) {
+          if (d.impact.riskScore > 70) return '#EF4444'
+          if (d.impact.riskScore < 30) return '#10B981'
+        }
+        return STATUS_COLORS[d.status]
+      })
+      .attr('stroke-width', (d) => (d.status === 'pending' && d.impact && (d.impact.riskScore > 70 || d.impact.riskScore < 30)) ? 2.5 : 1.5)
 
     // Category ring
     nodeEl.append('circle')
@@ -215,7 +227,22 @@ export default function ProposalGraphPage() {
       .attr('pointer-events', 'none')
       .text((d) => `P${d.number}`)
 
-    nodeEl.append('title').text((d) => `${d.id} — ${d.title}\nStatus: ${d.status}\nCommits: ${d.commitCount}\nCategory: ${d.category}`)
+    // Quick win badge (⚡) for pending risk < 30
+    nodeEl.filter((d) => d.status === 'pending' && (d.impact?.riskScore ?? 100) < 30)
+      .append('text')
+      .attr('text-anchor', 'middle')
+      .attr('dominant-baseline', 'middle')
+      .attr('dy', (d) => -(radiusScale(d.commitCount) + 8))
+      .attr('font-size', 8)
+      .attr('fill', '#10B981')
+      .attr('pointer-events', 'none')
+      .text('⚡')
+
+    nodeEl.append('title').text((d) => {
+      const impact = d.impact
+      const base = `${d.id} — ${d.title}\nStatus: ${d.status}\nCommits: ${d.commitCount}\nCategory: ${d.category}`
+      return impact ? `${base}\nRisk: ${impact.riskScore}/100 · ~${impact.estimatedMinutes}min · ${impact.acCount} ACs` : base
+    })
 
     // Pending nodes: pulsing opacity handled via CSS class
     nodeEl.filter((d) => d.status === 'pending')
@@ -253,7 +280,7 @@ export default function ProposalGraphPage() {
     })
 
     sim.on('end', () => savePositions(nodes))
-  }, [data, filterCat, filterStatus])
+  }, [data, filterCat, filterStatus, quickWinsOnly])
 
   useEffect(() => { buildGraph() }, [buildGraph])
 
@@ -301,6 +328,24 @@ export default function ProposalGraphPage() {
 
       {/* Filter bar */}
       <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-800/50 shrink-0 flex-wrap">
+        <button
+          onClick={() => {
+            const next = !quickWinsOnly
+            setQuickWinsOnly(next)
+            const params = new URLSearchParams(searchParams.toString())
+            if (next) params.set('quickWins', '1'); else params.delete('quickWins')
+            router.replace(`?${params.toString()}`)
+          }}
+          className="text-[0.65rem] font-mono px-2 py-0.5 rounded transition-all"
+          style={{
+            background: quickWinsOnly ? '#10B98122' : 'transparent',
+            border: `1px solid ${quickWinsOnly ? '#10B981' : '#334155'}`,
+            color: quickWinsOnly ? '#10B981' : '#64748B',
+          }}
+        >
+          ⚡ Quick Wins
+        </button>
+        <span className="text-slate-700">|</span>
         <span className="text-[0.6rem] font-mono text-slate-500 uppercase tracking-wider">Status:</span>
         {(['all', 'done', 'pending'] as const).map((s) => (
           <button
@@ -415,6 +460,44 @@ export default function ProposalGraphPage() {
                 <span className="text-slate-500">{selected.commitCount} commits</span>
               </div>
 
+              {/* Impact breakdown for pending proposals */}
+              {selected.status === 'pending' && selected.impact && (() => {
+                const imp = selected.impact
+                const riskColor = imp.riskScore > 70 ? '#EF4444' : imp.riskScore < 30 ? '#10B981' : '#F59E0B'
+                return (
+                  <div className="rounded border border-white/5 p-2 bg-[#0d1b2e]">
+                    <p className="text-[0.6rem] font-mono text-slate-500 uppercase tracking-wider mb-2">Impact Estimate</p>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-[0.65rem] font-bold font-mono" style={{ color: riskColor }}>
+                        Risk {imp.riskScore}/100
+                      </span>
+                      {imp.riskScore < 30 && <span className="text-[0.55rem] text-green-400">⚡ Quick Win</span>}
+                      {imp.riskScore > 70 && <span className="text-[0.55rem] text-red-400">⚠ High Risk</span>}
+                    </div>
+                    <div className="grid grid-cols-3 gap-1 mb-2">
+                      {[
+                        { label: 'Complexity', val: imp.complexityScore },
+                        { label: 'Surface', val: imp.surfaceScore },
+                        { label: 'Deps', val: imp.depsScore },
+                      ].map(({ label, val }) => (
+                        <div key={label} className="text-center">
+                          <div className="text-[0.5rem] text-slate-600 uppercase">{label}</div>
+                          <div className="text-[0.7rem] font-bold font-mono text-slate-300">{val}</div>
+                          <div className="h-1 rounded mt-0.5" style={{ background: '#1E293B' }}>
+                            <div className="h-full rounded" style={{ width: `${val}%`, background: riskColor }} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="text-[0.55rem] text-slate-600 space-y-0.5">
+                      <div>{imp.acCount} ACs · ~{imp.estimatedMinutes} min est.</div>
+                      {imp.fileTypes.length > 0 && <div>Files: {imp.fileTypes.join(', ')}</div>}
+                      {imp.linkedProposals.length > 0 && <div>Refs: {imp.linkedProposals.join(', ')}</div>}
+                    </div>
+                  </div>
+                )
+              })()}
+
               {selectedACs.length > 0 && (
                 <div>
                   <p className="text-[0.6rem] font-mono text-slate-500 uppercase tracking-wider mb-1.5">Acceptance Criteria</p>
@@ -466,5 +549,13 @@ export default function ProposalGraphPage() {
         )}
       </div>
     </div>
+  )
+}
+
+export default function ProposalGraphPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#0B0F1A] text-cyan-400 p-4 font-mono text-sm">Loading…</div>}>
+      <ProposalGraphInner />
+    </Suspense>
   )
 }

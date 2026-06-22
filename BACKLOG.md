@@ -3092,7 +3092,7 @@ Augment the topology edge computation to also detect: (1) shared keyword overlap
 
 ## P130 — Proposal Impact Estimator
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -3110,3 +3110,118 @@ Add an "Impact Estimate" panel to the Proposal Graph page. For each `[ ] pending
 - AC3: Proposals with risk > 70 render with `#EF4444` border; risk < 30 render `#10B981` "quick win" badge
 - AC4: Click proposal node → side panel shows full impact breakdown: AC count, estimated minutes, referenced file types, linked proposals
 - AC5: Filter control: "Show quick wins only" toggles display to only risk < 30 nodes; URL param `?quickWins=1` persists state
+
+---
+
+## P131 — Live Turn Diff Viewer
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+When Claude edits a file across multiple turns, operators have no way to see what changed between turn N and turn N+1. The turn viewer shows raw text but no before/after diff. Debugging "what did Claude change?" requires reading two full turns and mentally diffing them.
+
+### Proposed Solution
+
+Add a "Diff" mode to the turn viewer (`/turns`) page. When two assistant turns are selected (via shift-click), render a unified diff between their text content side by side. Diff computed client-side using `diff` library or custom Myers diff. Changed lines highlighted in red/green. A "Copy diff" button exports the diff as a patch file. If the turn contains tool_use blocks with file edits, extract and diff only the file content segments.
+
+### Acceptance Criteria
+
+- AC1: `/turns` page: shift-click a second turn card selects a range; a "Diff selected" button appears when exactly 2 turns selected
+- AC2: Clicking "Diff selected" opens a split-pane diff view: left = older turn text, right = newer turn text; changed lines red/green highlighted
+- AC3: If turns contain `str_replace_editor` or `write_file` tool calls, extract file content and diff those instead of raw text
+- AC4: "Copy diff" button exports unified diff format to clipboard; "Download .patch" exports as file
+- AC5: Diff view accessible via URL `?diffA=<turnIdx>&diffB=<turnIdx>` so operators can share specific diffs
+
+---
+
+## P132 — Fleet 3-D Constellation
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+The 2-D Galaxy Map and Graph views show project relationships well in two dimensions but lose depth when 10+ projects are active. Related projects cluster visually but overlap with unrelated ones, making cluster membership unclear at a glance.
+
+### Proposed Solution
+
+Add a `/constellation` page using Three.js (or react-three-fiber) rendering projects as stars in 3-D space. Position determined by UMAP-like clustering of memory keyword vectors (computed server-side, passed as pre-computed 3-D coordinates). Camera auto-orbits slowly; click a star pauses orbit and opens the session-health panel. Stars pulse at a rate proportional to turn activity. Constellation lines (edges) drawn between memory-similar projects. Color = convergence score (green=high, red=low).
+
+### Acceptance Criteria
+
+- AC1: `/constellation` page: Three.js scene with projects as glowing spheres; camera slow-orbits; click pauses and opens session-health panel
+- AC2: 3-D coordinates computed by `/api/constellation` using pre-computed keyword similarity PCA (2 passes, deterministic); stored in `constellation_coords` table
+- AC3: Stars pulse (scale 1→1.3→1 over 2s) at rate proportional to turns/hour; pulsing stars emit a brief trail particle
+- AC4: Constellation edges between projects with memory Jaccard ≥ 0.1; edge opacity proportional to similarity score
+- AC5: Star color encodes convergence: green (#10B981) ≥60, amber (#F59E0B) 30–60, red (#EF4444) <30; size encodes context pressure
+
+---
+
+## P133 — Operator Presence & Cursor Sharing
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+When multiple operators access Mission Control simultaneously (e.g. two engineers on the same fleet), they have no awareness of each other. One operator may inject a message while another is reviewing the same project, causing conflicts. There is no "who is looking at what" visibility.
+
+### Proposed Solution
+
+Add lightweight presence tracking via SSE. Each MC client announces itself on connect with a random operator handle (stored in localStorage). A `/api/presence` SSE endpoint broadcasts the list of active operators and what page/slug they are currently viewing. A presence bar in the MC header shows avatars (first 2 chars of handle) for other operators, with a tooltip showing their current page. Clicking an avatar opens a "Follow" mode that mirrors their navigation. No auth required — presence is ephemeral and only within the session.
+
+### Acceptance Criteria
+
+- AC1: MC header shows presence avatars for other connected operators; tooltip shows handle + current page; updates within 3s of navigation
+- AC2: `/api/presence` SSE endpoint streams `{ operators: [{ handle, page, slug?, ts }] }` every 3s; clients POST `/api/presence/ping` with current page on each navigation
+- AC3: "Follow" mode: clicking an avatar enables follow-mode; MC navigates when that operator navigates; `Esc` exits follow-mode
+- AC4: Operator handle derived from localStorage `mc_operator_handle` (auto-generated adjective+noun if not set); editable in a small popover on the avatar
+- AC5: Presence state is in-memory only (no DB); operators inactive >30s are evicted from the list
+
+---
+
+## P134 — Scheduled Inject Templates
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+Operators manually send daily standups ("What did you work on today?"), check-ins, and prompts to projects. This is repetitive and easy to forget. The scheduler only supports `!project` command strings, not rich inject payloads with per-project variable substitution.
+
+### Proposed Solution
+
+Extend the scheduler to support "inject templates": schedule entries that inject a message into one or more project sessions at a configured time. Template body supports variables: `{{slug}}`, `{{date}}`, `{{turnsToday}}`, `{{contextPct}}`. A new `!project schedule inject <time> <template>` verb registers the template. The `/scheduler` MC page gains an "Inject Templates" tab showing scheduled injects with next-fire time, template preview, and enable/disable toggle. Variables resolved at fire time using current fleet data.
+
+### Acceptance Criteria
+
+- AC1: `!project schedule inject HH:MM "<template>"` registers a global inject template; `!project schedule inject --slug <slug> HH:MM "<template>"` registers per-project
+- AC2: Template variables `{{slug}}`, `{{date}}`, `{{turnsToday}}`, `{{contextPct}}` resolved at fire time; unresolved vars left as-is
+- AC3: Scheduler fires inject by calling `POST /api/inject/<slug>` with rendered message; success logged to audit_log with verb `scheduled_inject`
+- AC4: `/inject-templates` page gains "Scheduled" tab listing all inject schedules: time, template preview, target slugs, last-fired, toggle
+- AC5: `GET /api/schedules` response includes inject entries with `type: "inject"` and `templateBody` field; stored in `schedules.json`
+
+---
+
+## P135 — Memory Diff Timeline
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+Project MEMORY.md files evolve over time but operators have no visibility into how memory changed: what was added, removed, or modified between sessions. The memory audit page (P89) shows current state. There is no changelog of memory evolution.
+
+### Proposed Solution
+
+Add a `/memory-diff` page showing a per-project memory changelog. On each assistant turn that modifies MEMORY.md (detected by checking git log of the project repo), record a snapshot diff. Timeline shows entries: timestamp, turn reference, +/- line counts, and a toggle to expand the full unified diff. Filter by project and date range. A "Drift score" per project measures how much memory changed in the last 7 days (total lines changed / total lines). High drift (>50%) flagged in amber — indicates memory churn that may signal context instability.
+
+### Acceptance Criteria
+
+- AC1: `/memory-diff` page: per-project timeline of MEMORY.md git diffs; each entry shows timestamp, commit SHA, +lines, -lines, expand toggle
+- AC2: Diff data from `git log -p MEMORY.md` for each project repo; parsed server-side in `/api/memory-diff`; cached in `memory_diff_log` table (slug, ts, sha, diff_text)
+- AC3: Filter bar: project multi-select, date range picker; default = last 7 days all projects
+- AC4: Drift score = total changed lines / total lines in last 7 days; displayed as a percentage chip per project; >50% shows amber warning
+- AC5: `/api/memory-diff` returns `{ projects: [{ slug, driftScore, entries: [{ ts, sha, added, removed, diff }] }] }`
