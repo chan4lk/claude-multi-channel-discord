@@ -3115,7 +3115,7 @@ Add an "Impact Estimate" panel to the Proposal Graph page. For each `[ ] pending
 
 ## P131 — Live Turn Diff Viewer
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -3161,7 +3161,7 @@ Add a `/constellation` page using Three.js (or react-three-fiber) rendering proj
 
 ## P133 — Operator Presence & Cursor Sharing
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem

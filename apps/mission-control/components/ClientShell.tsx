@@ -10,6 +10,7 @@ import FleetAdvisorPanel from './FleetAdvisorPanel'
 import SpotlightDrawer from './SpotlightDrawer'
 import KeyboardShortcutsModal from './KeyboardShortcutsModal'
 import NotificationBell from './NotificationBell'
+import PresenceAvatars from './PresenceAvatars'
 import { FleetContextProvider } from './FleetContext'
 import { authClient } from '../src/auth-client'
 
@@ -79,6 +80,7 @@ const SIDEBAR_ITEMS = [
   { href: '/heatmap', icon: '▦', label: 'Heatmap' },
   { href: '/traceability', icon: '⑂', label: 'Traceability' },
   { href: '/backlog', icon: '◈', label: 'Backlog' },
+  { href: '/turn-diff', icon: '⊟', label: 'Turn Diff' },
   { href: '/audit', icon: '≡', label: 'Audit' },
   { href: '/alerts', icon: '⚠', label: 'Alerts' },
   { href: '/snapshots', icon: '⊡', label: 'Snapshots' },
@@ -123,6 +125,7 @@ function NavSidebar({ onShortcuts }: { onShortcuts?: () => void }) {
       })}
       {/* Notification bell + keyboard shortcuts pinned at bottom */}
       <div className="flex-1" />
+      <PresenceAvatars />
       <NotificationBell />
       <button
         onClick={onShortcuts}
