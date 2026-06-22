@@ -36,6 +36,8 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/dependency-graph', label: 'Dependency Graph', icon: '⇢' },
       { href: '/lifecycle-heatmap', label: 'Lifecycle Heatmap', icon: '▦' },
       { href: '/topology', label: 'Fleet Topology', icon: '⬡' },
+      { href: '/narrative', label: 'Narrative Timeline', icon: '◫' },
+      { href: '/context-pressure', label: 'Context Pressure', icon: '◑' },
     ],
   },
   {

@@ -176,6 +176,17 @@ CREATE TABLE IF NOT EXISTS goal_advancement (
 
 CREATE INDEX IF NOT EXISTS idx_goal_advancement_slug ON goal_advancement(slug);
 CREATE INDEX IF NOT EXISTS idx_goal_advancement_date ON goal_advancement(date);
+
+CREATE TABLE IF NOT EXISTS context_pressure (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  slug        TEXT NOT NULL,
+  ts          INTEGER NOT NULL DEFAULT (unixepoch()),
+  score       REAL NOT NULL DEFAULT 0,
+  breakdown   TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_ctx_pressure_slug ON context_pressure(slug);
+CREATE INDEX IF NOT EXISTS idx_ctx_pressure_ts   ON context_pressure(ts);
 `);
 
 // Prune old events on startup
@@ -665,6 +676,42 @@ export function getGoalAdvancementScore(slug: string): number | null {
     `SELECT score FROM goal_advancement WHERE slug = ? ORDER BY date DESC LIMIT 1`
   ).get(slug) as { score: number } | undefined
   return row?.score ?? null
+}
+
+// ── Context Pressure (P123) ───────────────────────────────────────────────
+
+export interface ContextPressureBreakdown {
+  systemTokens: number
+  historyTokens: number
+  toolTokens: number
+}
+
+export interface ContextPressureRow {
+  id: number
+  slug: string
+  ts: number
+  score: number
+  breakdown: string
+}
+
+export function upsertContextPressure(slug: string, score: number, breakdown: ContextPressureBreakdown): void {
+  db.prepare(
+    `INSERT INTO context_pressure (slug, score, breakdown) VALUES (?, ?, ?)`
+  ).run(slug, score, JSON.stringify(breakdown))
+}
+
+export function getContextPressureHistory(slug: string, limit = 14): Array<{ ts: number; score: number }> {
+  return db.prepare(
+    `SELECT ts, score FROM context_pressure WHERE slug = ? ORDER BY ts DESC LIMIT ?`
+  ).all(slug, limit) as Array<{ ts: number; score: number }>
+}
+
+export function getLatestContextPressure(slug: string): (ContextPressureRow & { parsedBreakdown: ContextPressureBreakdown }) | null {
+  const row = db.prepare(
+    `SELECT * FROM context_pressure WHERE slug = ? ORDER BY ts DESC LIMIT 1`
+  ).get(slug) as ContextPressureRow | undefined
+  if (!row) return null
+  return { ...row, parsedBreakdown: JSON.parse(row.breakdown) as ContextPressureBreakdown }
 }
 
 export default db;
