@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import type { ConversationResponse, ConversationTurn, ToolCallBlock } from '../../api/projects/[slug]/conversation/route'
+import type { ConversationResponse, ConversationTurn, ToolCallBlock } from '@/app/api/projects/[slug]/conversation/route'
 
 function ToolChip({ tool, expanded, onToggle }: { tool: ToolCallBlock; expanded: boolean; onToggle: () => void }) {
   return (

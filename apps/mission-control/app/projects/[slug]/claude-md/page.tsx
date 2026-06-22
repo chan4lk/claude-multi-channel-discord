@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import type { HistoryResponse, CommitEntry } from '../../api/projects/[slug]/claude-md/history/route'
+import type { HistoryResponse, CommitEntry } from '@/app/api/projects/[slug]/claude-md/history/route'
 
 function DiffBlock({ diff }: { diff: string }) {
   if (!diff) return <p className="text-[0.6rem] font-mono text-slate-600 italic">No diff available</p>
