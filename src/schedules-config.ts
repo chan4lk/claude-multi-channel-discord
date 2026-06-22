@@ -36,6 +36,10 @@ const ScheduleSchema = z.object({
   /** Reserved for cron support — unused in v1. */
   cron: z.string().optional(),
   prompt: z.string().min(1),
+  /** 'prompt' = send as agent prompt (default). 'inject' = direct session inject with variable substitution. */
+  type: z.enum(['prompt', 'inject']).default('prompt'),
+  /** For inject-type schedules: the inject-templates.json template id (optional). */
+  templateId: z.string().optional(),
   enabled: z.boolean().default(true),
   /** ISO timestamp of the last firing, or null. */
   lastRunAt: z.string().nullable().default(null),

@@ -22,6 +22,15 @@ import {
 } from './schedules-config.ts'
 import type { InboundEnvelope } from './project-process.ts'
 
+function resolveInjectVars(template: string, slug: string): string {
+  const now = new Date()
+  return template
+    .replace(/\{\{slug\}\}/g, slug)
+    .replace(/\{\{date\}\}/g, now.toLocaleDateString('en-CA'))
+    .replace(/\{\{time\}\}/g, now.toLocaleTimeString())
+    // turnsToday and contextPct require fleet data — left as-is per spec
+}
+
 function appendScheduleLog(chatId: string, scheduledAt: string, firedAt: string, status: 'ok' | 'stalled' | 'skipped', durationMs: number): void {
   const mcdDir = process.env.MCD_CHANNELS_DIR
   if (!mcdDir) return
@@ -43,6 +52,8 @@ export interface SchedulerDeps {
   log?: (msg: string) => void
   /** Optional hook called after each successful fire. */
   onFire?: (chatId: string, jobId: string, scheduledTime: string) => void
+  /** Resolve chatId → slug (for inject variable substitution). */
+  slugForChatId?: (chatId: string) => string | undefined
 }
 
 export class Scheduler {
@@ -120,17 +131,24 @@ export class Scheduler {
 
   private envelopeFor(s: Schedule, now: Date): InboundEnvelope {
     const ts = now.toISOString()
-    const footer =
-      '\n\n[Scheduled task — REQUIRED: you MUST call mcp__mcd__reply when done. ' +
-      'mcp__mcd__reply is the ONLY way your output reaches Discord. ' +
-      'Include all key results: PR URLs, branch names, error messages, or "no changes needed". ' +
-      'If you created or updated a PR, post the full URL. ' +
-      'Finishing without calling mcp__mcd__reply means the operator sees nothing.]'
+    let content: string
+    if (s.type === 'inject') {
+      const slug = this.deps.slugForChatId?.(s.chatId) ?? s.chatId
+      content = resolveInjectVars(s.prompt, slug)
+    } else {
+      const footer =
+        '\n\n[Scheduled task — REQUIRED: you MUST call mcp__mcd__reply when done. ' +
+        'mcp__mcd__reply is the ONLY way your output reaches Discord. ' +
+        'Include all key results: PR URLs, branch names, error messages, or "no changes needed". ' +
+        'If you created or updated a PR, post the full URL. ' +
+        'Finishing without calling mcp__mcd__reply means the operator sees nothing.]'
+      content = s.prompt + footer
+    }
     return {
       messageId: `sched-${s.id}-${now.getTime()}`,
       userId: '__mcd_scheduler__',
       username: 'scheduler',
-      content: s.prompt + footer,
+      content,
       ts,
     }
   }

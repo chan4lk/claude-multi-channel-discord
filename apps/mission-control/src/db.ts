@@ -209,6 +209,21 @@ CREATE TABLE IF NOT EXISTS digest_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_digest_ts ON digest_log(ts);
+
+CREATE TABLE IF NOT EXISTS memory_diff_log (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  slug      TEXT NOT NULL,
+  ts        INTEGER NOT NULL,
+  sha       TEXT NOT NULL,
+  added     INTEGER NOT NULL DEFAULT 0,
+  removed   INTEGER NOT NULL DEFAULT 0,
+  diff_text TEXT NOT NULL DEFAULT '',
+  cached_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  UNIQUE(slug, sha)
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_diff_slug ON memory_diff_log(slug);
+CREATE INDEX IF NOT EXISTS idx_memory_diff_ts ON memory_diff_log(ts);
 `);
 
 // Prune old events on startup
@@ -783,6 +798,44 @@ export function getTurnQuality(hours = 24): TurnQualityRow[] {
   return db.prepare(
     `SELECT * FROM turn_quality WHERE hour >= ? ORDER BY hour ASC`
   ).all(cutoff) as TurnQualityRow[]
+}
+
+export interface MemoryDiffRow {
+  id: number
+  slug: string
+  ts: number
+  sha: string
+  added: number
+  removed: number
+  diff_text: string
+  cached_at: number
+}
+
+export function upsertMemoryDiff(slug: string, ts: number, sha: string, added: number, removed: number, diffText: string): void {
+  db.prepare(
+    `INSERT INTO memory_diff_log (slug, ts, sha, added, removed, diff_text) VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(slug, sha) DO NOTHING`
+  ).run(slug, ts, sha, added, removed, diffText)
+}
+
+export function getMemoryDiffs(slug?: string, since?: number): MemoryDiffRow[] {
+  if (slug) {
+    const cutoff = since ?? (Math.floor(Date.now() / 1000) - 7 * 86400)
+    return db.prepare(
+      `SELECT * FROM memory_diff_log WHERE slug = ? AND ts >= ? ORDER BY ts DESC`
+    ).all(slug, cutoff) as MemoryDiffRow[]
+  }
+  const cutoff = since ?? (Math.floor(Date.now() / 1000) - 7 * 86400)
+  return db.prepare(
+    `SELECT * FROM memory_diff_log WHERE ts >= ? ORDER BY ts DESC`
+  ).all(cutoff) as MemoryDiffRow[]
+}
+
+export function getMemoryDiffCacheAge(slug: string): number | null {
+  const row = db.prepare(
+    `SELECT MAX(cached_at) as last FROM memory_diff_log WHERE slug = ?`
+  ).get(slug) as { last: number | null } | undefined
+  return row?.last ?? null
 }
 
 export default db;

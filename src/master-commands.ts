@@ -998,6 +998,8 @@ async function handleSchedule(rest: string[], _ctx: MasterContext): Promise<stri
   switch (sub) {
     case 'add':
       return await scheduleAdd(tail)
+    case 'inject':
+      return scheduleInject(tail)
     case 'list':
     case undefined:
       return scheduleList(tail)
@@ -1010,7 +1012,7 @@ async function handleSchedule(rest: string[], _ctx: MasterContext): Promise<stri
     case 'delete':
       return scheduleRemove(tail)
     default:
-      return `unknown schedule subverb \`${sub}\`. valid: add, list, pause, resume, rm`
+      return `unknown schedule subverb \`${sub}\`. valid: add, inject, list, pause, resume, rm`
   }
 }
 
@@ -1077,6 +1079,64 @@ async function scheduleAdd(tail: string[]): Promise<string> {
     timeLabel,
     `prompt: ${prompt.length > 120 ? prompt.slice(0, 120) + '…' : prompt}`,
     maxRuns ? `max runs: ${maxRuns}` : '_no run cap (use `pause`/`rm` to stop)_',
+  ].join('\n')
+}
+
+/**
+ * `!project schedule inject [--slug <slug>] HH:MM "<template>"`
+ *
+ * Registers a daily inject schedule. At fire time, template vars
+ * {{slug}}, {{date}}, {{time}} are resolved and the message is
+ * injected directly into the project session (no agent footer).
+ */
+function scheduleInject(tail: string[]): string {
+  const { positional, flags } = parseFlags(tail)
+  if (positional.length < 2) {
+    return '`schedule inject` requires: [--slug <slug>] HH:MM "<template body>"'
+  }
+
+  const slugFlag = flags.slug
+  const atRaw = positional[0]!
+  const templateBody = positional.slice(1).join(' ')
+
+  const isHHMM = /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(atRaw)
+  if (!isHHMM) return `\`--at\` time must be HH:MM (24h), got "${atRaw}"`
+
+  const config = loadConfig()
+  let chatId: string
+  let slugLabel: string
+  if (typeof slugFlag === 'string') {
+    const entry = resolveTarget(config, slugFlag)
+    if (!entry) return `no project found for "${slugFlag}"`
+    chatId = entry.chatId
+    slugLabel = entry.project.slug
+  } else {
+    return '`schedule inject` requires `--slug <slug>` to target a specific project'
+  }
+
+  const file = loadSchedules()
+  const id = newScheduleId()
+  const sched = {
+    id,
+    chatId,
+    at: atRaw,
+    prompt: templateBody,
+    type: 'inject' as const,
+    enabled: true,
+    lastRunAt: null,
+    createdAt: new Date().toISOString(),
+    maxRuns: null,
+    runCount: 0,
+  }
+  file.schedules.push(sched as Parameters<typeof file.schedules.push>[0])
+  saveSchedules(file)
+
+  return [
+    `✅ inject schedule **${id}**`,
+    `project: **${slugLabel}** (chat \`${chatId}\`)`,
+    `daily at: ${atRaw} (host local time)`,
+    `template: ${templateBody.length > 120 ? templateBody.slice(0, 120) + '…' : templateBody}`,
+    `vars supported: {{slug}}, {{date}}, {{time}}`,
   ].join('\n')
 }
 
