@@ -32,6 +32,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/ambient', label: 'Fleet Ambient', icon: '◌' },
       { href: '/ticker', label: 'Tool Call Ticker', icon: '▶' },
       { href: '/turns', label: 'Turn Volume', icon: '▦' },
+      { href: '/gantt', label: 'Lifecycle Gantt', icon: '⊟' },
     ],
   },
   {
@@ -54,6 +55,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/reports', label: 'Weekly Report', icon: '◻' },
       { href: '/advisor', label: 'Fleet Advisor', icon: '◆' },
       { href: '/similarity', label: 'Memory Similarity', icon: '⬡' },
+      { href: '/memory-audit', label: 'Memory Audit', icon: '≡' },
       { href: '/compare', label: 'Project Compare', icon: '⇌' },
       { href: '/proposal-graph', label: 'Proposal Graph', icon: '◎' },
     ],

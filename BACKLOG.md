@@ -2201,7 +2201,7 @@ Add a `/turns` page with a D3 treemap. Each rectangle is a project; area encodes
 
 ## P93 — Project Lifecycle Gantt
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -2226,7 +2226,7 @@ Add a `/gantt` page with a horizontal Gantt chart. Each row is a project. The X 
 
 ## P94 — Memory Audit Trail
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
