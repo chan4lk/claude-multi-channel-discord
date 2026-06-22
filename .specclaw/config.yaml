@@ -1,0 +1,73 @@
+# SpecClaw Configuration
+version: 1
+
+project:
+  name: "claude-mcd"
+  description: "Multi-channel Discord bot with per-channel Claude isolation and Mission Control dashboard"
+  repo: "chan4lk/claude-multi-channel-discord"
+
+models:
+  planning: "anthropic/claude-opus-4-8"
+  coding: "anthropic/claude-sonnet-4-6"
+  review: "anthropic/claude-sonnet-4-6"
+
+git:
+  strategy: "branch-per-change"
+  auto_commit: true
+  commit_prefix: "specclaw"
+  branch_prefix: "specclaw/"
+  worktree_dir: ".specclaw/worktrees"
+
+build:
+  test_command: "bun tsc --noEmit"
+  lint_command: ""
+  build_command: "cd apps/mission-control && bun run build"
+  parallel_tasks: 3
+  timeout_seconds: 300
+
+notifications:
+  enabled: true
+  channel: "discord"
+  target: ""
+  on_complete: true
+  on_failure: true
+  on_approval_needed: true
+
+github:
+  sync: false
+  repo: "chan4lk/claude-multi-channel-discord"
+  token: ""
+  label: "specclaw"
+
+workflow:
+  strict: true
+  code_review: false
+  code_review_block: false
+
+automation:
+  auto_mode: false
+  cron: ""
+  max_tasks_per_run: 5
+  auto_verify: true
+  auto_archive: false
+  post_build_review: true
+
+pr:
+  test_policy: "none"
+
+azdo:
+  enabled: false
+  org: ""
+  project: ""
+  repo: ""
+  boards:
+    sync: false
+    work_item_type: "Feature"
+    tag: "specclaw"
+
+jira:
+  enabled: false
+  domain: ""
+  email: ""
+  project_key: ""
+  issue_type: "Story"
