@@ -2525,7 +2525,7 @@ Add a `/health-trends` page with per-project health score time series. A new `/a
 
 ## P106 — Cross-Project Message Dependency Graph
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -2574,7 +2574,7 @@ Add a `TokenBurnGauge` component to the fleet header (next to fleet health badge
 
 ## P108 — Project Lifecycle Heatmap
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -2642,3 +2642,126 @@ Add a diff mode to the Session Replay page. When two turns are selected (hold sh
 - AC4: "Copy diff link" button generates `?from=X&to=Y` deep link
 - AC5: "Exit diff" button returns to single-turn view
 - AC6: Works with keyboard: D key toggles diff mode when two turns are selected
+
+---
+
+## P111 — Keyboard Shortcuts Reference Modal
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+The dashboard exposes a growing set of keyboard shortcuts (`V` for nav, `A` for advisor, `T` for thought stream, `B` for backlog overlay, `Ctrl+K` for command palette, arrow keys in replay, `D` for diff mode) but there is no discoverable reference. New operators learn shortcuts by reading source code or documentation. There is no in-app way to see what shortcuts are available on the current page.
+
+### Proposed Solution
+
+Add a `?` key that opens a full-screen modal listing all keyboard shortcuts grouped by context: **Global** (V, A, Ctrl+K, Esc), **Graph** (T, B, Pulse toggle), **Replay** (←/→, D, Space for autoplay), **Diff** (D, Esc). Each shortcut row shows: key badge, description, which page/component it applies to. Modal closeable with `?` or `Esc`. A `?` icon button in the dashboard header also opens it. Shortcut definitions stored in a single `keybindings.ts` constant so they stay in sync between the modal and the actual handlers.
+
+### Acceptance Criteria
+
+- AC1: `?` key (and `?` header button) opens the shortcuts modal from any dashboard page
+- AC2: Modal lists all shortcuts grouped by context (Global / Graph / Replay / Replay-Diff)
+- AC3: Each row shows: key badge, description, applicable page/component
+- AC4: Modal closeable with `?` or `Esc`; backdrop click also closes
+- AC5: No new shortcuts are added — modal only documents existing ones
+- AC6: `keybindings.ts` is the single source of truth for shortcut definitions used by both the modal and the actual event listeners
+
+---
+
+## P112 — In-App Notification Center
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+Browser push notifications (P29) fire when a stall is detected, but once dismissed they are gone. Budget alerts (P40), circuit-open events (P35), and watchdog kills are surfaced only in the live dashboard views — there is no persistent bell-style inbox. Operators who acknowledge a notification cannot revisit what triggered it without navigating to the audit log.
+
+### Proposed Solution
+
+Add a notification bell icon in the dashboard header (right of the `?` button). Clicking opens a slide-down panel listing the last 50 alerts with: timestamp, type badge (stall/budget/circuit/watchdog), project slug, and a description. Unread count shown as a red badge on the bell. Notifications sourced from the SSE `stall-alert`, `budget-alert`, and `circuit-open` events (already emitted by P28/P35/P40). Stored in a `useRef`-backed ring buffer in `FleetContext`; no new server state. Each notification has a "Mark read" (×) button; "Mark all read" in panel header. Notification state stored in `sessionStorage` (clears on tab close, intentionally ephemeral).
+
+### Acceptance Criteria
+
+- AC1: Bell icon in header shows unread count badge (red, pulsing when > 0)
+- AC2: Click bell opens notification panel; lists last 50 events newest-first
+- AC3: Each notification: timestamp, type badge (color-coded), slug, description
+- AC4: Clicking a notification slug navigates to `/?project=<slug>` and marks it read
+- AC5: "Mark all read" button clears unread count
+- AC6: Notifications sourced from SSE events already in `FleetContext`; no new API needed
+- AC7: Panel closes on `Esc` or click outside
+
+---
+
+## P113 — CLAUDE.md Template Library
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+Every new project needs a CLAUDE.md system prompt. Operators currently either copy-paste from an existing project or write from scratch. The CLAUDE.md Live Editor (P48) lets operators edit, but there is no template bank. Common prompt patterns (coding assistant, research agent, code reviewer, autonomous builder) are reimplemented manually per project, leading to inconsistency.
+
+### Proposed Solution
+
+Add a `/claude-templates` management page and a template picker to the CLAUDE.md editor (P48). Templates stored in `~/.claude/channels/discord-multi/claude-templates.json`. Each template has: name, description, category (coding/research/review/custom), body. A `/api/claude-templates` endpoint provides CRUD. The CLAUDE.md editor gains a "Load template" button that opens a searchable modal listing templates; selecting one populates the editor (with confirmation if there is existing content). A "Save as template" button saves the current CLAUDE.md as a new template. Built-in read-only templates: `coding-agent`, `research-agent`, `code-reviewer`.
+
+### Acceptance Criteria
+
+- AC1: `/claude-templates` page lists all templates with name, category, description, action buttons (edit/delete/use)
+- AC2: "Load template" button in CLAUDE.md editor opens searchable modal; selecting a template populates textarea (confirms if content present)
+- AC3: "Save as template" button saves current content with a name + category prompt
+- AC4: `/api/claude-templates` supports GET, POST (create/update), DELETE
+- AC5: Templates stored in `claude-templates.json`; survive restarts
+- AC6: 3 built-in read-only templates included (coding-agent, research-agent, code-reviewer)
+- AC7: Category filter chips on management page and picker modal
+
+---
+
+## P114 — Turn Annotation System
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+The Session Replay (P89) and Conversation History Viewer (P101) show turns but operators have no way to flag interesting turns, mark regressions, or attach notes. Debugging an agent's behavior requires remembering which turn showed the problem — without annotation, operators re-read the same conversation repeatedly.
+
+### Proposed Solution
+
+Add a turn annotation system. Operators can click a `🏷` flag icon on any turn in the Replay or Conversation viewer to open a small popover with: a text input (max 200 chars), a severity tag selector (note/warning/bug), and save/cancel buttons. Annotations stored in `mc.db` (`turn_annotations` table: `id, slug, sessionFile, turnIndex, tag, note, createdAt`). A `/api/annotations` CRUD endpoint. Annotated turns show a colored tag chip. A `/annotations` page lists all annotations fleet-wide, filterable by slug and tag. Annotations survives session restarts.
+
+### Acceptance Criteria
+
+- AC1: 🏷 icon on each turn in Replay and Conversation viewer; click opens annotation popover
+- AC2: Popover: text input (max 200 chars), tag selector (note=cyan/warning=amber/bug=red), Save/Cancel
+- AC3: Saved annotation shows as colored chip on the turn (color matches tag)
+- AC4: `turn_annotations` table in `mc.db`; `/api/annotations` supports GET/POST/DELETE
+- AC5: `/annotations` page lists all annotations fleet-wide; filter by slug + tag; sort by date
+- AC6: Clicking an annotation row opens Replay at that turn (`?turn=<index>` deep link)
+
+---
+
+## P115 — Outbound Webhook Alerts
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+Critical fleet events (stall detected, circuit-open, budget exhausted, watchdog kill) are surfaced only inside the dashboard. Teams using Slack, PagerDuty, or other incident management tools have no way to receive these alerts without keeping the dashboard open. The only external notification is the Discord master-channel message, which requires the operator to be in Discord.
+
+### Proposed Solution
+
+Add a `/admin/webhooks` sub-page to the admin panel. Operators register webhook URLs (HTTP POST endpoints) with a name, URL, and an event-type filter (stall/budget/circuit/watchdog/all). Webhooks stored in `mc.db` (`webhooks` table). When a matching SSE event fires server-side (inside the fleet broadcaster), the server POSTs a JSON payload `{ event, slug, timestamp, detail }` to all registered URLs with a 5s timeout. Delivery status (success/fail/timeout) logged per webhook per event. A "Test" button sends a sample payload. Supports Slack-compatible format (optional `useSlackFormat` flag that wraps the payload in `{ text: "..." }` with emoji).
+
+### Acceptance Criteria
+
+- AC1: `/admin/webhooks` page: list registered webhooks with name, URL (masked), event filter, last delivery status
+- AC2: "Add webhook" form: name, URL, event filter (multiselect), optional Slack format toggle
+- AC3: Webhook fired server-side on matching events (stall/budget/circuit/watchdog); 5s timeout; failure logged
+- AC4: `webhooks` table in `mc.db`; delivery log in `webhook_deliveries` table
+- AC5: "Test" button sends `{ event: "test", slug: "test", timestamp: "...", detail: "Test webhook delivery" }` to the URL
+- AC6: Slack format wraps payload as `{ text: "⚠ [slug] stall detected: <detail>" }` when enabled
+- AC7: Delivery log visible per webhook: last 20 deliveries with status and response code
