@@ -2500,7 +2500,7 @@ Add a `/projects/[slug]/map` page with a radial mind map. The center node is the
 
 ## P105 — Agent Health Trend Timeline
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
