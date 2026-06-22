@@ -2696,7 +2696,7 @@ Add a notification bell icon in the dashboard header (right of the `?` button). 
 
 ## P113 — CLAUDE.md Template Library
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -2721,7 +2721,7 @@ Add a `/claude-templates` management page and a template picker to the CLAUDE.md
 
 ## P114 — Turn Annotation System
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem

@@ -141,6 +141,19 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
 
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook_id ON webhook_deliveries(webhook_id);
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_ts         ON webhook_deliveries(ts);
+
+CREATE TABLE IF NOT EXISTS turn_annotations (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  slug         TEXT NOT NULL,
+  session_file TEXT NOT NULL DEFAULT '',
+  turn_index   INTEGER NOT NULL,
+  tag          TEXT NOT NULL DEFAULT 'note',
+  note         TEXT NOT NULL DEFAULT '',
+  created_at   INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+CREATE INDEX IF NOT EXISTS idx_turn_annotations_slug ON turn_annotations(slug);
+CREATE INDEX IF NOT EXISTS idx_turn_annotations_tag  ON turn_annotations(tag);
 `);
 
 // Prune old events on startup
@@ -509,6 +522,69 @@ export function getWebhookDeliveries(webhookId: number, limit = 20): WebhookDeli
   return db.prepare(
     `SELECT * FROM webhook_deliveries WHERE webhook_id = ? ORDER BY id DESC LIMIT ?`
   ).all(webhookId, limit) as WebhookDeliveryRow[]
+}
+
+// ── Turn Annotations (P114) ───────────────────────────────────────────────
+
+export type TurnAnnotationTag = 'note' | 'warning' | 'bug'
+
+export type TurnAnnotationRow = {
+  id: number
+  slug: string
+  session_file: string
+  turn_index: number
+  tag: TurnAnnotationTag
+  note: string
+  created_at: number
+}
+
+export function insertTurnAnnotation(
+  slug: string,
+  sessionFile: string,
+  turnIndex: number,
+  tag: TurnAnnotationTag,
+  note: string
+): number {
+  const result = db.prepare(
+    `INSERT INTO turn_annotations (slug, session_file, turn_index, tag, note) VALUES (?, ?, ?, ?, ?)`
+  ).run(slug, sessionFile, turnIndex, tag, note.slice(0, 200))
+  return result.lastInsertRowid as number
+}
+
+export function updateTurnAnnotation(id: number, tag: TurnAnnotationTag, note: string): void {
+  db.prepare(
+    `UPDATE turn_annotations SET tag = ?, note = ? WHERE id = ?`
+  ).run(tag, note.slice(0, 200), id)
+}
+
+export function deleteTurnAnnotation(id: number): void {
+  db.prepare(`DELETE FROM turn_annotations WHERE id = ?`).run(id)
+}
+
+export function getTurnAnnotations(opts: {
+  slug?: string
+  tag?: TurnAnnotationTag
+  sessionFile?: string
+  cursor?: number
+  limit?: number
+}): TurnAnnotationRow[] {
+  const conditions: string[] = []
+  const params: unknown[] = []
+  if (opts.slug) { conditions.push('slug = ?'); params.push(opts.slug) }
+  if (opts.tag) { conditions.push('tag = ?'); params.push(opts.tag) }
+  if (opts.sessionFile) { conditions.push('session_file = ?'); params.push(opts.sessionFile) }
+  if (opts.cursor != null) { conditions.push('id < ?'); params.push(opts.cursor) }
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+  const limit = Math.min(opts.limit ?? 200, 500)
+  return db.prepare(
+    `SELECT * FROM turn_annotations ${where} ORDER BY id DESC LIMIT ?`
+  ).all(...params, limit) as TurnAnnotationRow[]
+}
+
+export function getTurnAnnotationsForSession(slug: string, sessionFile: string): TurnAnnotationRow[] {
+  return db.prepare(
+    `SELECT * FROM turn_annotations WHERE slug = ? AND session_file = ? ORDER BY turn_index ASC`
+  ).all(slug, sessionFile) as TurnAnnotationRow[]
 }
 
 export default db;
