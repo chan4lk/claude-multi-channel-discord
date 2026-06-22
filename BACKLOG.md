@@ -2007,7 +2007,7 @@ Extend the existing per-project metrics API (`/api/metrics/[slug]`) to add a `to
 
 ## P85 — Fleet State Snapshot & Diff
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -2055,7 +2055,7 @@ Add a `/backlog` page that calls `/api/backlog` to render a kanban-style summary
 
 ## P87 — Unified Alert History Log
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem

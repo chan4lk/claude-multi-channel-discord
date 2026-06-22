@@ -78,6 +78,8 @@ const SIDEBAR_ITEMS = [
   { href: '/traceability', icon: '⑂', label: 'Traceability' },
   { href: '/backlog', icon: '◈', label: 'Backlog' },
   { href: '/audit', icon: '≡', label: 'Audit' },
+  { href: '/alerts', icon: '⚠', label: 'Alerts' },
+  { href: '/snapshots', icon: '⊡', label: 'Snapshots' },
   { href: '/broadcast', icon: '◉', label: 'Broadcast' },
   { href: '/search', icon: '⌕', label: 'Search' },
 ] as const

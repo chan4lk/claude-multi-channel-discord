@@ -94,11 +94,35 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts      ON audit_log(ts);
 CREATE INDEX IF NOT EXISTS idx_audit_actor   ON audit_log(actor_id);
 CREATE INDEX IF NOT EXISTS idx_audit_verb    ON audit_log(verb);
 CREATE INDEX IF NOT EXISTS idx_audit_target  ON audit_log(target);
+
+CREATE TABLE IF NOT EXISTS fleet_snapshots (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  label      TEXT NOT NULL DEFAULT '',
+  ts         INTEGER NOT NULL DEFAULT (unixepoch()),
+  project_count INTEGER NOT NULL DEFAULT 0,
+  data       TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_fleet_snapshots_ts ON fleet_snapshots(ts);
+
+CREATE TABLE IF NOT EXISTS alert_events (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts         INTEGER NOT NULL DEFAULT (unixepoch()),
+  slug       TEXT NOT NULL DEFAULT '',
+  alert_type TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  payload    TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_alert_events_ts        ON alert_events(ts);
+CREATE INDEX IF NOT EXISTS idx_alert_events_slug      ON alert_events(slug);
+CREATE INDEX IF NOT EXISTS idx_alert_events_type      ON alert_events(alert_type);
 `);
 
 // Prune old events on startup
 const cutoff = Math.floor(Date.now() / 1000) - retentionDays * 86400;
 db.prepare("DELETE FROM events WHERE created_at < ?").run(cutoff);
+db.prepare("DELETE FROM alert_events WHERE ts < ?").run(cutoff);
 
 export function insertEvent(e: McEvent): void {
   db.prepare(
@@ -313,6 +337,79 @@ export function getAuditLog(opts: {
   return db.prepare(
     `SELECT * FROM audit_log ${where} ORDER BY id DESC LIMIT ?`
   ).all(...params, limit) as AuditRow[]
+}
+
+// ── Fleet Snapshots (P85) ─────────────────────────────────────────────────
+
+export type SnapshotRow = {
+  id: number
+  label: string
+  ts: number
+  project_count: number
+  data: string
+}
+
+export function insertSnapshot(label: string, projectCount: number, data: unknown): number {
+  const result = db.prepare(
+    `INSERT INTO fleet_snapshots (label, project_count, data) VALUES (?, ?, ?)`
+  ).run(label, projectCount, JSON.stringify(data))
+  return result.lastInsertRowid as number
+}
+
+export function getSnapshots(limit = 50): SnapshotRow[] {
+  return db.prepare(
+    `SELECT id, label, ts, project_count, data FROM fleet_snapshots ORDER BY ts DESC LIMIT ?`
+  ).all(limit) as SnapshotRow[]
+}
+
+export function getSnapshot(id: number): SnapshotRow | null {
+  return db.prepare(
+    `SELECT id, label, ts, project_count, data FROM fleet_snapshots WHERE id = ?`
+  ).get(id) as SnapshotRow | null
+}
+
+export function deleteSnapshot(id: number): void {
+  db.prepare(`DELETE FROM fleet_snapshots WHERE id = ?`).run(id)
+}
+
+// ── Alert Events (P87) ────────────────────────────────────────────────────
+
+export type AlertEventRow = {
+  id: number
+  ts: number
+  slug: string
+  alert_type: string
+  description: string
+  payload: string
+}
+
+export function insertAlertEvent(
+  slug: string,
+  alertType: string,
+  description: string,
+  payload: Record<string, unknown> = {}
+): void {
+  db.prepare(
+    `INSERT INTO alert_events (slug, alert_type, description, payload) VALUES (?, ?, ?, ?)`
+  ).run(slug, alertType, description, JSON.stringify(payload))
+}
+
+export function getAlertEvents(opts: {
+  slug?: string
+  alert_type?: string
+  cursor?: number
+  limit?: number
+}): AlertEventRow[] {
+  const conditions: string[] = []
+  const params: unknown[] = []
+  if (opts.slug) { conditions.push('slug = ?'); params.push(opts.slug) }
+  if (opts.alert_type) { conditions.push('alert_type = ?'); params.push(opts.alert_type) }
+  if (opts.cursor != null) { conditions.push('id < ?'); params.push(opts.cursor) }
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+  const limit = Math.min(opts.limit ?? 100, 500)
+  return db.prepare(
+    `SELECT * FROM alert_events ${where} ORDER BY id DESC LIMIT ?`
+  ).all(...params, limit) as AlertEventRow[]
 }
 
 export default db;
