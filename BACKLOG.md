@@ -2550,7 +2550,7 @@ Add a `/dependency-graph` page that renders a directed graph of inter-project me
 
 ## P107 — Live Token Burn Rate Gauge
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -2598,7 +2598,7 @@ Add a `/lifecycle-heatmap` page with a GitHub-style contribution heatmap per pro
 
 ## P109 — Memory Decay Visualizer
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
