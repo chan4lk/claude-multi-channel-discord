@@ -2671,7 +2671,7 @@ Add a `?` key that opens a full-screen modal listing all keyboard shortcuts grou
 
 ## P112 — In-App Notification Center
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -2745,7 +2745,7 @@ Add a turn annotation system. Operators can click a `🏷` flag icon on any turn
 
 ## P115 — Outbound Webhook Alerts
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
