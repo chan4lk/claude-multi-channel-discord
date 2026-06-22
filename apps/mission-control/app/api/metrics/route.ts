@@ -118,6 +118,7 @@ function computeSlugMetrics(slug: string, model: string, mcdDir: string): SlugMe
     turnsPerDay: Math.round((totalTurns / spanDays) * 10) / 10,
     monthlyTokens: 0,
     dayBuckets: [...dayMap.entries()].map(([date, tokens]) => ({ date, tokens })),
+    toolStats: { topTools: [], avgCallsPerTurn: 0, avgOutputTokensPerTurn: 0, efficiencyScore: 0 },
     stale: false,
     checkedAt: new Date().toISOString(),
   }

@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import type { MetricsResponse } from '../api/metrics/route'
-import type { SlugMetrics } from '../api/metrics/[slug]/route'
+import type { SlugMetrics, ToolStats } from '../api/metrics/[slug]/route'
 import type { ActivityHeatmapResponse, ProjectHeatmap } from '../api/metrics/activity-heatmap/route'
 import type { TurnDurationsResponse, TurnDurationEntry } from '../api/metrics/turn-durations/route'
 import Sparkline from '../../components/ui/Sparkline'
@@ -111,11 +111,82 @@ function MetricsRow({ project, expanded, onToggle }: {
                 <span>Output: {fmtTokens(project.totalOutputTokens)}</span>
                 <span>Total turns/day: {project.turnsPerDay}</span>
               </div>
+              {project.toolStats && <ScoreCard stats={project.toolStats} slug={project.slug} />}
             </div>
           </td>
         </tr>
       )}
     </>
+  )
+}
+
+function ScoreCard({ stats, slug }: { stats: ToolStats; slug: string }) {
+  const [open, setOpen] = useState(false)
+  const hasData = stats.topTools.length > 0
+  const maxCount = Math.max(...stats.topTools.map((t) => t.count), 1)
+  const gaugeColor = stats.efficiencyScore >= 70 ? '#4ADE80' : stats.efficiencyScore >= 40 ? '#F59E0B' : '#EF4444'
+
+  return (
+    <div className="mt-3 rounded border border-cyber-cyan/10" style={{ background: 'rgba(0,245,255,0.02)' }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between px-4 py-2 text-left"
+      >
+        <span className="text-[0.6rem] font-mono text-slate-400 uppercase tracking-wider">
+          ⬡ Behavior Scorecard — {slug}
+        </span>
+        <span className="text-[0.55rem] font-mono text-slate-600 transition-transform inline-block"
+          style={{ transform: open ? 'rotate(90deg)' : 'none' }}>▶</span>
+      </button>
+      {open && (
+        <div className="px-4 pb-4">
+          {!hasData ? (
+            <p className="text-[0.6rem] font-mono text-slate-600">No tool call data available.</p>
+          ) : (
+            <div className="flex flex-col gap-4">
+              {/* Key stats row */}
+              <div className="flex flex-wrap gap-6">
+                <div>
+                  <p className="text-[0.5rem] font-mono text-slate-600 uppercase tracking-wider">Efficiency Score</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <div className="relative w-16 h-3 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                      <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${stats.efficiencyScore}%`, background: gaugeColor }} />
+                    </div>
+                    <span className="text-sm font-mono font-bold" style={{ color: gaugeColor }}>{stats.efficiencyScore}</span>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[0.5rem] font-mono text-slate-600 uppercase tracking-wider">Avg Calls / Turn</p>
+                  <p className="text-sm font-mono font-bold text-slate-300">{stats.avgCallsPerTurn}</p>
+                </div>
+                <div>
+                  <p className="text-[0.5rem] font-mono text-slate-600 uppercase tracking-wider">Avg Output / Turn</p>
+                  <p className="text-sm font-mono font-bold text-slate-300">{fmtTokens(stats.avgOutputTokensPerTurn)}</p>
+                </div>
+              </div>
+              {/* Top tools bar chart */}
+              <div>
+                <p className="text-[0.5rem] font-mono text-slate-600 uppercase tracking-wider mb-2">Top Tools</p>
+                <div className="flex flex-col gap-1.5">
+                  {stats.topTools.slice(0, 5).map((t) => (
+                    <div key={t.name} className="flex items-center gap-2">
+                      <span className="text-[0.6rem] font-mono text-slate-400 w-32 truncate" title={t.name}>{t.name}</span>
+                      <div className="flex-1 h-3 rounded-sm overflow-hidden" style={{ background: 'rgba(255,255,255,0.05)', maxWidth: 200 }}>
+                        <div
+                          className="h-full rounded-sm"
+                          style={{ width: `${(t.count / maxCount) * 100}%`, background: 'rgba(0,245,255,0.6)' }}
+                        />
+                      </div>
+                      <span className="text-[0.55rem] font-mono text-slate-500 w-10 text-right">{t.count}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 

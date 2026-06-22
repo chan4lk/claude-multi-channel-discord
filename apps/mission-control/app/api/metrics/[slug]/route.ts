@@ -5,6 +5,18 @@ import { NextRequest } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 
+export interface ToolStat {
+  name: string
+  count: number
+}
+
+export interface ToolStats {
+  topTools: ToolStat[]
+  avgCallsPerTurn: number
+  avgOutputTokensPerTurn: number
+  efficiencyScore: number  // 0-100: output tokens per tool call normalized
+}
+
 export interface SlugMetrics {
   slug: string
   totalInputTokens: number
@@ -16,6 +28,7 @@ export interface SlugMetrics {
   monthlyTokens: number
   monthlyTokenBudget?: number
   dayBuckets: { date: string; tokens: number }[]
+  toolStats: ToolStats
   stale: boolean
   checkedAt: string
 }
@@ -69,12 +82,13 @@ function parseMetrics(jsonlFiles: string[], model: string): Omit<SlugMetrics, 's
   let monthlyTokens = 0
   const latencies: number[] = []
   const dayMap: Map<string, number> = new Map()
+  const toolCounts: Map<string, number> = new Map()
+  const callsPerTurn: number[] = []
 
   const now = Date.now()
   const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000
   const currentMonth = new Date().toISOString().slice(0, 7)
 
-  // Build 7-day bucket keys
   for (let d = 6; d >= 0; d--) {
     const date = new Date(now - d * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
     dayMap.set(date, 0)
@@ -84,6 +98,7 @@ function parseMetrics(jsonlFiles: string[], model: string): Omit<SlugMetrics, 's
   let firstTs: number | null = null
   let lastTs: number | null = null
   let totalTurns = 0
+  let totalToolCalls = 0
 
   for (const file of jsonlFiles) {
     let raw = ''
@@ -105,16 +120,15 @@ function parseMetrics(jsonlFiles: string[], model: string): Omit<SlugMetrics, 's
 
       if (record.type === 'assistant') {
         totalTurns++
-        const usage = (record as { message?: { usage?: { input_tokens?: number; output_tokens?: number } } }).message?.usage
+        const msg = (record as { message?: { usage?: { input_tokens?: number; output_tokens?: number }; content?: unknown[] } }).message
+        const usage = msg?.usage
         const inTok = usage?.input_tokens ?? 0
         const outTok = usage?.output_tokens ?? 0
         totalInput += inTok
         totalOutput += outTok
 
         const recordMonth = ts ? new Date(ts).toISOString().slice(0, 7) : null
-        if (recordMonth === currentMonth) {
-          monthlyTokens += inTok + outTok
-        }
+        if (recordMonth === currentMonth) monthlyTokens += inTok + outTok
 
         if (ts && ts >= sevenDaysAgo) {
           const date = isoToDate(new Date(ts).toISOString())
@@ -123,11 +137,21 @@ function parseMetrics(jsonlFiles: string[], model: string): Omit<SlugMetrics, 's
 
         if (ts && prevAssistantTs !== null) {
           const latency = ts - prevAssistantTs
-          if (latency > 0 && latency < 30 * 60 * 1000) {
-            latencies.push(latency)
-          }
+          if (latency > 0 && latency < 30 * 60 * 1000) latencies.push(latency)
         }
         if (ts) prevAssistantTs = ts
+
+        let turnToolCalls = 0
+        const content = Array.isArray(msg?.content) ? msg.content : []
+        for (const block of content) {
+          if (block && typeof block === 'object' && (block as Record<string, unknown>).type === 'tool_use') {
+            const name = String((block as Record<string, unknown>).name ?? 'unknown')
+            toolCounts.set(name, (toolCounts.get(name) ?? 0) + 1)
+            turnToolCalls++
+            totalToolCalls++
+          }
+        }
+        callsPerTurn.push(turnToolCalls)
       }
     }
   }
@@ -143,6 +167,20 @@ function parseMetrics(jsonlFiles: string[], model: string): Omit<SlugMetrics, 's
 
   const dayBuckets = [...dayMap.entries()].map(([date, tokens]) => ({ date, tokens }))
 
+  const topTools = [...toolCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([name, count]) => ({ name, count }))
+
+  const avgCallsPerTurn = callsPerTurn.length > 0
+    ? Math.round((callsPerTurn.reduce((s, v) => s + v, 0) / callsPerTurn.length) * 10) / 10
+    : 0
+  const avgOutputTokensPerTurn = totalTurns > 0 ? Math.round(totalOutput / totalTurns) : 0
+  const rawEfficiency = totalToolCalls > 0 ? totalOutput / totalToolCalls : 0
+  const efficiencyScore = Math.min(100, Math.round((rawEfficiency / 2000) * 100))
+
+  const toolStats: ToolStats = { topTools, avgCallsPerTurn, avgOutputTokensPerTurn, efficiencyScore }
+
   return {
     totalInputTokens: totalInput,
     totalOutputTokens: totalOutput,
@@ -152,6 +190,7 @@ function parseMetrics(jsonlFiles: string[], model: string): Omit<SlugMetrics, 's
     turnsPerDay: Math.round(turnsPerDay * 10) / 10,
     monthlyTokens,
     dayBuckets,
+    toolStats,
   }
 }
 
@@ -181,12 +220,14 @@ export async function GET(
     ? (projectEntry as Record<string, unknown>)['monthlyTokenBudget'] as number
     : undefined
 
+  const emptyToolStats: ToolStats = { topTools: [], avgCallsPerTurn: 0, avgOutputTokensPerTurn: 0, efficiencyScore: 0 }
+
   if (!projectDir) {
     return Response.json({
       slug, totalInputTokens: 0, totalOutputTokens: 0, estimatedCostUsd: 0,
       avgLatencyMs: 0, p95LatencyMs: 0, turnsPerDay: 0, monthlyTokens: 0,
       ...(monthlyTokenBudget !== undefined ? { monthlyTokenBudget } : {}),
-      dayBuckets: [], stale: false, checkedAt: new Date().toISOString(),
+      dayBuckets: [], toolStats: emptyToolStats, stale: false, checkedAt: new Date().toISOString(),
     } satisfies SlugMetrics)
   }
 

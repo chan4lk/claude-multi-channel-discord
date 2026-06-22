@@ -76,6 +76,7 @@ const SIDEBAR_ITEMS = [
   { href: '/branches', icon: '⑂', label: 'Branches' },
   { href: '/heatmap', icon: '▦', label: 'Heatmap' },
   { href: '/traceability', icon: '⑂', label: 'Traceability' },
+  { href: '/backlog', icon: '◈', label: 'Backlog' },
   { href: '/audit', icon: '≡', label: 'Audit' },
   { href: '/broadcast', icon: '◉', label: 'Broadcast' },
   { href: '/search', icon: '⌕', label: 'Search' },

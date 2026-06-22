@@ -1984,7 +1984,7 @@ Add a `/traceability` page that reads BACKLOG.md, extracts all proposals (P-numb
 
 ## P84 — Agent Behavior Scorecard
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -2031,7 +2031,7 @@ Add a `/snapshots` page with a "Take Snapshot" button. Snapshots capture: all pr
 
 ## P86 — Backlog Dashboard Page
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
