@@ -2079,7 +2079,7 @@ Persist alert events (stall detected, stall resolved, budget threshold hit, watc
 
 ## P88 — Per-Project Detail Page
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -2127,7 +2127,7 @@ Add a "Replay" button to the Flamegraph page (and SpotlightDrawer). Clicking it 
 
 ## P90 — Inject Command Templates
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
