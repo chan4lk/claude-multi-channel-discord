@@ -2146,3 +2146,127 @@ Add a "Templates" section to the InjectTerminal sidebar. Templates are saved in 
 - AC4: Templates persisted in localStorage; survive page refresh
 - AC5: CommandPalette shows templates under a "Templates" group; selecting one opens InjectTerminal with the text pre-filled
 - AC6: Max 20 templates enforced; oldest evicted when limit reached
+
+---
+
+## P91 — Proposal Dependency Graph
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+The Backlog Dashboard (P86) shows proposals as a flat list sorted by number. Operators cannot see which proposals build on others, which ones are preconditions for new work, or how the roadmap clusters by theme. There is no graph-based exploration surface for the proposal space.
+
+### Proposed Solution
+
+Add a `/proposal-graph` page with a force-directed graph (D3) where each node is a BACKLOG.md proposal. Edges are derived by scanning proposal body text for mentions of other proposal numbers (e.g. "extends P66", "see P83"). Node size encodes linked commit count from the traceability API. Color encodes status (green = done, amber = pending). Nodes cluster by inferred theme category (graph, memory, alerts, scheduler, metrics, etc.) derived from title keywords. Clicking a node opens a detail drawer with the full proposal body and acceptance criteria.
+
+### Acceptance Criteria
+
+- AC1: All proposals from BACKLOG.md appear as nodes; loaded via `/api/traceability`
+- AC2: Edges drawn for cross-proposal body references (PXX mention in another proposal's text)
+- AC3: Node size proportional to linked commit count (min size enforced for untraced nodes)
+- AC4: Node color: green = done, amber = pending; stalled nodes pulse
+- AC5: Click opens side drawer with proposal title, status, ACs, and linked commits
+- AC6: Theme clusters rendered as soft halos (D3 hull) around keyword-grouped proposals
+- AC7: Empty-state placeholder when no proposals loaded
+
+---
+
+## P92 — Fleet Turn Volume Treemap
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+Operators have no at-a-glance view of which projects are consuming the most compute (turns, tool calls). The metrics page shows per-project averages but not relative consumption across the fleet in a single visual. Heavy channels go unnoticed until they stall or run out of budget.
+
+### Proposed Solution
+
+Add a `/turns` page with a D3 treemap. Each rectangle is a project; area encodes turn count in the trailing 24 hours (sourced from transcript `.jsonl` files via a new `/api/fleet/turns` endpoint). Color encodes project state: cyan = idle, green = active, red = stalled. Hovering shows slug, turn count, avg tool calls/turn, last active. Clicking navigates to `/projects/[slug]`. A time-range selector (1h / 6h / 24h / 7d) controls the window.
+
+### Acceptance Criteria
+
+- AC1: Treemap renders within 2s; all projects with ≥ 1 turn appear
+- AC2: Rectangle area proportional to turn count in selected time window
+- AC3: Color encodes state: cyan = idle, green = active, red = stalled (pulsing)
+- AC4: Hover tooltip: slug, turn count, avg tool calls, last-active timestamp
+- AC5: Click navigates to `/projects/[slug]`
+- AC6: Time-range selector: 1h / 6h / 24h / 7d; default 24h; state in URL param
+- AC7: Zero-turn projects shown as thin placeholder strip, not omitted
+
+---
+
+## P93 — Project Lifecycle Gantt
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+There is no way to see the full lifecycle of each project on a shared time axis. Operators cannot compare when projects were created, when they last received an inject, when they stalled, or how activity overlaps across channels. The Cross-Channel Timeline (P10) shows events chronologically but not per-project lanes.
+
+### Proposed Solution
+
+Add a `/gantt` page with a horizontal Gantt chart. Each row is a project. The X axis is wall-clock time (scroll horizontally; default view = last 7 days). Events are plotted as icons on the lane: ● = turn, ⚡ = inject, ✗ = stall, 🔀 = PR merge. Data sourced from transcript `.jsonl` timestamps and the unified alert log. A project row can be collapsed to a thin bar (showing only high-signal events). Hover over any event shows a tooltip with timestamp and brief description.
+
+### Acceptance Criteria
+
+- AC1: All active projects appear as rows; inactive projects hidden unless toggled
+- AC2: Turn events plotted as dots on the lane at correct timestamps
+- AC3: Inject, stall, and PR events rendered with distinct icons and colors
+- AC4: X axis scrollable; default view = last 7 days; zoom in/out with +/- buttons
+- AC5: Hover tooltip: event type, timestamp, brief description
+- AC6: Row click expands to show turn count per day as a mini-sparkline below the lane
+- AC7: Export as PNG button
+
+---
+
+## P94 — Memory Audit Trail
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+Memories written by Claude accumulate across projects but there is no unified view of what was remembered, when, or why. The Memory Graph (P13) shows connections between memories but not their creation timeline. Operators cannot audit what Claude has learned or detect stale/incorrect memories without SSHing into the server.
+
+### Proposed Solution
+
+Add a `/memory-audit` page with a filterable, sortable table of all memory files across all projects. A new `/api/memory-audit` endpoint scans each project's `memory/` directory (e.g. `~/.claude/channels/discord-multi/projects/<slug>/memory/`), reads frontmatter (name, type, description) and file mtime. Table columns: project, memory name, type (user/feedback/project/reference), description excerpt, last modified. Filter chips by type. Search by name/description. Clicking a row opens a drawer with the full memory body.
+
+### Acceptance Criteria
+
+- AC1: Table loads within 3s; all memory files across all projects shown
+- AC2: Filter chips by type: user / feedback / project / reference / all
+- AC3: Search by name or description excerpt (client-side, debounced)
+- AC4: Sort by last-modified (default desc), project, name, type
+- AC5: Click row opens drawer: full memory body (markdown rendered), file path, edit timestamp
+- AC6: Stale memories (not updated in 30+ days) flagged with a clock icon
+- AC7: Empty state if no memories exist
+
+---
+
+## P95 — Dashboard Mode Presets
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+The main dashboard accumulates panels (Fleet Health Bar, Stall Alerts, Instance Grid, Event Feed, etc.) but shows them all simultaneously, which is overwhelming for focused tasks. An operator triaging stalls needs different panels visible than one reviewing pipeline progress. There is no way to save or switch named "modes."
+
+### Proposed Solution
+
+Add a preset switcher (pill-shaped toggle group) to the dashboard header. Three built-in presets: **Triage** (Fleet Health Bar + Stall Alerts + Inject Terminal), **Review** (Pipeline Kanban + Replay + Diff Viewer), **Ambient** (Galaxy Map + Event Feed + Turn Ticker). Custom presets can be saved from the current panel layout. Preset selection stored in localStorage. Each preset stores which dashboard sections are visible. Section visibility toggles animate via CSS transition.
+
+### Acceptance Criteria
+
+- AC1: Preset switcher visible in dashboard header; three built-in presets (Triage, Review, Ambient)
+- AC2: Switching preset shows/hides the correct panels with CSS fade transition (≤ 200ms)
+- AC3: "Save current layout as preset" button; prompts for name (1–30 chars)
+- AC4: Custom presets stored in localStorage; survive page refresh
+- AC5: Delete button on custom presets (built-ins cannot be deleted)
+- AC6: Active preset name shown in header; "Custom" shown when layout diverges from any saved preset
