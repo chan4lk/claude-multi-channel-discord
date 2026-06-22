@@ -2880,3 +2880,118 @@ Add a "Convergence Score" per project: ratio of goal-advancing turns (turns wher
 - AC3: Per-project convergence chip visible in InstanceGrid card (small pill, color-coded)
 - AC4: `convergence_history` table in `mc.db`: `(slug, date, score)`; 7-day sparkline on project detail page
 - AC5: Score < 20 for ≥2h emits `convergence-alert` SSE event and posts master-channel notification (once per 6h per project)
+
+---
+
+## P121 — Live Fleet Topology Map
+
+**Status:** `[x] done`
+**Created:** 2026-06-22
+
+### Problem
+
+Existing graph views (collaboration network, mind map, proposal graph) show static relationships computed from files. Operators have no real-time view of *active* cross-project message flows: which projects are referencing each other right now, which are silent, and which are blocked waiting for input. This makes coordinating parallel work streams opaque.
+
+### Proposed Solution
+
+Add a `/topology` page with a force-directed graph that updates live via SSE. Nodes = active projects, sized by turns/hour. Animated particle streams flow along edges when a project sends an inject or references another project's slug in a reply. Node border pulses cyan when a reply was sent in the last 30s; red when stuck (convergence < 20). Sidebar shows a live event log (project + action + timestamp). Edge weight = message volume in last 10 min. Controls: pause animation, filter by status (active/idle/stuck), time-window selector (last 1m/5m/15m).
+
+### Acceptance Criteria
+
+- AC1: `/topology` page renders force-directed graph; nodes = projects, edges = cross-project references; auto-refresh every 5s via SSE or polling
+- AC2: Node size scales with turns/hour (last 1h); node border color: cyan=active (<30s reply), amber=idle, red=stuck (convergence <20)
+- AC3: Animated SVG particles flow along edges when activity detected; particle count proportional to message volume
+- AC4: Sidebar live event log: scrollable list of (project slug, action type, timestamp), max 50 entries, newest first
+- AC5: Controls: pause/play button, status filter chips (active/idle/stuck), time-window dropdown (1m/5m/15m); `/api/topology` endpoint returns `{ nodes, edges, events }`
+
+---
+
+## P122 — Goal Achievement Radar
+
+**Status:** `[x] done`
+**Created:** 2026-06-22
+
+### Problem
+
+Goals are tracked as free-text GOAL.md files with no structured progress measurement. Operators can't tell whether a project is 10% or 90% toward its stated goal, compare goal health across projects, or detect projects that have silently drifted from their goals. The convergence score (P120) measures turn efficiency but not goal *specificity*.
+
+### Proposed Solution
+
+Add a `/goal-radar` page with two panels. Left: a D3 radar chart (spider chart) where each axis = a project, and the plotted value = estimated goal advancement (0–100). Advancement = keyword overlap between the last 20 replies and the GOAL.md text, normalized by goal length. Right: per-project goal detail card showing GOAL.md text, top 5 matched keywords, advancement %, and a 7-day advancement sparkline. A "Reset Baseline" button re-anchors the keyword model to today's replies. Fleet-wide radar renders one polygon per project; colors match the existing palette.
+
+### Acceptance Criteria
+
+- AC1: `/goal-radar` page: D3 radar chart with one axis per project; plotted value = goal advancement score (0–100)
+- AC2: Goal advancement = keyword overlap between last 20 replies and GOAL.md, normalized; stored in `goal_advancement` table in `mc.db` (slug, date, score)
+- AC3: Right panel: per-project card with GOAL.md text snippet, top-5 matched keywords highlighted, advancement %, 7-day sparkline
+- AC4: `/api/goal-radar` returns `{ projects: [{ slug, goalText, score, keywords, history }] }`; refreshes every 60s
+- AC5: Fleet summary bar shows average goal advancement next to convergence gauge (from P120); color-coded green/amber/red
+
+---
+
+## P123 — Context Window Pressure Monitor
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+Claude projects silently approach context window limits with no operator visibility. When a project nears its context ceiling, turn quality degrades, tool calls get dropped, and the session eventually fails. Operators discover this only after observing erratic behavior, not proactively.
+
+### Proposed Solution
+
+Add a `/context-pressure` page showing a per-project stacked bar chart of estimated context window usage: system prompt tokens (fixed), conversation history tokens (grows), tool result tokens (variable). Estimates derived from `.jsonl` transcript byte counts (rough proxy). A "pressure score" 0–100 = `used / max_context`. Projects over 70% show an amber warning; over 90% show a red alert + trigger a `context-pressure` SSE event. A "Compact" button sends a `[OPERATOR] Please summarize your context and continue.` inject. 7-day trend line shows pressure growth rate.
+
+### Acceptance Criteria
+
+- AC1: `/context-pressure` page: stacked bar chart per project (system/history/tool segments); bar color green/amber/red by pressure score
+- AC2: Pressure score = estimated tokens used / model context limit; stored in `context_pressure` table (slug, timestamp, score, breakdown JSON)
+- AC3: Projects > 70% show amber chip in InstanceGrid; > 90% emit `context-pressure` SSE event and post master-channel DM (once per 2h)
+- AC4: "Compact" quick-action button per project calls `POST /api/inject/<slug>` with summary prompt; visible in both this page and the deep-dive drawer (P119)
+- AC5: `/api/context-pressure` returns `{ projects: [{ slug, score, segments, trend }] }`; 7-day trend line rendered per project
+
+---
+
+## P124 — Multi-Project Narrative Timeline
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+Operators managing 5+ parallel projects have no unified chronological view of what happened across the fleet. Each project's conversation is isolated in its own turn viewer. Reconstructing a "story" of a day's work — which project advanced, when, what was said — requires clicking through individual project pages.
+
+### Proposed Solution
+
+Add a `/narrative` page with a single vertical timeline showing all projects' turns interleaved chronologically. Each entry is a "turn card": project badge (color-coded), role (user/assistant), first 140 chars of text, timestamp, and a `[→]` link to the full turn viewer. Filter bar: date-range picker, project multi-select, role filter (user/assistant/tool), keyword search. Virtualized scroll (react-virtual or similar) for large turn sets. "Playback" mode steps through turns at 1×/5×/10× speed with auto-scroll — useful for post-mortem reviews. Export as markdown log.
+
+### Acceptance Criteria
+
+- AC1: `/narrative` page: virtualized timeline of all projects' turns interleaved by timestamp; each card shows project badge, role, text preview (140 chars), timestamp
+- AC2: Filter bar: date-range picker (default today), project multi-select, role filter (user/assistant), keyword search (client-side); filters persist in URL params
+- AC3: "Playback" mode: play/pause button, speed selector (1×/5×/10×); auto-scrolls through turns at selected speed; current card highlighted
+- AC4: `[→]` link on each card navigates to `/turns?slug=<slug>&turn=<id>`; keyboard shortcut `J`/`K` to step through turns
+- AC5: `/api/narrative` returns paginated `{ turns: [{ slug, role, text, ts, turnId }], total, nextCursor }`; page size 100
+
+---
+
+## P125 — Fleet Command Palette
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+Navigating Mission Control requires multiple clicks: open nav, find page, click in, interact. Power operators — especially those managing 10+ projects — lose significant time to navigation overhead. Keyboard-driven workflows are impossible without a unified command interface.
+
+### Proposed Solution
+
+Add a global command palette triggered by `Cmd+K` / `Ctrl+K` on any MC page. Fuzzy-search across: (1) page navigation ("go to metrics", "open mindmap"), (2) project quick-actions ("inject message to claude-mcd", "stop project foo", "show deep dive for bar"), (3) recent turns search ("find turns mentioning 'deployment'"), (4) !project commands executed server-side ("!project list", "!project ps"). Results grouped by type with keyboard navigation (up/down arrows, Enter to execute). Overlay renders as a centered modal with blurred backdrop; `Escape` closes. Command history stored in localStorage (last 20).
+
+### Acceptance Criteria
+
+- AC1: `Cmd+K`/`Ctrl+K` opens command palette overlay on any MC page; `Escape` closes; overlay has blurred backdrop and cyber-themed border
+- AC2: Fuzzy search across: navigation targets (all MC pages), project names, and static !project command templates; results grouped by type with icons
+- AC3: Project quick-actions: "inject <slug>", "stop <slug>", "deep dive <slug>" — inject opens pre-filled inject modal; stop calls `POST /api/stop/<slug>`; deep dive opens the P119 drawer
+- AC4: `!project` command execution: typing `!project <verb>` → execute button → calls `POST /api/master-command` → streams output in palette result area
+- AC5: Keyboard navigation: up/down arrows move selection; Enter executes; command history (last 20) shown when query is empty; history stored in localStorage

@@ -35,6 +35,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/gantt', label: 'Lifecycle Gantt', icon: '⊟' },
       { href: '/dependency-graph', label: 'Dependency Graph', icon: '⇢' },
       { href: '/lifecycle-heatmap', label: 'Lifecycle Heatmap', icon: '▦' },
+      { href: '/topology', label: 'Fleet Topology', icon: '⬡' },
     ],
   },
   {
@@ -67,6 +68,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/compare', label: 'Project Compare', icon: '⇌' },
       { href: '/proposal-graph', label: 'Proposal Graph', icon: '◎' },
       { href: '/sequence', label: 'Mission Sequence', icon: '▷' },
+      { href: '/goal-radar', label: 'Goal Radar', icon: '◎' },
     ],
   },
   {
