@@ -14,6 +14,7 @@ import TranscriptPanel from '../components/TranscriptPanel'
 import CountBadge from '../components/ui/CountBadge'
 import NavDropdown from '../components/NavDropdown'
 import AdvisorTile from '../components/AdvisorTile'
+import HolographicView from '../components/HolographicView'
 import { useFleet } from '../components/FleetContext'
 import type { FleetResponse, ProjectState } from './api/fleet/route'
 import type { WhatsAppResponse } from './api/whatsapp/route'
@@ -489,6 +490,33 @@ function DashboardClient() {
   const mountTime = useRef(Date.now())
   const recentEvents = useRef<number[]>([])
 
+  // P136: holographic mode
+  const [holographic, setHolographic] = useState(false)
+  const [holographicNarrow, setHolographicNarrow] = useState(false)
+
+  useEffect(() => {
+    try { setHolographic(localStorage.getItem('mc-holographic') === '1') } catch {}
+    const checkWidth = () => setHolographicNarrow(window.innerWidth < 900)
+    checkWidth()
+    window.addEventListener('resize', checkWidth)
+    return () => window.removeEventListener('resize', checkWidth)
+  }, [])
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement).tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.key === 'h' || e.key === 'H') {
+        setHolographic((v) => {
+          try { localStorage.setItem('mc-holographic', v ? '0' : '1') } catch {}
+          return !v
+        })
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   // P62: section visibility
   const [sections, setSections] = useState<Record<SectionKey, boolean>>(ALL_VISIBLE)
   const [sectionsOpen, setSectionsOpen] = useState(false)
@@ -622,6 +650,26 @@ function DashboardClient() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-4 flex-wrap justify-end">
+            {/* P136: Holographic toggle */}
+            <button
+              onClick={() => {
+                setHolographic((v) => {
+                  try { localStorage.setItem('mc-holographic', v ? '0' : '1') } catch {}
+                  return !v
+                })
+              }}
+              className="flex items-center gap-1 cursor-pointer rounded px-2 py-1 border transition-colors shrink-0"
+              style={{
+                borderColor: holographic ? 'rgba(168,85,247,0.4)' : '#1e3a5f',
+                color: holographic ? '#A855F7' : '#64748b',
+                background: holographic ? 'rgba(168,85,247,0.08)' : 'transparent',
+              }}
+              title="Toggle Holographic mode (H)"
+            >
+              <span className="text-xs font-mono">◈</span>
+              <span className="text-[0.6rem] uppercase tracking-widest font-mono">Holo</span>
+            </button>
+
             {/* Preset switcher (P95) */}
             <PresetSwitcher sections={sections} onApply={applyPresetSections} />
 
@@ -748,8 +796,13 @@ function DashboardClient() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, ease: 'easeOut' }}
       >
+        {/* P136: Holographic mode */}
+        {holographic && (
+          <HolographicView narrow={holographicNarrow} />
+        )}
+
         {/* Responsive grid — stacks on mobile, 2-col on lg, 3-col on xl */}
-        <div className="grid gap-5 grid-cols-1 lg:grid-cols-2 xl:grid-cols-[1fr_1fr_360px]">
+        <div className={`grid gap-5 grid-cols-1 lg:grid-cols-2 xl:grid-cols-[1fr_1fr_360px] ${holographic ? 'hidden' : ''}`}>
           {/* Col 1: Instances + Stall Alerts */}
           <div className="flex flex-col gap-5">
             <AnimatedSection visible={sections.instances}>
