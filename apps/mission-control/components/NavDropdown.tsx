@@ -54,6 +54,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/advisor', label: 'Fleet Advisor', icon: '◆' },
       { href: '/similarity', label: 'Memory Similarity', icon: '⬡' },
       { href: '/compare', label: 'Project Compare', icon: '⇌' },
+      { href: '/proposal-graph', label: 'Proposal Graph', icon: '◎' },
     ],
   },
   {
