@@ -2816,7 +2816,7 @@ Add a `/mindmap` page with a radial D3 tree layout. The center node is "Fleet". 
 
 ## P118 — Mission Sequence Planner
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -2862,7 +2862,7 @@ Add a "Deep Dive" slide-out drawer (full right-panel, 480px wide) accessible fro
 
 ## P120 — Fleet Convergence Score
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem

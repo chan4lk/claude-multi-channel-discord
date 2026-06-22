@@ -693,6 +693,31 @@ function DashboardClient() {
                 </span>
               </div>
             )}
+            {/* Convergence gauge (P120) */}
+            {fleet.avgConvergence != null && (
+              <div
+                className="flex flex-col items-center gap-0.5 shrink-0 hidden sm:flex"
+                title={`Fleet Convergence Score: ${fleet.avgConvergence}/100 — ratio of goal-advancing turns in last 24h`}
+              >
+                <svg width="32" height="32" viewBox="0 0 32 32">
+                  <circle cx="16" cy="16" r="13" fill="none" stroke="rgba(100,116,139,0.2)" strokeWidth="3" />
+                  <circle
+                    cx="16" cy="16" r="13"
+                    fill="none"
+                    stroke={fleet.avgConvergence >= 60 ? '#4ADE80' : fleet.avgConvergence >= 30 ? '#F59E0B' : '#EF4444'}
+                    strokeWidth="3"
+                    strokeDasharray={`${(fleet.avgConvergence / 100) * 81.68} 81.68`}
+                    strokeLinecap="round"
+                    transform="rotate(-90 16 16)"
+                    style={{ transition: 'stroke-dasharray 0.8s ease' }}
+                  />
+                  <text x="16" y="20" textAnchor="middle" fill="white" fontSize="9" fontFamily="monospace" fontWeight="bold">
+                    {fleet.avgConvergence}
+                  </text>
+                </svg>
+                <span className="text-[0.55rem] uppercase tracking-widest font-mono text-slate-400">CNV</span>
+              </div>
+            )}
             {/* Token burn rate gauge (P107) */}
             <TokenBurnGauge />
             {/* MC instance counters — hidden on small screens to reduce clutter */}
