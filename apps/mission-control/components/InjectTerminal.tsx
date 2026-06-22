@@ -6,6 +6,22 @@ import type { FleetResponse, ProjectState } from '../app/api/fleet/route'
 
 const HISTORY_KEY = 'mc_inject_history'
 const MAX_HISTORY = 20
+const TEMPLATES_KEY = 'mc_inject_templates'
+const MAX_TEMPLATES = 20
+
+interface Template {
+  id: string
+  name: string
+  body: string
+}
+
+function loadTemplates(): Template[] {
+  try { return JSON.parse(localStorage.getItem(TEMPLATES_KEY) ?? '[]') } catch { return [] }
+}
+
+function saveTemplates(templates: Template[]) {
+  try { localStorage.setItem(TEMPLATES_KEY, JSON.stringify(templates.slice(0, MAX_TEMPLATES))) } catch {}
+}
 
 const STATE_COLORS: Record<ProjectState, string> = {
   idle: '#00F5FF',
@@ -44,6 +60,10 @@ export default function InjectTerminal({ initialSlug = '', initialMessage = '', 
   const [fleet, setFleet] = useState<FleetResponse | null>(null)
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [templatesOpen, setTemplatesOpen] = useState(false)
+  const [templates, setTemplates] = useState<Template[]>([])
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
   const [status, setStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle')
   const [errorMsg, setErrorMsg] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -54,11 +74,44 @@ export default function InjectTerminal({ initialSlug = '', initialMessage = '', 
 
   useEffect(() => {
     setHistory(loadHistory())
+    setTemplates(loadTemplates())
     fetch('/api/fleet').then((r) => r.json()).then((d) => setFleet(d)).catch(() => {})
     window.addEventListener('keydown', closeWithEsc)
     textareaRef.current?.focus()
     return () => window.removeEventListener('keydown', closeWithEsc)
   }, [closeWithEsc])
+
+  function saveAsTemplate() {
+    const body = message.trim()
+    if (!body) return
+    const name = prompt('Template name (max 30 chars):', body.slice(0, 30))?.slice(0, 30)
+    if (!name) return
+    const id = `tpl_${Date.now()}`
+    const updated = [{ id, name, body }, ...loadTemplates()].slice(0, MAX_TEMPLATES)
+    saveTemplates(updated)
+    setTemplates(updated)
+  }
+
+  function applyTemplate(tpl: Template) {
+    setMessage(tpl.body)
+    setTemplatesOpen(false)
+    textareaRef.current?.focus()
+  }
+
+  function deleteTemplate(id: string) {
+    const updated = loadTemplates().filter((t) => t.id !== id)
+    saveTemplates(updated)
+    setTemplates(updated)
+  }
+
+  function commitRename(id: string) {
+    const trimmed = renameValue.trim().slice(0, 30)
+    if (!trimmed) { setRenamingId(null); return }
+    const updated = loadTemplates().map((t) => t.id === id ? { ...t, name: trimmed } : t)
+    saveTemplates(updated)
+    setTemplates(updated)
+    setRenamingId(null)
+  }
 
   async function send() {
     if (!slug || !message.trim()) return
@@ -185,7 +238,17 @@ export default function InjectTerminal({ initialSlug = '', initialMessage = '', 
               rows={4}
               className="w-full bg-[#060d1a] border border-cyber-cyan/20 rounded p-3 text-sm text-slate-200 font-mono resize-y min-h-[100px] focus:outline-none focus:border-cyber-cyan/50 placeholder-slate-700"
             />
-            <p className="text-[0.58rem] text-slate-600 font-mono mt-1">Ctrl+Enter to send · Esc to close</p>
+            <div className="flex items-center justify-between mt-1">
+              <p className="text-[0.58rem] text-slate-600 font-mono">Ctrl+Enter to send · Esc to close</p>
+              {message.trim() && (
+                <button
+                  onClick={saveAsTemplate}
+                  className="text-[0.55rem] font-mono text-slate-600 hover:text-amber-400 transition-colors px-1.5 py-0.5 rounded border border-transparent hover:border-amber-400/30"
+                >
+                  + Save as template
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Status feedback */}
@@ -215,9 +278,15 @@ export default function InjectTerminal({ initialSlug = '', initialMessage = '', 
           </AnimatePresence>
 
           {/* Actions */}
-          <div className="flex gap-2 justify-end">
+          <div className="flex gap-2 justify-end flex-wrap">
             <button
-              onClick={() => setHistoryOpen((v) => !v)}
+              onClick={() => { setTemplatesOpen((v) => !v); setHistoryOpen(false) }}
+              className="text-xs px-3 py-1.5 rounded border border-slate-700 text-slate-400 hover:text-amber-300 hover:border-amber-400/40 transition-colors font-mono"
+            >
+              Templates ({templates.length})
+            </button>
+            <button
+              onClick={() => { setHistoryOpen((v) => !v); setTemplatesOpen(false) }}
               className="text-xs px-3 py-1.5 rounded border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors font-mono"
             >
               History ({history.length})
@@ -264,6 +333,65 @@ export default function InjectTerminal({ initialSlug = '', initialMessage = '', 
                         <span className="text-[0.55rem] text-cyber-cyan font-mono shrink-0 mt-0.5">{h.slug}</span>
                         <span className="text-[0.65rem] text-slate-400 font-mono truncate flex-1">{h.message}</span>
                       </button>
+                    ))
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Templates panel */}
+          <AnimatePresence>
+            {templatesOpen && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="border-t border-white/8 pt-3 flex flex-col gap-1 max-h-48 overflow-y-auto">
+                  {templates.length === 0 ? (
+                    <p className="text-xs text-slate-600 font-mono text-center py-2">
+                      No templates saved. Type a message and click &quot;+ Save as template&quot;.
+                    </p>
+                  ) : (
+                    templates.map((tpl) => (
+                      <div
+                        key={tpl.id}
+                        className="flex items-center gap-1 px-2 py-1.5 rounded hover:bg-white/5 transition-colors group"
+                      >
+                        {renamingId === tpl.id ? (
+                          <input
+                            autoFocus
+                            value={renameValue}
+                            onChange={(e) => setRenameValue(e.target.value)}
+                            onBlur={() => commitRename(tpl.id)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') commitRename(tpl.id)
+                              if (e.key === 'Escape') setRenamingId(null)
+                            }}
+                            className="flex-1 text-[0.65rem] font-mono bg-transparent border-b border-amber-400/50 text-amber-300 outline-none"
+                          />
+                        ) : (
+                          <button
+                            onClick={() => applyTemplate(tpl)}
+                            className="flex-1 text-left"
+                          >
+                            <span className="text-[0.65rem] text-amber-300 font-mono font-medium">{tpl.name}</span>
+                            <span className="text-[0.55rem] text-slate-600 font-mono ml-2 truncate">{tpl.body.slice(0, 40)}{tpl.body.length > 40 ? '…' : ''}</span>
+                          </button>
+                        )}
+                        <button
+                          onClick={() => { setRenamingId(tpl.id); setRenameValue(tpl.name) }}
+                          className="text-[0.55rem] text-slate-700 hover:text-slate-400 font-mono opacity-0 group-hover:opacity-100 transition-all px-1"
+                          title="Rename"
+                        >✎</button>
+                        <button
+                          onClick={() => deleteTemplate(tpl.id)}
+                          className="text-[0.55rem] text-slate-700 hover:text-red-400 font-mono opacity-0 group-hover:opacity-100 transition-all px-1"
+                          title="Delete"
+                        >✕</button>
+                      </div>
                     ))
                   )}
                 </div>
