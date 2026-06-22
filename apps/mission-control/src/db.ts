@@ -165,6 +165,17 @@ CREATE TABLE IF NOT EXISTS convergence_history (
 
 CREATE INDEX IF NOT EXISTS idx_convergence_slug ON convergence_history(slug);
 CREATE INDEX IF NOT EXISTS idx_convergence_date ON convergence_history(date);
+
+CREATE TABLE IF NOT EXISTS goal_advancement (
+  id    INTEGER PRIMARY KEY AUTOINCREMENT,
+  slug  TEXT NOT NULL,
+  date  TEXT NOT NULL,
+  score REAL NOT NULL DEFAULT 0,
+  UNIQUE(slug, date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_goal_advancement_slug ON goal_advancement(slug);
+CREATE INDEX IF NOT EXISTS idx_goal_advancement_date ON goal_advancement(date);
 `);
 
 // Prune old events on startup
@@ -623,6 +634,35 @@ export function getConvergenceHistory(slug: string, days = 7): ConvergenceRow[] 
 export function getConvergenceScore(slug: string): number | null {
   const row = db.prepare(
     `SELECT score FROM convergence_history WHERE slug = ? ORDER BY date DESC LIMIT 1`
+  ).get(slug) as { score: number } | undefined
+  return row?.score ?? null
+}
+
+// ── Goal Advancement (P122) ───────────────────────────────────────────────
+
+export type GoalAdvancementRow = {
+  id: number
+  slug: string
+  date: string
+  score: number
+}
+
+export function upsertGoalAdvancement(slug: string, date: string, score: number): void {
+  db.prepare(
+    `INSERT INTO goal_advancement (slug, date, score) VALUES (?, ?, ?)
+     ON CONFLICT(slug, date) DO UPDATE SET score = excluded.score`
+  ).run(slug, date, score)
+}
+
+export function getGoalAdvancementHistory(slug: string, days = 7): GoalAdvancementRow[] {
+  return db.prepare(
+    `SELECT * FROM goal_advancement WHERE slug = ? ORDER BY date DESC LIMIT ?`
+  ).all(slug, days) as GoalAdvancementRow[]
+}
+
+export function getGoalAdvancementScore(slug: string): number | null {
+  const row = db.prepare(
+    `SELECT score FROM goal_advancement WHERE slug = ? ORDER BY date DESC LIMIT 1`
   ).get(slug) as { score: number } | undefined
   return row?.score ?? null
 }
