@@ -7,7 +7,6 @@ git-credentials.json
 /projects/
 .session-id*
 .claude/
-.specclaw/changes/
 .specclaw/worktrees/
 .specclaw/.specclaw/
 .specclaw/learnings.md
