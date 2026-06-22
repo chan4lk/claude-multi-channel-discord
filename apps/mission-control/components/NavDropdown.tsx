@@ -40,6 +40,7 @@ const NAV_GROUPS: NavGroup[] = [
     color: '#F59E0B',
     items: [
       { href: '/pipeline', label: 'Specclaw Pipeline', icon: '⬒' },
+      { href: '/canvas', label: 'Workflow Canvas', icon: '⊡' },
       { href: '/branches', label: 'Git Branches', icon: '⑂' },
       { href: '/broadcast', label: 'Broadcast', icon: '◉' },
       { href: '/audit', label: 'Audit Log', icon: '≡' },

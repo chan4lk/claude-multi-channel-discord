@@ -320,6 +320,7 @@ export default function ProjectDetailPage() {
           <div className="flex flex-wrap gap-2 mt-6">
             {[
               { href: `/projects/${slug}/terminal`, label: '▶ Terminal' },
+              { href: `/projects/${slug}/claude-md`, label: '⧖ CLAUDE.md' },
               { href: `/metrics?slug=${slug}`, label: '◱ Metrics' },
               { href: `/flamegraph?project=${slug}`, label: '↬ Flamegraph' },
               { href: `/replay?project=${slug}`, label: '⏮ Replay' },

@@ -2325,7 +2325,7 @@ Add a `/cost` page with three panels: (1) a stacked bar chart showing estimated 
 
 ## P98 — CLAUDE.md Version History
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -2350,7 +2350,7 @@ Add a `/projects/[slug]/claude-md` page (linked from per-project detail) that sh
 
 ## P99 — Multi-Project Workflow Canvas
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
