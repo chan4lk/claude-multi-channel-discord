@@ -2103,7 +2103,7 @@ Add a `/projects/[slug]` page that aggregates all available project signals in o
 
 ## P89 — Session Replay Mode
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
