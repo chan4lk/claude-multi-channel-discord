@@ -153,6 +153,15 @@ export default function ProjectGraph({ showBacklog }: Props) {
   const [promptSaving, setPromptSaving] = useState(false)
   const [promptSaveMsg, setPromptSaveMsg] = useState<string | null>(null)
   const [promptLoading, setPromptLoading] = useState(false)
+  const [showTemplateModal, setShowTemplateModal] = useState(false)
+  const [templateSearch, setTemplateSearch] = useState('')
+  const [templateCat, setTemplateCat] = useState<string>('all')
+  const [templates, setTemplates] = useState<Array<{ id: string; name: string; description: string; category: string; body: string; readonly?: boolean }>>([])
+  const [templatesLoaded, setTemplatesLoaded] = useState(false)
+  const [showSaveTemplateModal, setShowSaveTemplateModal] = useState(false)
+  const [saveTemplateName, setSaveTemplateName] = useState('')
+  const [saveTemplateCategory, setSaveTemplateCategory] = useState('custom')
+  const [saveTemplateSaving, setSaveTemplateSaving] = useState(false)
   const [dims, setDims] = useState({ w: 800, h: 500 })
   const simRef = useRef<d3.Simulation<GraphNode, undefined> | null>(null)
   const nodesRef = useRef<GraphNode[]>([])
@@ -698,6 +707,45 @@ export default function ProjectGraph({ showBacklog }: Props) {
     }
   }
 
+  async function openTemplateModal() {
+    if (!templatesLoaded) {
+      const r = await fetch('/api/claude-templates')
+      const d = await r.json() as { templates: Array<{ id: string; name: string; description: string; category: string; body: string; readonly?: boolean }> }
+      setTemplates(d.templates ?? [])
+      setTemplatesLoaded(true)
+    }
+    setShowTemplateModal(true)
+    setTemplateSearch('')
+    setTemplateCat('all')
+  }
+
+  function applyTemplate(body: string) {
+    if (promptDraft.trim() && !confirm('Replace current content with template?')) return
+    setPromptDraft(body)
+    setShowTemplateModal(false)
+  }
+
+  function openSaveTemplateModal() {
+    setSaveTemplateName('')
+    setSaveTemplateCategory('custom')
+    setShowSaveTemplateModal(true)
+  }
+
+  async function saveAsTemplate() {
+    if (!saveTemplateName.trim() || !promptDraft.trim()) return
+    setSaveTemplateSaving(true)
+    await fetch('/api/claude-templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: saveTemplateName, category: saveTemplateCategory, body: promptDraft, description: '' }),
+    })
+    setSaveTemplateSaving(false)
+    setShowSaveTemplateModal(false)
+    setTemplatesLoaded(false)
+    setPromptSaveMsg('Template saved ✓')
+    setTimeout(() => setPromptSaveMsg(null), 2000)
+  }
+
   function formatAge(mins: number): string {
     if (mins >= 60) return `${Math.floor(mins / 60)}h ${mins % 60}m`
     if (mins > 9000) return 'no transcript'
@@ -1110,11 +1158,26 @@ export default function ProjectGraph({ showBacklog }: Props) {
               )}
               {!promptLoading && (
                 <>
-                  {promptLastModified && (
-                    <p className="text-[0.5rem] font-mono text-slate-600">
-                      Last modified: {new Date(promptLastModified).toLocaleString()}
-                    </p>
-                  )}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {promptLastModified && (
+                      <p className="text-[0.5rem] font-mono text-slate-600 flex-1">
+                        Last modified: {new Date(promptLastModified).toLocaleString()}
+                      </p>
+                    )}
+                    <button
+                      onClick={openTemplateModal}
+                      className="text-[0.55rem] font-mono px-1.5 py-0.5 rounded border border-slate-700 text-slate-500 hover:text-cyber-cyan hover:border-cyber-cyan/30 transition-colors"
+                    >
+                      📄 Load template
+                    </button>
+                    <button
+                      onClick={openSaveTemplateModal}
+                      disabled={!promptDraft.trim()}
+                      className="text-[0.55rem] font-mono px-1.5 py-0.5 rounded border border-slate-700 text-slate-500 hover:text-purple-400 hover:border-purple-500/30 transition-colors disabled:opacity-30"
+                    >
+                      💾 Save as template
+                    </button>
+                  </div>
                   <textarea
                     value={promptDraft}
                     onChange={(e) => setPromptDraft(e.target.value)}
@@ -1154,6 +1217,114 @@ export default function ProjectGraph({ showBacklog }: Props) {
                   </div>
                 </>
               )}
+            </div>
+          )}
+
+          {/* Template picker modal */}
+          {showTemplateModal && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center"
+              style={{ background: 'rgba(0,0,0,0.7)' }}
+              onClick={(e) => { if (e.target === e.currentTarget) setShowTemplateModal(false) }}
+            >
+              <div className="rounded-xl border border-cyber-cyan/20 w-full max-w-lg mx-4 flex flex-col" style={{ background: '#060d1a', maxHeight: '80vh' }}>
+                <div className="flex items-center gap-2 px-4 py-3 border-b border-cyber-cyan/10">
+                  <span className="text-[0.65rem] font-mono font-bold text-cyber-cyan">Load Template</span>
+                  <div className="flex-1" />
+                  <button onClick={() => setShowTemplateModal(false)} className="text-slate-500 hover:text-slate-300 text-xs">✕</button>
+                </div>
+                <div className="px-4 py-2 flex gap-2 flex-wrap border-b border-white/5">
+                  <input
+                    type="text"
+                    placeholder="Search…"
+                    value={templateSearch}
+                    onChange={(e) => setTemplateSearch(e.target.value)}
+                    autoFocus
+                    className="flex-1 text-[0.65rem] font-mono bg-slate-900 border border-slate-700 rounded px-2 py-0.5 text-slate-300 focus:outline-none focus:border-slate-500"
+                  />
+                  {['all', 'coding', 'research', 'review', 'custom'].map((c) => (
+                    <button
+                      key={c}
+                      onClick={() => setTemplateCat(c)}
+                      className="text-[0.55rem] font-mono px-1.5 py-0.5 rounded border transition-colors"
+                      style={{
+                        borderColor: templateCat === c ? 'rgba(0,245,255,0.4)' : '#374151',
+                        color: templateCat === c ? '#00F5FF' : '#64748b',
+                        background: templateCat === c ? 'rgba(0,245,255,0.08)' : 'transparent',
+                      }}
+                    >
+                      {c}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-1.5">
+                  {templates
+                    .filter((t) => {
+                      if (templateCat !== 'all' && t.category !== templateCat) return false
+                      if (templateSearch && !t.name.toLowerCase().includes(templateSearch.toLowerCase()) && !t.description.toLowerCase().includes(templateSearch.toLowerCase())) return false
+                      return true
+                    })
+                    .map((t) => (
+                      <button
+                        key={t.id}
+                        onClick={() => applyTemplate(t.body)}
+                        className="text-left rounded border border-white/5 hover:border-cyber-cyan/30 px-3 py-2 transition-colors w-full"
+                        style={{ background: 'rgba(0,245,255,0.01)' }}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-[0.6rem] font-mono text-slate-200">{t.name}</span>
+                          <span className="text-[0.5rem] font-mono px-1 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.05)', color: '#64748b' }}>{t.category}</span>
+                          {t.readonly && <span className="text-[0.45rem] font-mono text-slate-700">built-in</span>}
+                        </div>
+                        {t.description && <p className="text-[0.55rem] font-mono text-slate-600 mt-0.5 truncate">{t.description}</p>}
+                      </button>
+                    ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Save as template modal */}
+          {showSaveTemplateModal && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center"
+              style={{ background: 'rgba(0,0,0,0.7)' }}
+              onClick={(e) => { if (e.target === e.currentTarget) setShowSaveTemplateModal(false) }}
+            >
+              <div className="rounded-xl border border-purple-500/20 w-full max-w-sm mx-4 flex flex-col" style={{ background: '#060d1a' }}>
+                <div className="flex items-center gap-2 px-4 py-3 border-b border-purple-500/10">
+                  <span className="text-[0.65rem] font-mono font-bold text-purple-400">Save as Template</span>
+                  <div className="flex-1" />
+                  <button onClick={() => setShowSaveTemplateModal(false)} className="text-slate-500 hover:text-slate-300 text-xs">✕</button>
+                </div>
+                <div className="px-4 py-4 flex flex-col gap-3">
+                  <input
+                    type="text"
+                    placeholder="Template name *"
+                    value={saveTemplateName}
+                    onChange={(e) => setSaveTemplateName(e.target.value)}
+                    autoFocus
+                    className="text-[0.65rem] font-mono bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-300 focus:outline-none focus:border-slate-500"
+                  />
+                  <select
+                    value={saveTemplateCategory}
+                    onChange={(e) => setSaveTemplateCategory(e.target.value)}
+                    className="text-[0.65rem] font-mono bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-300 focus:outline-none"
+                  >
+                    {['coding', 'research', 'review', 'custom'].map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                  <div className="flex gap-2 justify-end">
+                    <button onClick={() => setShowSaveTemplateModal(false)} className="text-[0.6rem] font-mono px-2 py-0.5 rounded border border-slate-700 text-slate-500">Cancel</button>
+                    <button
+                      onClick={saveAsTemplate}
+                      disabled={saveTemplateSaving || !saveTemplateName.trim()}
+                      className="text-[0.6rem] font-mono px-3 py-0.5 rounded border border-purple-500/30 text-purple-400 hover:bg-purple-500/10 transition-colors disabled:opacity-40"
+                    >
+                      {saveTemplateSaving ? 'Saving…' : 'Save'}
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </div>

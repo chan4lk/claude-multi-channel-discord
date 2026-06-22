@@ -26,6 +26,7 @@ export interface ReplayTurn {
 
 export interface ReplayResponse {
   slug: string
+  sessionFile: string
   turns: ReplayTurn[]   // oldest first
   total: number
   checkedAt: string
@@ -235,7 +236,7 @@ export async function GET(
   const mcdDir = process.env.MCD_CHANNELS_DIR
   if (!mcdDir) {
     return Response.json({
-      slug, turns: [], total: 0, checkedAt: new Date().toISOString()
+      slug, sessionFile: '', turns: [], total: 0, checkedAt: new Date().toISOString()
     } satisfies ReplayResponse)
   }
 
@@ -247,6 +248,7 @@ export async function GET(
 
   return Response.json({
     slug,
+    sessionFile: file ?? '',
     turns,
     total: turns.length,
     checkedAt: new Date().toISOString(),

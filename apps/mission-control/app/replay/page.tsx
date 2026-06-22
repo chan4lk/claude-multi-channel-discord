@@ -5,6 +5,16 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import SubPageHeader from '../../components/SubPageHeader'
 import type { FleetResponse } from '../api/fleet/route'
 import type { ReplayResponse, ReplayTurn, ReplayToolCall } from '../api/replay/[slug]/route'
+import type { TurnAnnotationTag, TurnAnnotationRow } from '../api/annotations/route'
+
+const TAG_COLORS: Record<TurnAnnotationTag, string> = {
+  note:    '#22D3EE',
+  warning: '#F59E0B',
+  bug:     '#EF4444',
+}
+const TAG_ICONS: Record<TurnAnnotationTag, string> = {
+  note: '📝', warning: '⚠️', bug: '🐛',
+}
 
 // ─── tool color ───────────────────────────────────────────────────────────────
 function toolColor(name: string): string {
@@ -216,6 +226,12 @@ function ReplayInner() {
   const [showDiff, setShowDiff] = useState(false)
   const autoRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const scrubRef = useRef<HTMLInputElement>(null)
+  // annotation state
+  const [annotations, setAnnotations] = useState<TurnAnnotationRow[]>([])
+  const [annotateIdx, setAnnotateIdx] = useState<number | null>(null)
+  const [annotateTag, setAnnotateTag] = useState<TurnAnnotationTag>('note')
+  const [annotateNote, setAnnotateNote] = useState('')
+  const [annotateSaving, setAnnotateSaving] = useState(false)
 
   // load slugs
   useEffect(() => {
@@ -250,11 +266,30 @@ function ReplayInner() {
             setDiffTurnIdx(f)
           }
         }
+        // apply ?turn= deep link from annotations page
       })
       .catch(() => setLoading(false))
+    // load annotations for this slug
+    fetch(`/api/annotations?slug=${encodeURIComponent(slug)}`)
+      .then((r) => r.json())
+      .then((d: { annotations: TurnAnnotationRow[] }) => setAnnotations(d.annotations ?? []))
+      .catch(() => {})
   }, [fromParam, toParam])
 
-  useEffect(() => { if (selected) loadData(selected) }, [selected, loadData])
+  useEffect(() => {
+    if (selected) {
+      loadData(selected)
+    }
+  }, [selected, loadData])
+
+  // apply ?turn= deep link from annotations page
+  const turnParam = useSearchParams().get('turn')
+  useEffect(() => {
+    if (turnParam !== null) {
+      const t = parseInt(turnParam, 10)
+      if (!isNaN(t)) setTurnIdx(t)
+    }
+  }, [turnParam, data])
 
   const turns = data?.turns ?? []
   const total = turns.length
@@ -315,6 +350,47 @@ function ReplayInner() {
       setAutoplay(false)
     }
   }
+
+  function openAnnotatePopover(idx: number) {
+    const existing = annotations.find((a) => a.slug === selected && a.turn_index === idx)
+    setAnnotateIdx(idx)
+    setAnnotateTag(existing ? existing.tag as TurnAnnotationTag : 'note')
+    setAnnotateNote(existing ? existing.note : '')
+  }
+
+  async function saveAnnotation() {
+    if (annotateIdx === null) return
+    setAnnotateSaving(true)
+    const existing = annotations.find((a) => a.slug === selected && a.turn_index === annotateIdx)
+    await fetch('/api/annotations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...(existing ? { id: existing.id } : {}),
+        slug: selected,
+        sessionFile: data?.sessionFile ?? '',
+        turnIndex: annotateIdx,
+        tag: annotateTag,
+        note: annotateNote,
+      }),
+    })
+    // reload annotations
+    const r = await fetch(`/api/annotations?slug=${encodeURIComponent(selected)}`)
+    const d = await r.json() as { annotations: TurnAnnotationRow[] }
+    setAnnotations(d.annotations ?? [])
+    setAnnotateSaving(false)
+    setAnnotateIdx(null)
+  }
+
+  async function deleteAnnotationForTurn(idx: number) {
+    const existing = annotations.find((a) => a.slug === selected && a.turn_index === idx)
+    if (!existing) return
+    await fetch(`/api/annotations?id=${existing.id}`, { method: 'DELETE' })
+    setAnnotations((prev) => prev.filter((a) => a.id !== existing.id))
+    setAnnotateIdx(null)
+  }
+
+  const annotationMap = new Map(annotations.filter((a) => a.slug === selected).map((a) => [a.turn_index, a]))
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: '#060d18', color: '#CBD5E1' }}>
@@ -402,6 +478,30 @@ function ReplayInner() {
               />
             ) : (
               <>
+                {/* turn annotation bar */}
+                {(() => {
+                  const ann = annotationMap.get(turnIdx)
+                  return (
+                    <div className="flex items-center gap-2 justify-end">
+                      {ann && (
+                        <span
+                          className="text-[0.55rem] font-mono px-1.5 py-0.5 rounded"
+                          style={{ background: `${TAG_COLORS[ann.tag as TurnAnnotationTag]}15`, color: TAG_COLORS[ann.tag as TurnAnnotationTag], border: `1px solid ${TAG_COLORS[ann.tag as TurnAnnotationTag]}30` }}
+                        >
+                          {TAG_ICONS[ann.tag as TurnAnnotationTag]} {ann.note || ann.tag}
+                        </span>
+                      )}
+                      <button
+                        onClick={() => openAnnotatePopover(turnIdx)}
+                        className="text-[0.6rem] font-mono px-1.5 py-0.5 rounded border border-white/5 text-slate-600 hover:text-slate-300 hover:border-white/20 transition-colors"
+                        title="Annotate this turn"
+                      >
+                        🏷
+                      </button>
+                    </div>
+                  )
+                })()}
+
                 {/* user bubble */}
                 {turn.userText && (
                   <div
@@ -478,16 +578,18 @@ function ReplayInner() {
                 {turns.map((_, i) => {
                   const isCurrent = i === turnIdx
                   const isDiffBase = i === diffTurnIdx
+                  const ann = annotationMap.get(i)
+                  const annColor = ann ? TAG_COLORS[ann.tag as TurnAnnotationTag] : null
                   return (
                     <button
                       key={i}
                       onClick={(e) => handleTurnChipClick(i, e)}
-                      title={`T${i + 1}${isDiffBase ? ' (diff baseline)' : ''} — shift-click to set as comparison`}
-                      className="text-[0.45rem] font-mono rounded px-1 py-0.5 transition-colors select-none"
+                      title={`T${i + 1}${isDiffBase ? ' (diff baseline)' : ''}${ann ? ` — ${ann.tag}: ${ann.note}` : ''} — shift-click to set as comparison`}
+                      className="text-[0.45rem] font-mono rounded px-1 py-0.5 transition-colors select-none relative"
                       style={{
-                        background: isCurrent ? 'rgba(0,245,255,0.15)' : isDiffBase ? 'rgba(245,158,11,0.15)' : 'rgba(255,255,255,0.03)',
-                        border: `1px solid ${isCurrent ? 'rgba(0,245,255,0.4)' : isDiffBase ? 'rgba(245,158,11,0.4)' : 'rgba(255,255,255,0.06)'}`,
-                        color: isCurrent ? '#22D3EE' : isDiffBase ? '#F59E0B' : '#334155',
+                        background: isCurrent ? 'rgba(0,245,255,0.15)' : isDiffBase ? 'rgba(245,158,11,0.15)' : annColor ? `${annColor}10` : 'rgba(255,255,255,0.03)',
+                        border: `1px solid ${isCurrent ? 'rgba(0,245,255,0.4)' : isDiffBase ? 'rgba(245,158,11,0.4)' : annColor ? `${annColor}40` : 'rgba(255,255,255,0.06)'}`,
+                        color: isCurrent ? '#22D3EE' : isDiffBase ? '#F59E0B' : annColor ?? '#334155',
                       }}
                     >
                       T{i + 1}
@@ -556,6 +658,73 @@ function ReplayInner() {
 
               <div className="text-[0.55rem] font-mono hidden sm:block" style={{ color: '#1e3a5f' }}>
                 ← → keys · Space = play · D = compare · shift+click chip · Esc = back
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* annotation popover */}
+      {annotateIdx !== null && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ background: 'rgba(0,0,0,0.6)' }}
+          onClick={(e) => { if (e.target === e.currentTarget) setAnnotateIdx(null) }}
+        >
+          <div className="rounded-xl border border-white/10 w-full max-w-sm mx-4 flex flex-col" style={{ background: '#060d1a' }}>
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5">
+              <span className="text-[0.65rem] font-mono font-bold text-slate-300">🏷 Annotate T{annotateIdx + 1}</span>
+              <div className="flex-1" />
+              <button onClick={() => setAnnotateIdx(null)} className="text-slate-600 hover:text-slate-300 text-xs">✕</button>
+            </div>
+            <div className="px-4 py-4 flex flex-col gap-3">
+              {/* tag selector */}
+              <div className="flex gap-1.5">
+                {(['note', 'warning', 'bug'] as TurnAnnotationTag[]).map((tag) => (
+                  <button
+                    key={tag}
+                    onClick={() => setAnnotateTag(tag)}
+                    className="flex-1 text-[0.6rem] font-mono px-2 py-1 rounded border transition-colors"
+                    style={{
+                      borderColor: annotateTag === tag ? `${TAG_COLORS[tag]}60` : '#374151',
+                      color: annotateTag === tag ? TAG_COLORS[tag] : '#64748b',
+                      background: annotateTag === tag ? `${TAG_COLORS[tag]}10` : 'transparent',
+                    }}
+                  >
+                    {TAG_ICONS[tag]} {tag}
+                  </button>
+                ))}
+              </div>
+              <textarea
+                value={annotateNote}
+                onChange={(e) => setAnnotateNote(e.target.value.slice(0, 200))}
+                placeholder="Note (max 200 chars)…"
+                rows={3}
+                autoFocus
+                className="text-[0.65rem] font-mono bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-slate-300 focus:outline-none focus:border-slate-500 resize-none"
+              />
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-[0.5rem] font-mono text-slate-700">{annotateNote.length}/200</div>
+                <div className="flex gap-2">
+                  {annotationMap.has(annotateIdx) && (
+                    <button
+                      onClick={() => deleteAnnotationForTurn(annotateIdx)}
+                      className="text-[0.6rem] font-mono px-2 py-0.5 rounded border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors"
+                    >
+                      Delete
+                    </button>
+                  )}
+                  <button onClick={() => setAnnotateIdx(null)} className="text-[0.6rem] font-mono px-2 py-0.5 rounded border border-slate-700 text-slate-500">
+                    Cancel
+                  </button>
+                  <button
+                    onClick={saveAnnotation}
+                    disabled={annotateSaving}
+                    className="text-[0.6rem] font-mono px-3 py-0.5 rounded border border-cyber-cyan/30 text-cyber-cyan hover:bg-cyber-cyan/10 transition-colors disabled:opacity-40"
+                  >
+                    {annotateSaving ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
