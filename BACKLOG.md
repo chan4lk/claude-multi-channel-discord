@@ -2395,3 +2395,128 @@ Add a `/permissions` page with a matrix heatmap. Rows are projects; columns are 
 - AC5: Column headers are tool names; truncated to 12 chars with full name on hover
 - AC6: Matrix scrollable horizontally when tool count exceeds viewport
 - AC7: Export as CSV: project × tool permission matrix
+
+---
+
+## P101 — Full Conversation History Viewer
+
+**Status:** `[x] done`
+**Created:** 2026-06-22
+
+### Problem
+
+The existing `/projects/[slug]/terminal` shows the live tmux pane and the transcript endpoint returns only the last 20 entries. There is no way to browse the full conversation history between operator and Claude for a given project in a readable, chat-like UI. Debugging agent behavior requires SSH and manual JSONL parsing.
+
+### Proposed Solution
+
+Add a `/projects/[slug]/conversation` page with a paginated chat log. A new `/api/projects/[slug]/conversation` endpoint reads all JSONL transcript files, extracts `human` and `assistant` turns (including tool calls inline), and returns them newest-first with cursor-based pagination. The page renders messages as a chat thread: human turns left-aligned (cyan), assistant turns right-aligned (slate), tool calls shown as collapsed inline chips (expand on click). Date separators between calendar days. Search bar filters by content (client-side). Scroll to top loads older messages.
+
+### Acceptance Criteria
+
+- AC1: `/projects/[slug]/conversation` page renders newest messages first; linked from per-project detail
+- AC2: Human/assistant turns distinguishable by alignment and color
+- AC3: Tool use blocks rendered as collapsed chips showing tool name + truncated input; expand on click
+- AC4: Date separator lines between calendar days
+- AC5: "Load older" button (or scroll-triggered) fetches prior page via cursor
+- AC6: Search bar filters visible messages by content (client-side, debounced 300ms)
+- AC7: Empty state when no transcript found for slug
+
+---
+
+## P102 — Inject Template Library
+
+**Status:** `[x] done`
+**Created:** 2026-06-22
+
+### Problem
+
+Operators repeatedly type the same inject messages: daily standup prompts, code review requests, status checks, progress reports. The Inject Terminal (P7) has no memory — every session starts blank. There is no way to save, organize, or quickly reuse inject phrases across projects.
+
+### Proposed Solution
+
+Add a template library to the Inject Terminal drawer. A new `/api/inject-templates` endpoint (CRUD) stores templates in `~/.claude/channels/discord-multi/inject-templates.json`. Each template has: name (1–40 chars), body (with optional `{{slug}}`, `{{date}}`, `{{time}}` placeholders), category tag, use count, last-used timestamp. The Inject Terminal gains a "Templates" button that opens a searchable panel: click a template to insert (with variables resolved) into the message box. A `/inject-templates` management page lists all templates with edit/delete and a use-count leaderboard.
+
+### Acceptance Criteria
+
+- AC1: "Templates" button in Inject Terminal opens searchable template panel
+- AC2: Clicking a template inserts it into the message box with `{{slug}}`, `{{date}}`, `{{time}}` resolved
+- AC3: `/api/inject-templates` supports GET (list), POST (create/update), DELETE (by id)
+- AC4: Templates stored in `inject-templates.json`; survive server restarts
+- AC5: `/inject-templates` page: list all templates, edit name/body, delete, show use count + last used
+- AC6: Category filter chips (e.g. standup / review / report / custom) on both panel and management page
+- AC7: "Use count" shown on each template; incremented on each use
+
+---
+
+## P103 — Fleet Anomaly Detection
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+The dashboard shows current state but cannot tell operators when a project is behaving unusually compared to its own history. A project that normally turns every 2 minutes but suddenly goes silent for 30 minutes might not be stalled yet — but it is anomalous. Statistical deviation from a project's own baseline is a strong early-warning signal that no current view surfaces.
+
+### Proposed Solution
+
+Add an `/anomalies` page powered by a new `/api/anomalies` endpoint. The endpoint reads transcript JSONL for each project, computes 7-day baseline stats (mean and stddev of: turn duration, tool calls per turn, tokens per turn), then flags any project whose last 3 turns deviate > 2σ from its baseline in any dimension. Each anomaly entry includes: slug, metric name, current value, baseline mean, z-score, severity (warn ≥ 2σ, critical ≥ 3σ). The InstanceGrid adds an amber ⚠ icon on anomalous projects. The `/anomalies` page shows a table sortable by z-score with sparkline of the anomalous metric.
+
+### Acceptance Criteria
+
+- AC1: `/anomalies` page renders within 3s; all projects with ≥ 7 days of data included
+- AC2: Anomaly detected when last 3-turn mean deviates > 2σ from 7-day baseline
+- AC3: Metrics checked: inter-turn gap minutes, tool calls per turn, output tokens per turn
+- AC4: Table columns: project, metric, current value, baseline (mean ± σ), z-score, severity
+- AC5: Sort by z-score descending; severity color: amber ≥ 2σ, red ≥ 3σ
+- AC6: Sparkline showing the metric over last 20 turns with anomaly region highlighted
+- AC7: Empty state ("No anomalies detected") with last-checked timestamp
+
+---
+
+## P104 — Project Relationship Radial Map
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+Each project is an island in the current UI. There is no single view that holistically shows a project's connections to memories, goals, scheduled jobs, recent injects, open PRs, and sibling proposals. Operators switch between many pages to understand one project's full context.
+
+### Proposed Solution
+
+Add a `/projects/[slug]/map` page with a radial mind map. The center node is the project. Radiating out: memory nodes (purple, from memory/ dir), goal node (amber), schedule nodes (green), recent inject nodes (cyan, last 5 injects from alert log), open branch nodes (blue, from git branches API), proposal nodes (orange, proposals mentioning the slug). Node sizes encode recency/size. Clicking any satellite node opens a detail drawer. SVG rendering, no external library. Pan and zoom via mouse wheel + drag.
+
+### Acceptance Criteria
+
+- AC1: `/projects/[slug]/map` page renders radial SVG within 2s; linked from per-project detail
+- AC2: Center node shows slug + state color; satellite node types: memory, goal, schedule, inject, branch, proposal
+- AC3: Clicking a satellite opens a side drawer with the full detail (memory body, goal text, schedule prompt, etc.)
+- AC4: Pan (drag canvas) and zoom (mouse wheel or +/- buttons) with smooth transform
+- AC5: Node count shown in legend; "no data" nodes omitted with empty-type indicators shown greyed out
+- AC6: Refresh button re-fetches all data without page reload
+- AC7: Deep-link: `/projects/[slug]/map?focus=memories` pre-expands that node type
+
+---
+
+## P105 — Agent Health Trend Timeline
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+The Health Score Ring (per-project and fleet-level) shows the current score but has no historical view. A project's health score could have been declining for a week before it finally stalls — the operator has no way to see that trend without manual transcript analysis. Point-in-time scores cannot distinguish a recovering agent from a deteriorating one.
+
+### Proposed Solution
+
+Add a `/health-trends` page with per-project health score time series. A new `/api/health/trends` endpoint computes a daily health score snapshot for each project across the last 30 days, reading transcript JSONL bucket by day (reusing the `dayBuckets` logic from `/api/metrics/[slug]`). Four sub-scores tracked daily: recency (hours since last turn), stall rate (stalls/turns), efficiency (output tokens/tool call), freshness (new memories in last 24h). Each project renders as a sparkline row. A "deep dive" mode selects one project and shows all four sub-scores as separate trend lines.
+
+### Acceptance Criteria
+
+- AC1: `/health-trends` page renders within 3s; all projects shown as sparkline rows
+- AC2: Each row: slug badge, 30-day health score sparkline (line graph), current score, trend arrow (↑↓→)
+- AC3: Color encodes trend: green (improving ≥ 5pts over 7d), red (declining), grey (flat)
+- AC4: Click a row enters "deep dive" mode: four sub-score trend lines (recency, stall rate, efficiency, freshness) as a multi-line chart
+- AC5: Hover on any sparkline point shows: date, score, sub-score breakdown tooltip
+- AC6: Sort rows by: current score (default), trend magnitude, slug
+- AC7: Export as CSV: slug × date health score matrix
