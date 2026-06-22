@@ -74,6 +74,8 @@ const SIDEBAR_ITEMS = [
   { href: '/memory-graph', icon: '✦', label: 'Memory' },
   { href: '/goals', icon: '◎', label: 'Goals' },
   { href: '/branches', icon: '⑂', label: 'Branches' },
+  { href: '/heatmap', icon: '▦', label: 'Heatmap' },
+  { href: '/traceability', icon: '⑂', label: 'Traceability' },
   { href: '/audit', icon: '≡', label: 'Audit' },
   { href: '/broadcast', icon: '◉', label: 'Broadcast' },
   { href: '/search', icon: '⌕', label: 'Search' },
