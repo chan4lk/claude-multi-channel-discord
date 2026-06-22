@@ -31,6 +31,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/replay', label: 'Session Replay', icon: '⏮' },
       { href: '/ambient', label: 'Fleet Ambient', icon: '◌' },
       { href: '/ticker', label: 'Tool Call Ticker', icon: '▶' },
+      { href: '/turns', label: 'Turn Volume', icon: '▦' },
     ],
   },
   {
