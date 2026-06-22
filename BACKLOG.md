@@ -2931,7 +2931,7 @@ Add a `/goal-radar` page with two panels. Left: a D3 radar chart (spider chart) 
 
 ## P123 — Context Window Pressure Monitor
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -2954,7 +2954,7 @@ Add a `/context-pressure` page showing a per-project stacked bar chart of estima
 
 ## P124 — Multi-Project Narrative Timeline
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -2977,7 +2977,7 @@ Add a `/narrative` page with a single vertical timeline showing all projects' tu
 
 ## P125 — Fleet Command Palette
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -2995,3 +2995,118 @@ Add a global command palette triggered by `Cmd+K` / `Ctrl+K` on any MC page. Fuz
 - AC3: Project quick-actions: "inject <slug>", "stop <slug>", "deep dive <slug>" — inject opens pre-filled inject modal; stop calls `POST /api/stop/<slug>`; deep dive opens the P119 drawer
 - AC4: `!project` command execution: typing `!project <verb>` → execute button → calls `POST /api/master-command` → streams output in palette result area
 - AC5: Keyboard navigation: up/down arrows move selection; Enter executes; command history (last 20) shown when query is empty; history stored in localStorage
+
+---
+
+## P126 — Turn Quality Heatmap
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+The narrative timeline (P124) shows turns in order but gives no signal about *quality*. Operators can't tell at a glance which turns were productive vs. stuck loops vs. brief acks. After post-mortem reviews, the only way to find "the turn where it went wrong" is to read each card manually.
+
+### Proposed Solution
+
+Add a `/turn-quality` page showing a 2-D heatmap: X-axis = time of day (hour buckets), Y-axis = project slug, cell color = average turn quality score for that hour. Quality score = composite of: reply length (proxy for depth), tool-call count, and absence of error keywords ("Error", "failed", "undefined"). Cell tooltip shows the 3 highest-quality and 3 lowest-quality turn previews for that hour. Click a cell opens the Narrative Timeline filtered to that slug + hour window.
+
+### Acceptance Criteria
+
+- AC1: `/turn-quality` page: 2-D heatmap grid (projects × hours), cells colored green/amber/red by average quality score
+- AC2: Quality score per turn = `0.4 * (replyLenScore) + 0.3 * (toolCallDensity) + 0.3 * (1 - errorRatio)`; stored in `turn_quality` table (slug, ts, score)
+- AC3: Cell tooltip on hover: top-3 and bottom-3 turn text previews for that project/hour bucket
+- AC4: Click cell → opens `/narrative?slug=<slug>&since=<hourStart>&until=<hourEnd>` in same tab
+- AC5: `/api/turn-quality` returns `{ rows: [{ slug, hour, score, turnCount }] }` for past 24h; refresh every 5 min
+
+---
+
+## P127 — Session Health Dashboard
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+Operators have no single page that aggregates all health signals for a specific project session: context pressure, convergence trend, stuck events, goal advancement, alert history, and recent errors in one place. Diagnosing a struggling project requires clicking through 6+ pages to assemble a picture.
+
+### Proposed Solution
+
+Add a `/session-health/[slug]` page as a per-project health aggregate. Top section: 4 KPI cards (context pressure %, convergence score, goal advancement %, active turns today). Middle: sparklines for each metric over the last 7 days. Bottom: recent alert events list + last 5 stuck events from the `.jsonl` transcript. A "Session Actions" panel offers: Compact, Stop, Restart, Inject buttons. Link from the InstanceGrid card "⚕" chip.
+
+### Acceptance Criteria
+
+- AC1: `/session-health/[slug]` page: 4 KPI cards (context %, convergence, goal %, turns today) + 7-day sparklines for each
+- AC2: Recent alerts section: last 10 `alert_events` rows for the slug, with type badge and description
+- AC3: Stuck events section: last 5 times a "stuck" keyword appeared in the transcript, with timestamp and surrounding text snippet
+- AC4: Session Actions panel: Compact (inject summary prompt), Stop (`POST /api/stop/<slug>`), Inject (opens inject modal); buttons disable after click for 3s
+- AC5: InstanceGrid card gains a `⚕` chip linking to `/session-health/<slug>`; chip color matches context pressure score
+
+---
+
+## P128 — Operator Digest Email / Webhook Summary
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+Operators are not always watching Mission Control. Fleet events (stuck agents, context pressure warnings, goal drift) accumulate silently. The existing webhook system (P87) fires raw JSON per event but produces noise without aggregation. There is no "morning brief" that summarizes overnight activity.
+
+### Proposed Solution
+
+Add a scheduled digest job (configurable: daily 08:00 UTC or on-demand via `POST /api/digest`) that compiles: projects with score changes > 10% (convergence, goal, context), stuck events since last digest, new alert events, and top-5 most active slugs. Digest is rendered as a Markdown-formatted summary, then pushed to configured webhook URLs with `event_type = "digest"` (which Slack-formatted webhooks render nicely). Digest history stored in `digest_log` table; viewable at `/reports`.
+
+### Acceptance Criteria
+
+- AC1: `POST /api/digest` computes and stores a digest; `GET /api/digest/latest` returns the last one; digest rendered in `/reports` page with a "Digest" tab
+- AC2: Digest content: projects with metric changes > 10%, stuck events count, alert events count, top-5 active slugs by turn count
+- AC3: Digest pushed to all webhooks where `event_filter` includes `"digest"` or `"*"`; Slack-formatted version uses blocks API
+- AC4: Scheduler entry at `08:00` UTC sends digest automatically; configurable via `channels.json` `defaults.digestTime`
+- AC5: `/reports` page gains "Digest History" tab showing last 30 digests with date, project count, and preview text
+
+---
+
+## P129 — Fleet Topology Edge Weights from Shared Memory
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+The Fleet Topology graph (P121) draws edges based on cross-project slug references in transcripts, which produces sparse graphs for projects that collaborate via shared memory rather than explicit mentions. Projects that read each other's MEMORY.md or GOAL.md files are functionally coupled but appear isolated in the topology.
+
+### Proposed Solution
+
+Augment the topology edge computation to also detect: (1) shared keyword overlap between projects' MEMORY.md files (high overlap → stronger edge), (2) shared GOAL.md keyword overlap, (3) same git remote URL (hard dependency edge, styled differently). Edge weight formula: `0.5 * transcriptRef + 0.3 * memoryOverlap + 0.2 * goalOverlap`. Shared-remote edges rendered as solid thick lines; inferred-overlap edges remain dashed. Edge tooltip shows top-3 shared keywords.
+
+### Acceptance Criteria
+
+- AC1: `/api/topology` edge weight incorporates memory overlap (MEMORY.md keyword jaccard) and goal overlap (GOAL.md keyword jaccard)
+- AC2: Shared-git-remote edges: detected by reading `.git/config` remote URL; rendered as solid `#EF4444` line of width 3
+- AC3: Inferred-overlap edges: weight ≥ 0.1 rendered as dashed `#22D3EE` line, width proportional to weight
+- AC4: Edge tooltip on hover: top-3 shared keywords between the two projects
+- AC5: `/api/topology` response gains `edgeDetail: { source, target, breakdown: { transcript, memory, goal } }` per edge
+
+---
+
+## P130 — Proposal Impact Estimator
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+The Proposal Graph (P83) shows proposals as nodes but gives no estimate of how much work a pending proposal represents or how it affects the fleet. Operators approve proposals without knowing if they will take 1 hour or 1 week, or whether they conflict with in-progress work.
+
+### Proposed Solution
+
+Add an "Impact Estimate" panel to the Proposal Graph page. For each `[ ] pending` proposal in BACKLOG.md, compute: estimated complexity (word count of ACs × 0.5 minutes/word proxy), file surface area (count of file types mentioned in the solution text), and dependency count (other proposal IDs referenced in the text). Display as a 3-axis radar mini-chart per proposal node. A "Risk Score" 0–100 = `complexity * 0.4 + surface * 0.4 + deps * 0.2`. Proposals with Risk > 70 get a red border; < 30 get a green "quick win" badge.
+
+### Acceptance Criteria
+
+- AC1: Proposal Graph node for each pending proposal gains a mini radar chart overlay (complexity / surface / deps axes)
+- AC2: Risk score computed server-side in `/api/proposal-graph`; response gains `riskScore`, `complexityScore`, `surfaceScore`, `depsScore` per node
+- AC3: Proposals with risk > 70 render with `#EF4444` border; risk < 30 render `#10B981` "quick win" badge
+- AC4: Click proposal node → side panel shows full impact breakdown: AC count, estimated minutes, referenced file types, linked proposals
+- AC5: Filter control: "Show quick wins only" toggles display to only risk < 30 nodes; URL param `?quickWins=1` persists state
