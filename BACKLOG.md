@@ -2765,3 +2765,118 @@ Add a `/admin/webhooks` sub-page to the admin panel. Operators register webhook 
 - AC5: "Test" button sends `{ event: "test", slug: "test", timestamp: "...", detail: "Test webhook delivery" }` to the URL
 - AC6: Slack format wraps payload as `{ text: "⚠ [slug] stall detected: <detail>" }` when enabled
 - AC7: Delivery log visible per webhook: last 20 deliveries with status and response code
+
+---
+
+## P116 — Agent Collaboration Network
+
+**Status:** `[x] done`
+**Created:** 2026-06-22
+
+### Problem
+
+Operators can see individual project health (fleet grid, 3D graph, galaxy) and per-project knowledge (knowledge graph), but have no view of *how projects relate to each other* — shared knowledge domains, aligned goals, or overlapping proposal topics. Two projects might be solving identical problems in parallel, or could usefully share context, with no way to notice.
+
+### Proposed Solution
+
+Add a `/collaboration` page with a D3 force-directed graph. **Nodes** = projects (sized by activity level). **Edges** = cross-project topic overlap extracted from memory files, GOAL.md, and specclaw proposals. Edge thickness scales with similarity score; edge color encodes connection type: memory-overlap (purple), goal-overlap (cyan), proposal-overlap (amber). Clicking an edge opens a popover listing the shared keywords. Sidebar shows legend + min-score threshold slider to declutter weak links. A new `/api/collaboration-graph` endpoint reuses the keyword-extraction logic from `/api/similarity` but builds a graph structure with typed edges.
+
+### Acceptance Criteria
+
+- AC1: `/collaboration` page renders D3 force-directed graph; nodes = projects, edges = topic connections
+- AC2: Edge color: purple=memory, cyan=goal, amber=proposal; edge thickness proportional to similarity score
+- AC3: Click edge → popover lists shared keywords (max 10) and connection types present
+- AC4: Sidebar: legend, min-score threshold slider (0–1, default 0.1), connection-type checkboxes (memory/goal/proposal)
+- AC5: `/api/collaboration-graph` returns `{ nodes, edges: [{source, target, score, types, sharedKeywords}] }`; header link from `/graph` page
+
+---
+
+## P117 — Fleet Mind Map
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+Understanding the full "knowledge state" of the fleet requires navigating multiple pages: knowledge graph for memory, goals page for GOAL.md content, backlog/proposal-graph for proposals. No single view gives operators a holistic picture of what each project is trying to do and what it knows.
+
+### Proposed Solution
+
+Add a `/mindmap` page with a radial D3 tree layout. The center node is "Fleet". First ring = project nodes. Each project node expands into three branch types: **GOAL** (active goal text truncated), **MEMORY** (top 3 memory entry titles), **PROPOSALS** (open proposal titles from .specclaw). Clicking a branch node navigates to the relevant detail page. Toggle controls hide/show each branch type. Node coloring matches existing cyber-cyan palette. `/api/mindmap` aggregates data from fleet API + memory files + .specclaw STATUS.md.
+
+### Acceptance Criteria
+
+- AC1: `/mindmap` page renders D3 radial tree; center=Fleet, ring-1=projects, ring-2=branches (goal/memory/proposals)
+- AC2: Branch toggle bar: GOAL (cyan), MEMORY (purple), PROPOSALS (amber); each toggle shows/hides that ring globally
+- AC3: Clicking a project node navigates to `/projects/<slug>`; clicking a memory node navigates to `/knowledge?slug=<slug>`; clicking a proposal node navigates to `/pipeline?slug=<slug>`
+- AC4: `/api/mindmap` returns `{ nodes, links }` with type annotations; refreshes every 60s
+- AC5: Node label truncated to 24 chars with tooltip on hover showing full text
+
+---
+
+## P118 — Mission Sequence Planner
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+The backlog has 115+ proposals with dependencies (cross-refs between P-numbers) but no way to sequence them visually. Operators can't see what to build next, what depends on what, or estimate a rough schedule across categories. The proposal-graph shows connections but not ordering or effort.
+
+### Proposed Solution
+
+Add a `/sequence` page with two panels: left panel = filterable proposal list (by category/status); right panel = horizontal Gantt-style swim lanes (one lane per category). Drag proposals from the list into a lane to schedule them in order. An "effort" chip on each card (S/M/L, editable inline) determines its width. Dependency arrows render between cards that reference each other (P-number cross-refs). An "Export" button copies the sequence as a markdown schedule. State persisted in localStorage (no server write required).
+
+### Acceptance Criteria
+
+- AC1: `/sequence` page: left proposal list (filter by category/status), right Gantt lanes (one per category)
+- AC2: Drag proposals from list onto lanes; order within lane is preserved; duplicates prevented
+- AC3: Effort chip (S=1w / M=2w / L=4w) on each card; click to cycle; card width scales with effort
+- AC4: Dependency arrows rendered between cards that cross-reference each other (P-number regex)
+- AC5: "Export" button copies markdown table: `| P# | Title | Category | Effort | Depends On |` to clipboard
+
+---
+
+## P119 — Project Deep Dive Modal
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+Seeing full context for a project — goal, recent conversation turns, memory summary, and active proposals — requires navigating to 4+ different pages. When operators need to decide whether to inject a message or check project status, the context-gathering overhead is high.
+
+### Proposed Solution
+
+Add a "Deep Dive" slide-out drawer (full right-panel, 480px wide) accessible from any InstanceGrid card via a `[D]` button or keyboard shortcut `Shift+D` while hovering a card. The drawer shows: (1) goal chip with status toggle, (2) last 5 conversation turns (summary from .jsonl transcript), (3) top 5 memory entry titles + first line, (4) active proposals from `.specclaw/STATUS.md`, (5) quick-inject textarea with send button. A new `/api/projects/[slug]/deepdive` endpoint aggregates all data in one call.
+
+### Acceptance Criteria
+
+- AC1: `[D]` button on InstanceGrid card opens deep-dive drawer; `Escape` closes; drawer is scrollable
+- AC2: Goal section: text + status pill (active/paused/completed), editable inline (mirrors P44 goal editor)
+- AC3: Turns section: last 5 turns from .jsonl, each showing role (user/assistant), first 120 chars, timestamp
+- AC4: Memory section: top 5 memory entries (title + first line); "View All" links to `/knowledge?slug=<slug>`
+- AC5: Quick-inject form: textarea pre-filled with `[OPERATOR]` prefix; "Send" calls `POST /api/inject/<slug>`; response shown inline
+
+---
+
+## P120 — Fleet Convergence Score
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+Operators have no single metric for whether the fleet is making *meaningful progress toward its goals* versus spinning on tool calls or waiting for input. Activity metrics (turns/hour, tool calls) measure busyness, not effectiveness. A project could have 200 turns and still be stuck in a loop making no progress on its stated goal.
+
+### Proposed Solution
+
+Add a "Convergence Score" per project: ratio of goal-advancing turns (turns where `mcp__mcd__reply` was called AND the reply text matches ≥1 goal keyword) to total turns in the last 24h. Score 0–100. Fleet score = weighted average (weight = turn count). Surface as: (1) a `convergenceScore` field in `/api/fleet`, (2) a large animated radial gauge on the main dashboard summary bar, (3) a trend sparkline (7-day history stored in `mc.db`). Projects with score < 20 for 2+ consecutive hours trigger a `convergence-alert` SSE event.
+
+### Acceptance Criteria
+
+- AC1: `convergenceScore: number` (0–100) added to `/api/fleet` `FleetProject`; fleet-level `avgConvergence` in root response
+- AC2: Main dashboard shows fleet convergence gauge (radial, animated fill) next to the health bar; color green/amber/red by score band
+- AC3: Per-project convergence chip visible in InstanceGrid card (small pill, color-coded)
+- AC4: `convergence_history` table in `mc.db`: `(slug, date, score)`; 7-day sparkline on project detail page
+- AC5: Score < 20 for ≥2h emits `convergence-alert` SSE event and posts master-channel notification (once per 6h per project)

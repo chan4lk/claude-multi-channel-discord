@@ -44,6 +44,12 @@ export default function GraphPage() {
           >
             ◈ 3D
           </Link>
+          <Link
+            href="/collaboration"
+            className="text-[0.6rem] px-2.5 py-1 rounded font-mono font-bold uppercase tracking-wider border border-purple-500/20 text-slate-400 hover:text-purple-400 hover:border-purple-500/40 transition-colors"
+          >
+            ◆ Collab
+          </Link>
           <button
             onClick={() => setShowBacklog((b) => !b)}
             className="text-[0.6rem] px-2.5 py-1 rounded font-mono font-bold uppercase tracking-wider transition-all"
