@@ -3225,3 +3225,118 @@ Add a `/memory-diff` page showing a per-project memory changelog. On each assist
 - AC3: Filter bar: project multi-select, date range picker; default = last 7 days all projects
 - AC4: Drift score = total changed lines / total lines in last 7 days; displayed as a percentage chip per project; >50% shows amber warning
 - AC5: `/api/memory-diff` returns `{ projects: [{ slug, driftScore, entries: [{ ts, sha, added, removed, diff }] }] }`
+
+---
+
+## P136 — Holographic Fleet Overview Panel
+
+**Status:** `[x] done`
+**Created:** 2026-06-22
+
+### Problem
+
+The dashboard root page (`/`) has project cards but no single view that fuses all critical signals — memory health, proposal pipeline state, convergence trends, and active goals — into one holographic overview. Operators must navigate multiple pages to build a mental picture of fleet health.
+
+### Proposed Solution
+
+Add a full-viewport "Holographic Overview" mode to the dashboard root, toggled by pressing `H` or clicking a "Holographic" button in the header. In this mode, the project grid is replaced by a split panel: left half shows a live force-directed graph of all projects with convergence coloring and pulse rings for active turns; right half shows a scrollable "fleet narrative" — one line per project, auto-generated from latest memory keywords, goal text, and last turn summary. Below both panels, a horizontal "proposal pipeline bar" shows a mini Kanban of pending → in-progress → done proposal counts per project. Pressing `H` again returns to normal grid mode.
+
+### Acceptance Criteria
+
+- AC1: Pressing `H` on the dashboard root toggles Holographic mode; button in header also toggles; state persisted in `localStorage`
+- AC2: Left panel: force-directed graph using existing `ProjectGraph` component, bounded to 50% width, convergence colors, pulse rings for active projects
+- AC3: Right panel: "Fleet Narrative" — one line per project showing slug, latest memory headline (first non-empty MEMORY.md heading or top keyword), goal snippet (first 60 chars), and last-turn age
+- AC4: Bottom bar: horizontal scroll of project mini-kanbans; each project shows count of pending/in-progress/done proposals as colored chips
+- AC5: Holographic mode is responsive — on viewport <900px wide, switches to stacked layout (graph top, narrative below, pipeline bar collapsed)
+
+---
+
+## P137 — Proposal Velocity Sparkboard
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+The backlog page shows proposals as a static list. There is no visual way to see proposal throughput over time — how many proposals are opened per week, how fast they move from pending to done, or which projects generate the most proposals. Velocity matters for capacity planning.
+
+### Proposed Solution
+
+Add a `/proposal-velocity` page with a multi-panel velocity dashboard. Top panel: a stacked area chart (D3) showing proposals opened vs closed per day over the last 30 days. Middle panel: a per-project bar chart of proposal counts (pending, in-progress, done) sorted by total. Bottom panel: "Velocity leaderboard" — projects ranked by proposals completed in the last 7 days, with a sparkline of daily completion rate. Data sourced from BACKLOG.md parse + git log timestamps of status changes.
+
+### Acceptance Criteria
+
+- AC1: `/proposal-velocity` page: stacked area chart of opened vs closed proposals per day, last 30 days; uses D3 with cyber-cyan/amber color scheme
+- AC2: Per-project bar chart: grouped bars (pending, in-progress, done) for each project; sorted by total descending; click a bar deep-links to `/backlog?project=<slug>`
+- AC3: Velocity leaderboard: top 10 projects by completions last 7 days; each row has sparkline of daily completions, total count, and trend arrow (up/down vs prior week)
+- AC4: Data from `/api/proposal-velocity` parsing BACKLOG.md + git log of BACKLOG.md for timestamp of each `[x] done` status transition; 1-hour cache
+- AC5: NavDropdown adds "Proposal Velocity" under Intelligence group
+
+---
+
+## P138 — Memory Health Radar
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+Memory is the long-term context for each project agent, but there is no holistic view of memory quality across the fleet. Individual pages show memory content and diffs, but there is no score or visualization that tells an operator "these 3 projects have degraded memory health" at a glance.
+
+### Proposed Solution
+
+Add a `/memory-health` page with a fleet-wide memory health radar. Each project is a spoke on a radar chart (D3 radar/spider). Each spoke scores the project on 5 memory health dimensions: Recency (last modified < 7 days = good), Coverage (memory file count ≥ 3), Stability (drift score < 20%), Density (total memory word count ≥ 500), Freshness (memory last modified since last turn). The radar chart is interactive: hover a spoke to see the raw metric; click a project name to open its memory-audit page.
+
+### Acceptance Criteria
+
+- AC1: `/memory-health` page: D3 radar chart with one spoke per active project, scoring 5 dimensions (0–100 each); default = all projects overlaid with 30% opacity fills
+- AC2: Toggle "per-project" view: shows one project at a time with a selector dropdown; large radar, full labels, score breakdowns below
+- AC3: Five dimensions computed server-side in `/api/memory-health`: Recency, Coverage, Density, Stability (inverse drift score), Freshness (1 if memory modified after last transcript write, else 0)
+- AC4: Fleet average pentagon displayed as a bold white line; project lines colored by composite score (average of 5 dims): green ≥70, amber 40–70, red <40
+- AC5: NavDropdown adds "Memory Health" under Intelligence group; clicking a spoke label deep-links to `/memory-audit?slug=<slug>`
+
+---
+
+## P139 — Live Goal Progress Heatmap
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+The goal board (`/goals`) shows goal text and status per project but no quantitative progress over time. Operators can not see whether a project is making steady progress toward its goal or has plateaued. A temporal heatmap of goal-keyword frequency in turns would reveal effort patterns.
+
+### Proposed Solution
+
+Add a `/goal-heatmap` page: a 2D heatmap (D3) where rows = projects with active goals, columns = days (last 30), cell color = goal-keyword hit rate in that day's turns (0 = dark, 100% hit rate = bright cyan). An operator can select a cell to see that day's turns filtered to goal-relevant content. A summary row shows fleet-wide goal activity. Data computed from transcript JSONL files, matching assistant turn text against goal keywords.
+
+### Acceptance Criteria
+
+- AC1: `/goal-heatmap` page: D3 heatmap, rows = active-goal projects, columns = last 30 days; cell color = goal-keyword match rate (0 = #0a1628, max = #00F5FF); missing data = dim grey
+- AC2: Click a cell opens a side drawer showing that day's matching turns for that project (turn text excerpts, up to 5); drawer slides in from right
+- AC3: Summary row at bottom: fleet-wide average goal-keyword rate per day; displayed as a bold pulse line above the heatmap
+- AC4: Data from `/api/goal-heatmap`: reads goal text per project from channels.json, tokenizes into keywords, scans JSONL transcripts for keyword hits per day; 30-min cache
+- AC5: NavDropdown adds "Goal Heatmap" under Intelligence group
+
+---
+
+## P140 — Agent Capability Map
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+Operators configure `allowedTools` and `disallowedTools` per project but have no visual overview of what capabilities each project agent has vs. what it actually uses. There is no fleet-wide map of tool capability coverage — which projects are running with minimal permissions vs. full access.
+
+### Proposed Solution
+
+Add a `/capability-map` page: a grid where rows = tool names (aggregated from all projects' allowed/disallowed lists + observed usage from transcripts), columns = projects. Each cell is a colored square: green = allowed + used, cyan = allowed + unused, amber = used but not explicitly allowed (inherited via permissionMode), red = explicitly disallowed. Hovering a cell shows use count from last 7 days. A "coverage score" per project (used / allowed) shown as a bar below each column.
+
+### Acceptance Criteria
+
+- AC1: `/capability-map` page: grid heatmap rows=tools, columns=projects; cell states: green=allowed+used, cyan=allowed+unused, amber=used+implicit, red=disallowed; scrollable in both axes
+- AC2: Tool list from union of all projects' `allowedTools` / `disallowedTools` arrays in channels.json + observed tool names from JSONL transcripts (last 7 days)
+- AC3: Use counts from JSONL scan: count `tool_use` blocks per tool per project per day; `/api/capability-map` endpoint; 1-hour cache
+- AC4: Coverage score per project = distinct tools used / distinct tools allowed; shown as a small bar chart below each project column header
+- AC5: NavDropdown adds "Capability Map" under Intelligence group; clicking a row label deep-links to `/permissions?tool=<name>`
