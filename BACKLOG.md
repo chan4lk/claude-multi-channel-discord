@@ -2375,7 +2375,7 @@ Add a `/canvas` page with a drag-and-drop workflow builder. Nodes are projects (
 
 ## P100 — Agent Tool Permission Heatmap
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem

@@ -66,6 +66,7 @@ const NAV_GROUPS: NavGroup[] = [
     category: 'Admin',
     color: '#6B7280',
     items: [
+      { href: '/permissions', label: 'Permissions', icon: '⊛' },
       { href: '/search', label: 'Search', icon: '⌕' },
       { href: '/admin', label: 'Admin', icon: '⚙' },
     ],
