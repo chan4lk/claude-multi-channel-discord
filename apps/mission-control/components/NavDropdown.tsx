@@ -38,6 +38,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/topology', label: 'Fleet Topology', icon: '⬡' },
       { href: '/narrative', label: 'Narrative Timeline', icon: '◫' },
       { href: '/context-pressure', label: 'Context Pressure', icon: '◑' },
+      { href: '/turn-quality', label: 'Turn Quality', icon: '▦' },
     ],
   },
   {

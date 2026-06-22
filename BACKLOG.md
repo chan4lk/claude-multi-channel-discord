@@ -3000,7 +3000,7 @@ Add a global command palette triggered by `Cmd+K` / `Ctrl+K` on any MC page. Fuz
 
 ## P126 — Turn Quality Heatmap
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -3023,7 +3023,7 @@ Add a `/turn-quality` page showing a 2-D heatmap: X-axis = time of day (hour buc
 
 ## P127 — Session Health Dashboard
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem

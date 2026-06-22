@@ -187,6 +187,18 @@ CREATE TABLE IF NOT EXISTS context_pressure (
 
 CREATE INDEX IF NOT EXISTS idx_ctx_pressure_slug ON context_pressure(slug);
 CREATE INDEX IF NOT EXISTS idx_ctx_pressure_ts   ON context_pressure(ts);
+
+CREATE TABLE IF NOT EXISTS turn_quality (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  slug       TEXT NOT NULL,
+  hour       TEXT NOT NULL, -- ISO 8601 hour: "2026-06-22T14"
+  score      REAL NOT NULL DEFAULT 0,
+  turn_count INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(slug, hour)
+);
+
+CREATE INDEX IF NOT EXISTS idx_turn_quality_slug ON turn_quality(slug);
+CREATE INDEX IF NOT EXISTS idx_turn_quality_hour ON turn_quality(hour);
 `);
 
 // Prune old events on startup
@@ -712,6 +724,30 @@ export function getLatestContextPressure(slug: string): (ContextPressureRow & { 
   ).get(slug) as ContextPressureRow | undefined
   if (!row) return null
   return { ...row, parsedBreakdown: JSON.parse(row.breakdown) as ContextPressureBreakdown }
+}
+
+// ── Turn Quality (P126) ───────────────────────────────────────────────────
+
+export interface TurnQualityRow {
+  id: number
+  slug: string
+  hour: string
+  score: number
+  turn_count: number
+}
+
+export function upsertTurnQuality(slug: string, hour: string, score: number, turnCount: number): void {
+  db.prepare(
+    `INSERT INTO turn_quality (slug, hour, score, turn_count) VALUES (?, ?, ?, ?)
+     ON CONFLICT(slug, hour) DO UPDATE SET score = excluded.score, turn_count = excluded.turn_count`
+  ).run(slug, hour, score, turnCount)
+}
+
+export function getTurnQuality(hours = 24): TurnQualityRow[] {
+  const cutoff = new Date(Date.now() - hours * 3_600_000).toISOString().slice(0, 13)
+  return db.prepare(
+    `SELECT * FROM turn_quality WHERE hour >= ? ORDER BY hour ASC`
+  ).all(cutoff) as TurnQualityRow[]
 }
 
 export default db;
