@@ -51,6 +51,199 @@ const SECTION_LABELS: Record<SectionKey, string> = {
 const ALL_VISIBLE = Object.fromEntries(SECTION_KEYS.map((k) => [k, true])) as Record<SectionKey, boolean>
 const LS_SECTIONS_KEY = 'mc-dashboard-sections'
 
+// === P95: Dashboard Mode Presets ===
+const LS_PRESETS_KEY = 'mc-dashboard-presets'
+const LS_ACTIVE_PRESET_KEY = 'mc-dashboard-active-preset'
+
+const BUILT_IN_PRESETS: Record<string, Record<SectionKey, boolean>> = {
+  Triage:  { instances: true,  stalls: true,  advisor: true,  pipeline: false, memories: false, scheduler: false, events: false },
+  Review:  { instances: false, stalls: false, advisor: false, pipeline: true,  memories: false, scheduler: true,  events: true  },
+  Ambient: { instances: true,  stalls: false, advisor: false, pipeline: false, memories: false, scheduler: false, events: true  },
+}
+
+function sectionsEqual(a: Record<SectionKey, boolean>, b: Record<SectionKey, boolean>): boolean {
+  return SECTION_KEYS.every((k) => a[k] === b[k])
+}
+
+function loadCustomPresets(): Record<string, Record<SectionKey, boolean>> {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = localStorage.getItem(LS_PRESETS_KEY)
+    if (!raw) return {}
+    return JSON.parse(raw) as Record<string, Record<SectionKey, boolean>>
+  } catch {
+    return {}
+  }
+}
+
+function loadActivePreset(): string {
+  if (typeof window === 'undefined') return ''
+  try {
+    return localStorage.getItem(LS_ACTIVE_PRESET_KEY) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+function PresetSwitcher({
+  sections,
+  onApply,
+}: {
+  sections: Record<SectionKey, boolean>
+  onApply: (s: Record<SectionKey, boolean>, name: string) => void
+}) {
+  const [customPresets, setCustomPresets] = useState<Record<string, Record<SectionKey, boolean>>>({})
+  const [activePreset, setActivePreset] = useState<string>('')
+  const [saveOpen, setSaveOpen] = useState(false)
+  const [saveName, setSaveName] = useState('')
+  const saveInputRef = useRef<HTMLInputElement>(null)
+
+  // Load from localStorage on mount
+  useEffect(() => {
+    setCustomPresets(loadCustomPresets())
+    setActivePreset(loadActivePreset())
+  }, [])
+
+  // Focus input when popover opens
+  useEffect(() => {
+    if (saveOpen) setTimeout(() => saveInputRef.current?.focus(), 50)
+  }, [saveOpen])
+
+  const allPresets: Record<string, Record<SectionKey, boolean>> = { ...BUILT_IN_PRESETS, ...customPresets }
+
+  // Determine which preset (if any) matches current sections
+  const matchedPreset = Object.keys(allPresets).find((name) => sectionsEqual(sections, allPresets[name])) ?? ''
+
+  function applyPreset(name: string) {
+    const layout = allPresets[name]
+    if (!layout) return
+    setActivePreset(name)
+    try { localStorage.setItem(LS_ACTIVE_PRESET_KEY, name) } catch {}
+    onApply(layout, name)
+  }
+
+  function savePreset() {
+    const name = saveName.trim()
+    if (!name) return
+    const updated = { ...customPresets, [name]: { ...sections } }
+    setCustomPresets(updated)
+    setActivePreset(name)
+    try {
+      localStorage.setItem(LS_PRESETS_KEY, JSON.stringify(updated))
+      localStorage.setItem(LS_ACTIVE_PRESET_KEY, name)
+    } catch {}
+    setSaveName('')
+    setSaveOpen(false)
+  }
+
+  function deletePreset(name: string) {
+    const updated = { ...customPresets }
+    delete updated[name]
+    setCustomPresets(updated)
+    try { localStorage.setItem(LS_PRESETS_KEY, JSON.stringify(updated)) } catch {}
+    if (activePreset === name) {
+      setActivePreset('')
+      try { localStorage.removeItem(LS_ACTIVE_PRESET_KEY) } catch {}
+    }
+  }
+
+  const isCustom = (name: string) => !(name in BUILT_IN_PRESETS)
+  const showCustomLabel = !matchedPreset
+
+  return (
+    <div className="flex items-center gap-1 shrink-0">
+      {/* Preset pills */}
+      <div
+        className="flex items-center gap-1 rounded-full border border-cyber-cyan/15 bg-cyber-bg/60 px-1.5 py-0.5"
+        style={{ boxShadow: '0 0 10px rgba(0,245,255,0.04)' }}
+      >
+        {Object.keys(allPresets).map((name) => {
+          const isActive = matchedPreset === name
+          return (
+            <div key={name} className="flex items-center gap-0.5">
+              <button
+                onClick={() => applyPreset(name)}
+                className="relative text-[0.55rem] font-mono uppercase tracking-widest px-2 py-0.5 rounded-full transition-all"
+                style={{
+                  color: isActive ? '#00F5FF' : '#64748b',
+                  background: isActive ? 'rgba(0,245,255,0.12)' : 'transparent',
+                  border: isActive ? '1px solid rgba(0,245,255,0.4)' : '1px solid transparent',
+                }}
+                title={`Apply "${name}" preset`}
+              >
+                {name}
+              </button>
+              {isCustom(name) && (
+                <button
+                  onClick={() => deletePreset(name)}
+                  className="text-[0.5rem] text-slate-600 hover:text-red-400 transition-colors leading-none -ml-1 pr-0.5"
+                  title={`Delete "${name}" preset`}
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          )
+        })}
+        {showCustomLabel && (
+          <span className="text-[0.55rem] font-mono uppercase tracking-widest px-2 py-0.5 text-slate-500 italic">
+            Custom
+          </span>
+        )}
+      </div>
+
+      {/* Save layout button */}
+      <div className="relative">
+        <button
+          onClick={() => setSaveOpen((v) => !v)}
+          className="text-xs font-mono w-5 h-5 flex items-center justify-center rounded-full border transition-colors"
+          style={{
+            borderColor: saveOpen ? 'rgba(0,245,255,0.4)' : '#1e3a5f',
+            color: saveOpen ? '#00F5FF' : '#64748b',
+            background: saveOpen ? 'rgba(0,245,255,0.08)' : 'transparent',
+          }}
+          title="Save current layout as preset"
+        >
+          ⊕
+        </button>
+        {saveOpen && (
+          <>
+            <div className="fixed inset-0 z-30" onClick={() => setSaveOpen(false)} />
+            <div
+              className="absolute right-0 top-full mt-2 z-40 rounded-lg border border-cyber-cyan/20 bg-cyber-surface/95 backdrop-blur-md p-3 w-48 shadow-2xl"
+              style={{ boxShadow: '0 0 24px rgba(0,245,255,0.08)' }}
+            >
+              <div className="text-[0.55rem] uppercase tracking-widest text-slate-500 mb-2 font-semibold">
+                Save Layout
+              </div>
+              <input
+                ref={saveInputRef}
+                value={saveName}
+                onChange={(e) => setSaveName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') savePreset(); if (e.key === 'Escape') setSaveOpen(false) }}
+                placeholder="Preset name…"
+                className="w-full bg-cyber-bg border border-cyber-cyan/20 rounded px-2 py-1 text-xs font-mono text-slate-200 placeholder-slate-600 outline-none focus:border-cyber-cyan/50 mb-2"
+              />
+              <button
+                onClick={savePreset}
+                disabled={!saveName.trim()}
+                className="w-full text-[0.6rem] font-mono uppercase tracking-widest py-1 rounded transition-colors"
+                style={{
+                  background: saveName.trim() ? 'rgba(0,245,255,0.12)' : 'rgba(71,85,105,0.2)',
+                  color: saveName.trim() ? '#00F5FF' : '#475569',
+                  border: saveName.trim() ? '1px solid rgba(0,245,255,0.3)' : '1px solid #1e3a5f',
+                }}
+              >
+                Save layout
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function loadVisibility(): Record<SectionKey, boolean> {
   if (typeof window === 'undefined') return ALL_VISIBLE
   try {
@@ -255,9 +448,17 @@ function DashboardClient() {
   function toggleSection(key: SectionKey) {
     setSections((prev) => {
       const next = { ...prev, [key]: !prev[key] }
-      try { localStorage.setItem(LS_SECTIONS_KEY, JSON.stringify(next)) } catch {}
+      try {
+        localStorage.setItem(LS_SECTIONS_KEY, JSON.stringify(next))
+        localStorage.removeItem(LS_ACTIVE_PRESET_KEY)
+      } catch {}
       return next
     })
+  }
+
+  function applyPresetSections(layout: Record<SectionKey, boolean>) {
+    setSections(layout)
+    try { localStorage.setItem(LS_SECTIONS_KEY, JSON.stringify(layout)) } catch {}
   }
 
   const hiddenCount = SECTION_KEYS.filter((k) => !sections[k]).length
@@ -371,6 +572,9 @@ function DashboardClient() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-4 flex-wrap justify-end">
+            {/* Preset switcher (P95) */}
+            <PresetSwitcher sections={sections} onApply={applyPresetSections} />
+
             {/* Sections toggle (P62) — always visible, first */}
             <div className="relative shrink-0">
               <button

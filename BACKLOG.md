@@ -2151,7 +2151,7 @@ Add a "Templates" section to the InjectTerminal sidebar. Templates are saved in 
 
 ## P91 — Proposal Dependency Graph
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -2176,7 +2176,7 @@ Add a `/proposal-graph` page with a force-directed graph (D3) where each node is
 
 ## P92 — Fleet Turn Volume Treemap
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -2201,7 +2201,7 @@ Add a `/turns` page with a D3 treemap. Each rectangle is a project; area encodes
 
 ## P93 — Project Lifecycle Gantt
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -2226,7 +2226,7 @@ Add a `/gantt` page with a horizontal Gantt chart. Each row is a project. The X 
 
 ## P94 — Memory Audit Trail
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -2251,7 +2251,7 @@ Add a `/memory-audit` page with a filterable, sortable table of all memory files
 
 ## P95 — Dashboard Mode Presets
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
