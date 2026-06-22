@@ -154,6 +154,17 @@ CREATE TABLE IF NOT EXISTS turn_annotations (
 
 CREATE INDEX IF NOT EXISTS idx_turn_annotations_slug ON turn_annotations(slug);
 CREATE INDEX IF NOT EXISTS idx_turn_annotations_tag  ON turn_annotations(tag);
+
+CREATE TABLE IF NOT EXISTS convergence_history (
+  id    INTEGER PRIMARY KEY AUTOINCREMENT,
+  slug  TEXT NOT NULL,
+  date  TEXT NOT NULL,
+  score REAL NOT NULL DEFAULT 0,
+  UNIQUE(slug, date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_convergence_slug ON convergence_history(slug);
+CREATE INDEX IF NOT EXISTS idx_convergence_date ON convergence_history(date);
 `);
 
 // Prune old events on startup
@@ -585,6 +596,35 @@ export function getTurnAnnotationsForSession(slug: string, sessionFile: string):
   return db.prepare(
     `SELECT * FROM turn_annotations WHERE slug = ? AND session_file = ? ORDER BY turn_index ASC`
   ).all(slug, sessionFile) as TurnAnnotationRow[]
+}
+
+// ── Convergence History (P120) ────────────────────────────────────────────
+
+export type ConvergenceRow = {
+  id: number
+  slug: string
+  date: string
+  score: number
+}
+
+export function upsertConvergenceScore(slug: string, date: string, score: number): void {
+  db.prepare(
+    `INSERT INTO convergence_history (slug, date, score) VALUES (?, ?, ?)
+     ON CONFLICT(slug, date) DO UPDATE SET score = excluded.score`
+  ).run(slug, date, score)
+}
+
+export function getConvergenceHistory(slug: string, days = 7): ConvergenceRow[] {
+  return db.prepare(
+    `SELECT * FROM convergence_history WHERE slug = ? ORDER BY date DESC LIMIT ?`
+  ).all(slug, days) as ConvergenceRow[]
+}
+
+export function getConvergenceScore(slug: string): number | null {
+  const row = db.prepare(
+    `SELECT score FROM convergence_history WHERE slug = ? ORDER BY date DESC LIMIT 1`
+  ).get(slug) as { score: number } | undefined
+  return row?.score ?? null
 }
 
 export default db;

@@ -1,6 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
+import { upsertConvergenceScore, getConvergenceScore } from '../../../src/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,6 +31,7 @@ export interface FleetProject {
   goalText?: string
   goalStatus?: GoalStatus
   memoryStatus?: MemoryStatus
+  convergenceScore?: number
 }
 
 export interface FleetResponse {
@@ -37,6 +39,7 @@ export interface FleetResponse {
   active: number
   stalled: number
   autonomous: number
+  avgConvergence?: number
   projects: FleetProject[]
 }
 
@@ -206,6 +209,56 @@ function readMemoryStatus(slug: string, mcdDir: string): MemoryStatus {
   }
 }
 
+function computeConvergenceScore(slug: string, mcdDir: string, goalText?: string): number {
+  const files = findAllJsonl(slug, mcdDir)
+  const cutoffMs = Date.now() - 24 * 60 * 60_000
+  const goalKeywords = goalText
+    ? goalText.toLowerCase().split(/\W+/).filter((w) => w.length > 4)
+    : []
+
+  let totalTurns = 0
+  let goalAdvancingTurns = 0
+
+  for (const file of files) {
+    let raw = ''
+    try { raw = fs.readFileSync(file, 'utf-8') } catch { continue }
+    const lines = raw.trim().split('\n').filter(Boolean)
+    let i = 0
+    while (i < lines.length) {
+      let rec: Record<string, unknown>
+      try { rec = JSON.parse(lines[i]) } catch { i++; continue }
+      if (rec.type !== 'assistant') { i++; continue }
+      const ts = typeof rec.timestamp === 'string' ? new Date(rec.timestamp).getTime() : 0
+      if (ts < cutoffMs) { i++; continue }
+      totalTurns++
+
+      // Look ahead for a tool_result with mcp__mcd__reply
+      let hasReply = false
+      const content = (rec as { message?: { content?: unknown[] } }).message?.content
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          const b = block as { type?: string; name?: string; input?: { text?: string } }
+          if (b.type === 'tool_use' && b.name === 'mcp__mcd__reply') {
+            hasReply = true
+            const text = (b.input?.text ?? '').toLowerCase()
+            if (goalKeywords.length === 0 || goalKeywords.some((kw) => text.includes(kw))) {
+              goalAdvancingTurns++
+            }
+            break
+          }
+        }
+      }
+      if (!hasReply && goalKeywords.length === 0) {
+        // If no goal keywords defined, count all reply turns
+      }
+      i++
+    }
+  }
+
+  if (totalTurns === 0) return 0
+  return Math.round((goalAdvancingTurns / totalTurns) * 100)
+}
+
 function readGoal(slug: string, mcdDir: string): { goalText: string; goalStatus: GoalStatus } | null {
   const goalPath = path.join(mcdDir, 'projects', slug, 'GOAL.md')
   try {
@@ -322,6 +375,13 @@ function classifyState(
   const mem = readMemoryStatus(slug, mcdDir)
   if (mem.exists) result.memoryStatus = mem
 
+  const convergenceScore = computeConvergenceScore(slug, mcdDir, result.goalText)
+  result.convergenceScore = convergenceScore
+  try {
+    const today = new Date().toISOString().slice(0, 10)
+    upsertConvergenceScore(slug, today, convergenceScore)
+  } catch {}
+
   return result
 }
 
@@ -385,5 +445,10 @@ export async function GET(): Promise<Response> {
   const counts = { idle: 0, active: 0, stalled: 0, autonomous: 0 }
   for (const p of projects) counts[p.state]++
 
-  return Response.json({ ...counts, projects } satisfies FleetResponse)
+  const scoredProjects = projects.filter((p) => p.convergenceScore != null)
+  const avgConvergence = scoredProjects.length > 0
+    ? Math.round(scoredProjects.reduce((sum, p) => sum + (p.convergenceScore ?? 0), 0) / scoredProjects.length)
+    : undefined
+
+  return Response.json({ ...counts, avgConvergence, projects } satisfies FleetResponse)
 }

@@ -66,6 +66,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/memory-decay', label: 'Memory Decay', icon: '◑' },
       { href: '/compare', label: 'Project Compare', icon: '⇌' },
       { href: '/proposal-graph', label: 'Proposal Graph', icon: '◎' },
+      { href: '/sequence', label: 'Mission Sequence', icon: '▷' },
     ],
   },
   {

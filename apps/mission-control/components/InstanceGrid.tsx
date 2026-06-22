@@ -711,6 +711,24 @@ export default function InstanceGrid({ events = [], filterSlugs = null, fleetPro
                           <SlugAnnotation slug={slug} />
                           {(() => {
                             const fp = fleetProjects.find((p) => p.slug === slug)
+                            const cs = fp?.convergenceScore
+                            return cs != null ? (
+                              <div
+                                className="flex items-center gap-1 mt-0.5"
+                                title={`Convergence score: ${cs}/100 (goal-advancing turns in last 24h)`}
+                              >
+                                <span className="text-[9px] font-mono uppercase tracking-wider text-slate-500">CNV</span>
+                                <span
+                                  className="text-[10px] font-bold font-mono"
+                                  style={{ color: cs >= 60 ? '#4ADE80' : cs >= 30 ? '#F59E0B' : '#EF4444' }}
+                                >
+                                  {cs}
+                                </span>
+                              </div>
+                            ) : null
+                          })()}
+                          {(() => {
+                            const fp = fleetProjects.find((p) => p.slug === slug)
                             return (
                               <GoalChip
                                 slug={slug}
