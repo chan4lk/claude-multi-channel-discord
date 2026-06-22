@@ -9,6 +9,7 @@ import InjectTerminal from './InjectTerminal'
 import FleetAdvisorPanel from './FleetAdvisorPanel'
 import SpotlightDrawer from './SpotlightDrawer'
 import KeyboardShortcutsModal from './KeyboardShortcutsModal'
+import NotificationBell from './NotificationBell'
 import { FleetContextProvider } from './FleetContext'
 import { authClient } from '../src/auth-client'
 
@@ -82,6 +83,7 @@ const SIDEBAR_ITEMS = [
   { href: '/alerts', icon: '⚠', label: 'Alerts' },
   { href: '/snapshots', icon: '⊡', label: 'Snapshots' },
   { href: '/broadcast', icon: '◉', label: 'Broadcast' },
+  { href: '/admin/webhooks', icon: '⇄', label: 'Webhooks' },
   { href: '/search', icon: '⌕', label: 'Search' },
 ] as const
 
@@ -119,8 +121,9 @@ function NavSidebar({ onShortcuts }: { onShortcuts?: () => void }) {
           </Link>
         )
       })}
-      {/* Keyboard shortcuts button pinned at bottom */}
+      {/* Notification bell + keyboard shortcuts pinned at bottom */}
       <div className="flex-1" />
+      <NotificationBell />
       <button
         onClick={onShortcuts}
         title="Keyboard shortcuts (?)"

@@ -2,7 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { computeFleet, computeStalls } from './fleet-compute'
-import { insertAlertEvent } from './db'
+import { insertAlertEvent, getWebhooks } from './db'
 
 // Use globalThis to survive Next.js hot module replacement
 const g = globalThis as {
@@ -35,6 +35,41 @@ export function broadcast(data: unknown): void {
     } catch {
       clients.delete(controller);
     }
+  }
+}
+
+async function fireWebhooks(eventType: string, slug: string, detail: string): Promise<void> {
+  let hooks: ReturnType<typeof getWebhooks>
+  try { hooks = getWebhooks() } catch { return }
+  const enabled = hooks.filter((h) => h.enabled && (h.event_filter === 'all' || h.event_filter === eventType))
+  if (enabled.length === 0) return
+
+  const { insertWebhookDelivery } = await import('./db')
+  const ts = new Date().toISOString()
+
+  for (const hook of enabled) {
+    let body: string
+    if (hook.use_slack_format) {
+      const emoji = eventType === 'stall' ? '⏸' : eventType === 'budget' ? '💸' : eventType === 'watchdog' ? '🐕' : '⚡'
+      body = JSON.stringify({ text: `${emoji} [${slug}] ${eventType}: ${detail}` })
+    } else {
+      body = JSON.stringify({ event: eventType, slug, timestamp: ts, detail })
+    }
+    let status = 'error'
+    let responseCode: number | null = null
+    let error: string | null = null
+    try {
+      const res = await Promise.race([
+        fetch(hook.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }),
+        new Promise<Response>((_, rej) => setTimeout(() => rej(new Error('timeout')), 5_000)),
+      ]) as Response
+      responseCode = res.status
+      status = res.ok ? 'success' : 'error'
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e)
+      status = error === 'timeout' ? 'timeout' : 'error'
+    }
+    try { insertWebhookDelivery(hook.id, eventType, slug, status, responseCode, error) } catch {}
   }
 }
 
@@ -117,6 +152,7 @@ function broadcastFleetUpdate(): void {
         try {
           insertAlertEvent(s.slug, 'stall', `Stall detected: ${s.stallReason}`, { stallReason: s.stallReason, stallAgeMins: s.stallAgeMins, checkedAt })
         } catch {}
+        fireWebhooks('stall', s.slug, `Stall detected: ${s.stallReason}`).catch(() => {})
       }
     }
     checkBudgetAlerts(fleet.projects);
@@ -162,6 +198,7 @@ function checkBudgetAlerts(projects: ReturnType<typeof computeFleet>['projects']
           budgetPayload as Record<string, unknown>
         )
       } catch {}
+      fireWebhooks('budget', project.slug, `Budget threshold hit: ${label} (${Math.round(pct)}% used)`).catch(() => {})
     }
   }
 }

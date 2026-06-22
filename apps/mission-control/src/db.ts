@@ -117,6 +117,30 @@ CREATE TABLE IF NOT EXISTS alert_events (
 CREATE INDEX IF NOT EXISTS idx_alert_events_ts        ON alert_events(ts);
 CREATE INDEX IF NOT EXISTS idx_alert_events_slug      ON alert_events(slug);
 CREATE INDEX IF NOT EXISTS idx_alert_events_type      ON alert_events(alert_type);
+
+CREATE TABLE IF NOT EXISTS webhooks (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL DEFAULT '',
+  url         TEXT NOT NULL,
+  event_filter TEXT NOT NULL DEFAULT 'all',
+  use_slack_format INTEGER NOT NULL DEFAULT 0,
+  enabled     INTEGER NOT NULL DEFAULT 1,
+  created_at  INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  webhook_id  INTEGER NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
+  ts          INTEGER NOT NULL DEFAULT (unixepoch()),
+  event_type  TEXT NOT NULL,
+  slug        TEXT NOT NULL DEFAULT '',
+  status      TEXT NOT NULL DEFAULT 'pending',
+  response_code INTEGER,
+  error       TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook_id ON webhook_deliveries(webhook_id);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_ts         ON webhook_deliveries(ts);
 `);
 
 // Prune old events on startup
@@ -410,6 +434,81 @@ export function getAlertEvents(opts: {
   return db.prepare(
     `SELECT * FROM alert_events ${where} ORDER BY id DESC LIMIT ?`
   ).all(...params, limit) as AlertEventRow[]
+}
+
+// ── Webhooks (P115) ───────────────────────────────────────────────────────
+
+export type WebhookRow = {
+  id: number
+  name: string
+  url: string
+  event_filter: string
+  use_slack_format: number
+  enabled: number
+  created_at: number
+}
+
+export type WebhookDeliveryRow = {
+  id: number
+  webhook_id: number
+  ts: number
+  event_type: string
+  slug: string
+  status: string
+  response_code: number | null
+  error: string | null
+}
+
+export function getWebhooks(): WebhookRow[] {
+  return db.prepare(`SELECT * FROM webhooks ORDER BY created_at DESC`).all() as WebhookRow[]
+}
+
+export function getWebhook(id: number): WebhookRow | null {
+  return db.prepare(`SELECT * FROM webhooks WHERE id = ?`).get(id) as WebhookRow | null
+}
+
+export function insertWebhook(name: string, url: string, eventFilter: string, useSlackFormat: boolean): number {
+  const result = db.prepare(
+    `INSERT INTO webhooks (name, url, event_filter, use_slack_format) VALUES (?, ?, ?, ?)`
+  ).run(name, url, eventFilter, useSlackFormat ? 1 : 0)
+  return result.lastInsertRowid as number
+}
+
+export function updateWebhook(id: number, fields: Partial<{ name: string; url: string; event_filter: string; use_slack_format: boolean; enabled: boolean }>): void {
+  const parts: string[] = []
+  const params: unknown[] = []
+  if (fields.name !== undefined) { parts.push('name = ?'); params.push(fields.name) }
+  if (fields.url !== undefined) { parts.push('url = ?'); params.push(fields.url) }
+  if (fields.event_filter !== undefined) { parts.push('event_filter = ?'); params.push(fields.event_filter) }
+  if (fields.use_slack_format !== undefined) { parts.push('use_slack_format = ?'); params.push(fields.use_slack_format ? 1 : 0) }
+  if (fields.enabled !== undefined) { parts.push('enabled = ?'); params.push(fields.enabled ? 1 : 0) }
+  if (parts.length === 0) return
+  params.push(id)
+  db.prepare(`UPDATE webhooks SET ${parts.join(', ')} WHERE id = ?`).run(...params)
+}
+
+export function deleteWebhook(id: number): void {
+  db.prepare(`DELETE FROM webhooks WHERE id = ?`).run(id)
+}
+
+export function insertWebhookDelivery(
+  webhookId: number,
+  eventType: string,
+  slug: string,
+  status: string,
+  responseCode: number | null,
+  error: string | null
+): void {
+  db.prepare(
+    `INSERT INTO webhook_deliveries (webhook_id, event_type, slug, status, response_code, error)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(webhookId, eventType, slug, status, responseCode, error)
+}
+
+export function getWebhookDeliveries(webhookId: number, limit = 20): WebhookDeliveryRow[] {
+  return db.prepare(
+    `SELECT * FROM webhook_deliveries WHERE webhook_id = ? ORDER BY id DESC LIMIT ?`
+  ).all(webhookId, limit) as WebhookDeliveryRow[]
 }
 
 export default db;
