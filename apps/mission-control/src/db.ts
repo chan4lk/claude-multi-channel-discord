@@ -199,6 +199,16 @@ CREATE TABLE IF NOT EXISTS turn_quality (
 
 CREATE INDEX IF NOT EXISTS idx_turn_quality_slug ON turn_quality(slug);
 CREATE INDEX IF NOT EXISTS idx_turn_quality_hour ON turn_quality(hour);
+
+CREATE TABLE IF NOT EXISTS digest_log (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts           INTEGER NOT NULL DEFAULT (unixepoch()),
+  project_count INTEGER NOT NULL DEFAULT 0,
+  summary      TEXT NOT NULL DEFAULT '',
+  payload      TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_digest_ts ON digest_log(ts);
 `);
 
 // Prune old events on startup
@@ -724,6 +734,31 @@ export function getLatestContextPressure(slug: string): (ContextPressureRow & { 
   ).get(slug) as ContextPressureRow | undefined
   if (!row) return null
   return { ...row, parsedBreakdown: JSON.parse(row.breakdown) as ContextPressureBreakdown }
+}
+
+// ── Digest Log (P128) ─────────────────────────────────────────────────────
+
+export interface DigestRow {
+  id: number
+  ts: number
+  project_count: number
+  summary: string
+  payload: string
+}
+
+export function insertDigest(projectCount: number, summary: string, payload: unknown): number {
+  const result = db.prepare(
+    `INSERT INTO digest_log (project_count, summary, payload) VALUES (?, ?, ?)`
+  ).run(projectCount, summary, JSON.stringify(payload))
+  return result.lastInsertRowid as number
+}
+
+export function getLatestDigest(): DigestRow | null {
+  return db.prepare(`SELECT * FROM digest_log ORDER BY ts DESC LIMIT 1`).get() as DigestRow | null
+}
+
+export function getDigestHistory(limit = 30): DigestRow[] {
+  return db.prepare(`SELECT * FROM digest_log ORDER BY ts DESC LIMIT ?`).all(limit) as DigestRow[]
 }
 
 // ── Turn Quality (P126) ───────────────────────────────────────────────────

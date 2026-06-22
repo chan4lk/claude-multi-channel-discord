@@ -64,6 +64,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/anomalies', label: 'Anomaly Detection', icon: '⚠' },
       { href: '/health-trends', label: 'Health Trends', icon: '↗' },
       { href: '/reports', label: 'Weekly Report', icon: '◻' },
+      { href: '/digest', label: 'Fleet Digest', icon: '◈' },
       { href: '/advisor', label: 'Fleet Advisor', icon: '◆' },
       { href: '/similarity', label: 'Memory Similarity', icon: '⬡' },
       { href: '/memory-audit', label: 'Memory Audit', icon: '≡' },
