@@ -100,17 +100,118 @@ function DiffStrip({ diff }: { diff: string }) {
   )
 }
 
+// ─── cross-turn tool diff ─────────────────────────────────────────────────────
+function computeToolDiff(a: ReplayToolCall[], b: ReplayToolCall[]): Array<{ name: string; status: 'added' | 'removed' | 'changed' | 'same'; durationDelta?: number }> {
+  const aNames = a.map((t) => t.name)
+  const bNames = b.map((t) => t.name)
+  const all = [...new Set([...aNames, ...bNames])]
+  return all.map((name) => {
+    const inA = a.find((t) => t.name === name)
+    const inB = b.find((t) => t.name === name)
+    if (inA && inB) {
+      const changed = inA.input !== inB.input
+      return { name, status: changed ? 'changed' : 'same', durationDelta: inB.durationMs - inA.durationMs }
+    }
+    if (inB) return { name, status: 'added' }
+    return { name, status: 'removed' }
+  })
+}
+
+function CrossTurnDiff({ fromTurn, toTurn, fromIdx, toIdx }: { fromTurn: ReplayTurn; toTurn: ReplayTurn; fromIdx: number; toIdx: number }) {
+  const toolDiff = computeToolDiff(fromTurn.toolCalls, toTurn.toolCalls)
+  const textDelta = toTurn.assistantText.length - fromTurn.assistantText.length
+  const durationDelta = toTurn.durationMs - fromTurn.durationMs
+
+  function copyDiffLink() {
+    const url = new URL(window.location.href)
+    url.searchParams.set('from', String(fromIdx))
+    url.searchParams.set('to', String(toIdx))
+    navigator.clipboard.writeText(url.toString()).catch(() => {})
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      {/* delta strip */}
+      <div className="flex items-center gap-4 px-3 py-2 rounded text-[0.6rem] font-mono flex-wrap" style={{ background: '#0d1525', border: '1px solid #1e3a5f' }}>
+        <span style={{ color: '#22D3EE' }}>T{fromIdx + 1} → T{toIdx + 1}</span>
+        <span style={{ color: textDelta >= 0 ? '#4ADE80' : '#EF4444' }}>
+          Δ text {textDelta >= 0 ? '+' : ''}{textDelta} chars
+        </span>
+        <span style={{ color: durationDelta <= 0 ? '#4ADE80' : '#F59E0B' }}>
+          Δ duration {durationDelta >= 0 ? '+' : ''}{Math.round(durationDelta / 100) / 10}s
+        </span>
+        <span style={{ color: '#475569' }}>
+          {toolDiff.filter((t) => t.status === 'added').length} added ·{' '}
+          {toolDiff.filter((t) => t.status === 'removed').length} removed ·{' '}
+          {toolDiff.filter((t) => t.status === 'changed').length} changed
+        </span>
+        <button
+          onClick={copyDiffLink}
+          className="ml-auto text-[0.5rem] px-2 py-0.5 rounded border transition-colors"
+          style={{ borderColor: '#1e3a5f', color: '#475569' }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = '#22D3EE' }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = '#475569' }}
+        >
+          ⎘ Copy diff link
+        </button>
+      </div>
+
+      {/* tool diff */}
+      {toolDiff.length > 0 && (
+        <div>
+          <div className="text-[0.5rem] font-mono uppercase tracking-wider mb-1.5" style={{ color: '#334155' }}>Tool call diff</div>
+          <div className="flex flex-col gap-1">
+            {toolDiff.map((t, i) => {
+              const color = t.status === 'added' ? '#4ADE80' : t.status === 'removed' ? '#EF4444' : t.status === 'changed' ? '#F59E0B' : '#334155'
+              const prefix = t.status === 'added' ? '+ ' : t.status === 'removed' ? '− ' : t.status === 'changed' ? '~ ' : '  '
+              if (t.status === 'same') return null
+              return (
+                <div key={i} className="flex items-center gap-2 px-2 py-1 rounded text-[0.6rem] font-mono" style={{ background: `${color}08`, border: `1px solid ${color}25` }}>
+                  <span style={{ color, fontWeight: 'bold' }}>{prefix}</span>
+                  <span style={{ color }}>{t.name}</span>
+                  {t.durationDelta !== undefined && t.status === 'changed' && (
+                    <span className="ml-auto" style={{ color: '#475569' }}>
+                      Δ {t.durationDelta >= 0 ? '+' : ''}{Math.round(t.durationDelta)}ms
+                    </span>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* side-by-side text */}
+      <div className="grid grid-cols-2 gap-2">
+        {[{ turn: fromTurn, label: `T${fromIdx + 1}`, color: '#475569' }, { turn: toTurn, label: `T${toIdx + 1}`, color: '#22D3EE' }].map(({ turn, label, color }) => (
+          <div key={label} className="rounded p-2.5" style={{ background: '#060d18', border: `1px solid ${color}30` }}>
+            <div className="text-[0.5rem] font-mono uppercase tracking-wider mb-1.5" style={{ color }}>
+              {label} · {fmtMs(turn.durationMs)}
+            </div>
+            <pre className="text-[0.6rem] font-mono overflow-auto max-h-48" style={{ color: '#94A3B8', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+              {turn.assistantText || '(no text)'}
+            </pre>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ─── main inner ───────────────────────────────────────────────────────────────
 function ReplayInner() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const preselect = searchParams.get('project') ?? ''
+  const fromParam = searchParams.get('from')
+  const toParam = searchParams.get('to')
 
   const [slugs, setSlugs] = useState<string[]>([])
   const [selected, setSelected] = useState<string>('')
   const [data, setData] = useState<ReplayResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [turnIdx, setTurnIdx] = useState(0)
+  const [diffTurnIdx, setDiffTurnIdx] = useState<number | null>(null)
   const [autoplay, setAutoplay] = useState(false)
   const [showDiff, setShowDiff] = useState(false)
   const autoRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -133,18 +234,33 @@ function ReplayInner() {
     if (!slug) return
     setLoading(true)
     setTurnIdx(0)
+    setDiffTurnIdx(null)
     setAutoplay(false)
     fetch(`/api/replay/${encodeURIComponent(slug)}?turns=50`)
       .then((r) => r.json())
-      .then((d: ReplayResponse) => { setData(d); setLoading(false) })
+      .then((d: ReplayResponse) => {
+        setData(d)
+        setLoading(false)
+        // Apply ?from / ?to URL params if present
+        if (fromParam !== null && toParam !== null) {
+          const f = parseInt(fromParam, 10)
+          const t = parseInt(toParam, 10)
+          if (!isNaN(f) && !isNaN(t)) {
+            setTurnIdx(t)
+            setDiffTurnIdx(f)
+          }
+        }
+      })
       .catch(() => setLoading(false))
-  }, [])
+  }, [fromParam, toParam])
 
   useEffect(() => { if (selected) loadData(selected) }, [selected, loadData])
 
   const turns = data?.turns ?? []
   const total = turns.length
   const turn: ReplayTurn | undefined = turns[turnIdx]
+  const diffTurn: ReplayTurn | undefined = diffTurnIdx !== null ? turns[diffTurnIdx] : undefined
+  const isDiffMode = diffTurnIdx !== null && diffTurnIdx !== turnIdx && diffTurn !== undefined
 
   // clamp turnIdx
   useEffect(() => { setTurnIdx((i) => Math.min(i, Math.max(0, total - 1))) }, [total])
@@ -172,18 +288,33 @@ function ReplayInner() {
         setTurnIdx((i) => Math.max(i - 1, 0))
         setAutoplay(false)
       } else if (e.key === 'Escape') {
+        if (diffTurnIdx !== null) { setDiffTurnIdx(null); return }
         router.back()
       } else if (e.key === ' ') {
         e.preventDefault()
         setAutoplay((a) => !a)
+      } else if (e.key === 'd' || e.key === 'D') {
+        setDiffTurnIdx((prev) => {
+          if (prev === null) return turnIdx  // pin current as baseline
+          return null                         // clear diff mode
+        })
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [total, router])
+  }, [total, router, turnIdx, diffTurnIdx])
 
   const prev = () => { setTurnIdx((i) => Math.max(i - 1, 0)); setAutoplay(false) }
   const next = () => { setTurnIdx((i) => Math.min(i + 1, total - 1)); setAutoplay(false) }
+
+  function handleTurnChipClick(idx: number, e: React.MouseEvent) {
+    if (e.shiftKey) {
+      setDiffTurnIdx(idx)
+    } else {
+      setTurnIdx(idx)
+      setAutoplay(false)
+    }
+  }
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: '#060d18', color: '#CBD5E1' }}>
@@ -216,6 +347,27 @@ function ReplayInner() {
         >
           Δ diff
         </button>
+        <button
+          onClick={() => setDiffTurnIdx((prev) => prev === null ? turnIdx : null)}
+          title="Toggle cross-turn diff mode (D)"
+          className="text-[0.6rem] font-mono px-2 py-1 rounded border transition-colors"
+          style={{
+            borderColor: isDiffMode ? '#F59E0B40' : '#1e3a5f',
+            color: isDiffMode ? '#F59E0B' : '#64748B',
+            background: 'transparent',
+          }}
+        >
+          {isDiffMode ? `⇌ T${(diffTurnIdx ?? 0) + 1}↔T${turnIdx + 1}` : '⇌ compare'}
+        </button>
+        {isDiffMode && (
+          <button
+            onClick={() => setDiffTurnIdx(null)}
+            className="text-[0.6rem] font-mono px-1.5 py-1 rounded border transition-colors"
+            style={{ borderColor: '#1e3a5f', color: '#64748B' }}
+          >
+            ✕ exit diff
+          </button>
+        )}
       </SubPageHeader>
 
       {/* empty / loading state */}
@@ -241,66 +393,77 @@ function ReplayInner() {
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* turn content */}
           <div className="flex-1 overflow-auto p-4 sm:p-6 space-y-4">
-            {/* user bubble */}
-            {turn.userText && (
-              <div
-                className="rounded p-3 text-xs font-mono leading-relaxed"
-                style={{
-                  background: '#0d1525',
-                  border: '1px solid #1e3a5f',
-                  color: '#64748B',
-                  borderLeft: '2px solid #1e3a5f',
-                }}
-              >
-                <div className="text-[0.5rem] uppercase tracking-wider mb-1" style={{ color: '#334155' }}>
-                  user · T{turnIdx + 1} · {fmtTime(turn.startEpoch)}
-                </div>
-                <div style={{ color: '#94A3B8', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                  {turn.userText}
-                </div>
-              </div>
-            )}
+            {isDiffMode && diffTurn ? (
+              <CrossTurnDiff
+                fromTurn={diffTurn}
+                toTurn={turn}
+                fromIdx={diffTurnIdx ?? 0}
+                toIdx={turnIdx}
+              />
+            ) : (
+              <>
+                {/* user bubble */}
+                {turn.userText && (
+                  <div
+                    className="rounded p-3 text-xs font-mono leading-relaxed"
+                    style={{
+                      background: '#0d1525',
+                      border: '1px solid #1e3a5f',
+                      color: '#64748B',
+                      borderLeft: '2px solid #1e3a5f',
+                    }}
+                  >
+                    <div className="text-[0.5rem] uppercase tracking-wider mb-1" style={{ color: '#334155' }}>
+                      user · T{turnIdx + 1} · {fmtTime(turn.startEpoch)}
+                    </div>
+                    <div style={{ color: '#94A3B8', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                      {turn.userText}
+                    </div>
+                  </div>
+                )}
 
-            {/* assistant text */}
-            {turn.assistantText && (
-              <div
-                className="rounded p-3 text-xs font-mono leading-relaxed"
-                style={{
-                  background: '#060d18',
-                  border: '1px solid #22D3EE20',
-                  borderLeft: '2px solid #22D3EE60',
-                  color: '#CBD5E1',
-                }}
-              >
-                <div className="text-[0.5rem] uppercase tracking-wider mb-1" style={{ color: '#22D3EE60' }}>
-                  assistant · {fmtMs(turn.durationMs)}
-                </div>
-                <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                  {turn.assistantText}
-                </div>
-              </div>
-            )}
+                {/* assistant text */}
+                {turn.assistantText && (
+                  <div
+                    className="rounded p-3 text-xs font-mono leading-relaxed"
+                    style={{
+                      background: '#060d18',
+                      border: '1px solid #22D3EE20',
+                      borderLeft: '2px solid #22D3EE60',
+                      color: '#CBD5E1',
+                    }}
+                  >
+                    <div className="text-[0.5rem] uppercase tracking-wider mb-1" style={{ color: '#22D3EE60' }}>
+                      assistant · {fmtMs(turn.durationMs)}
+                    </div>
+                    <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                      {turn.assistantText}
+                    </div>
+                  </div>
+                )}
 
-            {/* tool calls */}
-            {turn.toolCalls.length > 0 && (
-              <div className="space-y-1">
-                <div className="text-[0.5rem] font-mono uppercase tracking-wider mb-1" style={{ color: '#334155' }}>
-                  tool calls ({turn.toolCalls.length})
-                </div>
-                {turn.toolCalls.map((tc, ci) => (
-                  <ToolRow key={`${tc.toolUseId}-${ci}`} tc={tc} idx={ci} />
-                ))}
-              </div>
-            )}
+                {/* tool calls */}
+                {turn.toolCalls.length > 0 && (
+                  <div className="space-y-1">
+                    <div className="text-[0.5rem] font-mono uppercase tracking-wider mb-1" style={{ color: '#334155' }}>
+                      tool calls ({turn.toolCalls.length})
+                    </div>
+                    {turn.toolCalls.map((tc, ci) => (
+                      <ToolRow key={`${tc.toolUseId}-${ci}`} tc={tc} idx={ci} />
+                    ))}
+                  </div>
+                )}
 
-            {/* diff */}
-            {showDiff && (
-              <div>
-                <div className="text-[0.5rem] font-mono uppercase tracking-wider mb-1" style={{ color: '#334155' }}>
-                  diff from T{turnIdx} → T{turnIdx + 1}
-                </div>
-                <DiffStrip diff={turn.diffFromPrev} />
-              </div>
+                {/* diff from prev */}
+                {showDiff && (
+                  <div>
+                    <div className="text-[0.5rem] font-mono uppercase tracking-wider mb-1" style={{ color: '#334155' }}>
+                      diff from T{turnIdx} → T{turnIdx + 1}
+                    </div>
+                    <DiffStrip diff={turn.diffFromPrev} />
+                  </div>
+                )}
+              </>
             )}
           </div>
 
@@ -309,6 +472,31 @@ function ReplayInner() {
             className="shrink-0 border-t px-4 py-3 space-y-2"
             style={{ borderColor: '#1e3a5f', background: '#060d18' }}
           >
+            {/* turn chips strip for shift-click comparison */}
+            {total <= 50 && (
+              <div className="flex flex-wrap gap-0.5 max-h-12 overflow-y-auto">
+                {turns.map((_, i) => {
+                  const isCurrent = i === turnIdx
+                  const isDiffBase = i === diffTurnIdx
+                  return (
+                    <button
+                      key={i}
+                      onClick={(e) => handleTurnChipClick(i, e)}
+                      title={`T${i + 1}${isDiffBase ? ' (diff baseline)' : ''} — shift-click to set as comparison`}
+                      className="text-[0.45rem] font-mono rounded px-1 py-0.5 transition-colors select-none"
+                      style={{
+                        background: isCurrent ? 'rgba(0,245,255,0.15)' : isDiffBase ? 'rgba(245,158,11,0.15)' : 'rgba(255,255,255,0.03)',
+                        border: `1px solid ${isCurrent ? 'rgba(0,245,255,0.4)' : isDiffBase ? 'rgba(245,158,11,0.4)' : 'rgba(255,255,255,0.06)'}`,
+                        color: isCurrent ? '#22D3EE' : isDiffBase ? '#F59E0B' : '#334155',
+                      }}
+                    >
+                      T{i + 1}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
             {/* scrubber */}
             <div className="flex items-center gap-2">
               <span className="text-[0.6rem] font-mono shrink-0" style={{ color: '#334155' }}>T1</span>
@@ -367,7 +555,7 @@ function ReplayInner() {
               </div>
 
               <div className="text-[0.55rem] font-mono hidden sm:block" style={{ color: '#1e3a5f' }}>
-                ← → keys · Space = play · Esc = back
+                ← → keys · Space = play · D = compare · shift+click chip · Esc = back
               </div>
             </div>
           </div>

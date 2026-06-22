@@ -8,6 +8,7 @@ import CommandPalette, { type InjectRequest } from './CommandPalette'
 import InjectTerminal from './InjectTerminal'
 import FleetAdvisorPanel from './FleetAdvisorPanel'
 import SpotlightDrawer from './SpotlightDrawer'
+import KeyboardShortcutsModal from './KeyboardShortcutsModal'
 import { FleetContextProvider } from './FleetContext'
 import { authClient } from '../src/auth-client'
 
@@ -84,7 +85,7 @@ const SIDEBAR_ITEMS = [
   { href: '/search', icon: '⌕', label: 'Search' },
 ] as const
 
-function NavSidebar() {
+function NavSidebar({ onShortcuts }: { onShortcuts?: () => void }) {
   const pathname = usePathname()
   if (pathname === '/login') return null
   return (
@@ -118,6 +119,24 @@ function NavSidebar() {
           </Link>
         )
       })}
+      {/* Keyboard shortcuts button pinned at bottom */}
+      <div className="flex-1" />
+      <button
+        onClick={onShortcuts}
+        title="Keyboard shortcuts (?)"
+        className="group relative flex items-center justify-center rounded transition-all"
+        style={{ width: 32, height: 30, color: '#374151', background: 'transparent' }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = '#22D3EE' }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = '#374151' }}
+      >
+        <span className="text-xs font-mono leading-none select-none">?</span>
+        <span
+          className="absolute left-full ml-2.5 px-2 py-1 rounded text-[0.6rem] font-mono whitespace-nowrap pointer-events-none z-50 opacity-0 group-hover:opacity-100 transition-opacity"
+          style={{ background: '#080f1c', color: '#94A3B8', border: '1px solid rgba(0,245,255,0.15)' }}
+        >
+          Shortcuts (?)
+        </span>
+      </button>
     </nav>
   )
 }
@@ -156,6 +175,7 @@ function SidebarSpacer({ children }: { children: React.ReactNode }) {
 
 export default function ClientShell({ children }: { children: React.ReactNode }) {
   const [injectState, setInjectState] = useState<InjectState | null>(null)
+  const [showShortcuts, setShowShortcuts] = useState(false)
 
   function handleInject(req: InjectRequest) {
     setInjectState({ slug: req.slug })
@@ -170,9 +190,21 @@ export default function ClientShell({ children }: { children: React.ReactNode })
     return () => window.removeEventListener('mc:inject', onInjectEvent)
   }, [])
 
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return
+      if (e.key === '?') {
+        e.preventDefault()
+        setShowShortcuts((s) => !s)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   return (
     <FleetContextProvider>
-      <NavSidebar />
+      <NavSidebar onShortcuts={() => setShowShortcuts(true)} />
       <SidebarSpacer>
         <div className="pb-14 sm:pb-0">
           {children}
@@ -183,6 +215,7 @@ export default function ClientShell({ children }: { children: React.ReactNode })
       <CommandPalette onInject={handleInject} />
       <FleetAdvisorPanel />
       <Suspense><SpotlightDrawer /></Suspense>
+      {showShortcuts && <KeyboardShortcutsModal onClose={() => setShowShortcuts(false)} />}
       <AnimatePresence>
         {injectState !== null && (
           <InjectTerminal
