@@ -2,6 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { computeFleet, computeStalls } from './fleet-compute'
+import { insertAlertEvent } from './db'
 
 // Use globalThis to survive Next.js hot module replacement
 const g = globalThis as {
@@ -112,6 +113,11 @@ function broadcastFleetUpdate(): void {
     const { stalls, checkedAt } = computeStalls(mcdDir);
     if (stalls.length > 0) {
       broadcast({ type: 'stall-alert', data: { stalls, checkedAt } });
+      for (const s of stalls) {
+        try {
+          insertAlertEvent(s.slug, 'stall', `Stall detected: ${s.stallReason}`, { stallReason: s.stallReason, stallAgeMins: s.stallAgeMins, checkedAt })
+        } catch {}
+      }
     }
     checkBudgetAlerts(fleet.projects);
     try { checkToolEvents(mcdDir) } catch {}
@@ -137,19 +143,25 @@ function checkBudgetAlerts(projects: ReturnType<typeof computeFleet>['projects']
       const stateKey = `${project.slug}:${key}:${yearMonth}`;
       if (budgetAlertState.has(stateKey)) continue;
       budgetAlertState.set(stateKey, yearMonth);
-      broadcast({
-        type: 'budget-alert',
-        data: {
-          slug: project.slug,
-          threshold: key,
-          thresholdLabel: label,
-          used: project.monthlyTokensUsed,
-          budget: project.monthlyTokenBudget,
-          pct: Math.round(pct),
-          budgetStatus: project.budgetStatus,
-          yearMonth,
-        },
-      });
+      const budgetPayload = {
+        slug: project.slug,
+        threshold: key,
+        thresholdLabel: label,
+        used: project.monthlyTokensUsed,
+        budget: project.monthlyTokenBudget,
+        pct: Math.round(pct),
+        budgetStatus: project.budgetStatus,
+        yearMonth,
+      };
+      broadcast({ type: 'budget-alert', data: budgetPayload });
+      try {
+        insertAlertEvent(
+          project.slug,
+          'budget',
+          `Budget threshold hit: ${label} (${Math.round(pct)}% used)`,
+          budgetPayload as Record<string, unknown>
+        )
+      } catch {}
     }
   }
 }

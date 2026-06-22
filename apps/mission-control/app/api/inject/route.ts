@@ -1,5 +1,6 @@
 import { execSync } from 'child_process'
 import { NextRequest } from 'next/server'
+import { insertAlertEvent } from '../../../src/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -50,6 +51,10 @@ export async function POST(req: NextRequest): Promise<Response> {
   } catch (err) {
     return Response.json({ error: (err as Error).message }, { status: 500 })
   }
+
+  try {
+    insertAlertEvent(slug, 'inject', `Inject sent: "${message.slice(0, 80)}${message.length > 80 ? '…' : ''}"`, { message: message.slice(0, 200), session })
+  } catch {}
 
   return Response.json({ ok: true, slug, session })
 }
