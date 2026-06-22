@@ -33,6 +33,8 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/ticker', label: 'Tool Call Ticker', icon: '▶' },
       { href: '/turns', label: 'Turn Volume', icon: '▦' },
       { href: '/gantt', label: 'Lifecycle Gantt', icon: '⊟' },
+      { href: '/dependency-graph', label: 'Dependency Graph', icon: '⇢' },
+      { href: '/lifecycle-heatmap', label: 'Lifecycle Heatmap', icon: '▦' },
     ],
   },
   {
