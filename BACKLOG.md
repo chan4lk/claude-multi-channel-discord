@@ -2623,7 +2623,7 @@ Add a `/memory-decay` page. For each project, list its memory files sorted by st
 
 ## P110 — Conversation Turn Diff Viewer
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -2647,7 +2647,7 @@ Add a diff mode to the Session Replay page. When two turns are selected (hold sh
 
 ## P111 — Keyboard Shortcuts Reference Modal
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
