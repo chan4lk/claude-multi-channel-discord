@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import * as d3 from 'd3'
 import SubPageHeader from '../../components/SubPageHeader'
@@ -37,7 +37,7 @@ function formatLastActive(mins: number): string {
   return `${Math.floor(mins / 1440)}d ago`
 }
 
-export default function TurnsPage() {
+function TurnsPageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [projects, setProjects] = useState<TurnProject[]>([])
@@ -309,5 +309,13 @@ export default function TurnsPage() {
         </span>
       </footer>
     </div>
+  )
+}
+
+export default function TurnsPage() {
+  return (
+    <Suspense fallback={<div className="min-h-dvh flex items-center justify-center" style={{ background: '#060d1a' }}><div className="text-xs font-mono text-slate-600 animate-pulse">Loading…</div></div>}>
+      <TurnsPageInner />
+    </Suspense>
   )
 }
