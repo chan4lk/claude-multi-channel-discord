@@ -10,6 +10,8 @@ export interface ScheduleRow {
   at: string
   interval: string | null
   prompt: string
+  type: 'prompt' | 'inject'
+  templateId: string | null
   enabled: boolean
   lastRunAt: string | null
   runCount: number
@@ -49,6 +51,8 @@ export async function GET(): Promise<Response> {
 
   const rows: ScheduleRow[] = data.schedules.map((s) => {
     const chatId = String(s['chatId'] ?? '')
+    const rawType = s['type']
+    const type: 'prompt' | 'inject' = rawType === 'inject' ? 'inject' : 'prompt'
     return {
       id: String(s['id'] ?? ''),
       chatId,
@@ -56,6 +60,8 @@ export async function GET(): Promise<Response> {
       at: String(s['at'] ?? ''),
       interval: s['interval'] != null ? String(s['interval']) : null,
       prompt: String(s['prompt'] ?? ''),
+      type,
+      templateId: s['templateId'] != null ? String(s['templateId']) : null,
       enabled: s['enabled'] === true,
       lastRunAt: s['lastRunAt'] != null ? String(s['lastRunAt']) : null,
       runCount: typeof s['runCount'] === 'number' ? s['runCount'] : 0,

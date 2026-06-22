@@ -3184,7 +3184,7 @@ Add lightweight presence tracking via SSE. Each MC client announces itself on co
 
 ## P134 — Scheduled Inject Templates
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -3207,7 +3207,7 @@ Extend the scheduler to support "inject templates": schedule entries that inject
 
 ## P135 — Memory Diff Timeline
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
