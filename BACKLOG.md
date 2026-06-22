@@ -1936,7 +1936,7 @@ Add a `/compare` page with two project pickers (dropdowns from `/api/instances` 
 
 ## P82 — Fleet Turn Density Heatmap
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -1960,7 +1960,7 @@ Add a `/heatmap` page showing a 2D grid: rows = projects, columns = hours-of-day
 
 ## P83 — Proposal → Commit Traceability View
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -2026,3 +2026,123 @@ Add a `/snapshots` page with a "Take Snapshot" button. Snapshots capture: all pr
 - AC4: Select two snapshots → diff view: added/removed projects, state changes, delta metrics
 - AC5: Optional label field when taking snapshot
 - AC6: Nav link under Operations
+
+---
+
+## P86 — Backlog Dashboard Page
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+A `/api/backlog` endpoint already exists but there is no dedicated `/backlog` page in the mission control app. Operators wanting to track proposal progress must read the raw BACKLOG.md file. There is no quick way to see how many proposals are done vs pending, or to navigate from a proposal to its linked commits.
+
+### Proposed Solution
+
+Add a `/backlog` page that calls `/api/backlog` to render a kanban-style summary: a "Done" column and a "Pending" column, each showing proposal cards (P-number, title, created date). Clicking a card links to `/traceability?search=P<N>` to show its commit coverage. A top bar shows total counts with a mini progress bar (done / total). Nav link under Intelligence.
+
+### Acceptance Criteria
+
+- AC1: `/backlog` page renders two columns: Done and Pending
+- AC2: Each card shows P-number, title, and created date
+- AC3: Clicking a card navigates to `/traceability` pre-filtered to that proposal
+- AC4: Top bar shows done count, pending count, and a progress bar
+- AC5: Empty pending column shows a green "All caught up ✓" state
+- AC6: Nav link under Intelligence sidebar group
+
+---
+
+## P87 — Unified Alert History Log
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+The `StallAlertPanel` (P3) and budget alert banner (P40) show live alerts, but once a stall resolves or a budget threshold clears the alert disappears with no history. Operators debugging "why did project X restart three times last night?" have no alert timeline to consult.
+
+### Proposed Solution
+
+Persist alert events (stall detected, stall resolved, budget threshold hit, watchdog kill, inject triggered) to a new `alert_events` table in the MC SQLite DB via the existing SSE event pipeline. Add a `/alerts` page showing a reverse-chronological log: timestamp, project slug, alert type (color-coded), and description. A filter row lets operators narrow by project or alert type. Each row links to the relevant project in InstanceGrid. Retain 30 days of history; purge older rows on startup.
+
+### Acceptance Criteria
+
+- AC1: Alert events written to `alert_events` SQLite table on: stall detected/resolved, budget threshold, watchdog kill, inject
+- AC2: `/alerts` page shows reverse-chronological event log
+- AC3: Filter by project slug and alert type (stall / budget / watchdog / inject)
+- AC4: Each row links to `/?project=<slug>` to highlight the source project
+- AC5: Rows older than 30 days purged automatically on MC startup
+- AC6: Nav link under Operations
+
+---
+
+## P88 — Per-Project Detail Page
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+Getting a complete picture of a single project requires navigating to five different pages: Dashboard (health), Metrics (token usage), Goals (goal status), Branches (git status), and Scheduler (upcoming jobs). The SpotlightDrawer (P67) shows a summary but is read-only and lacks git and scheduler context.
+
+### Proposed Solution
+
+Add a `/projects/[slug]` page that aggregates all available project signals in one scrollable page: health score ring (from P77), last-5-turns sparkline, goal status and text, git status (current branch, ahead/behind, uncommitted), next scheduled job, memory count, total tokens (last 7 days), and an Inject button pinned at the top. Data sourced from existing `/api/fleet`, `/api/metrics/[slug]`, `/api/goals`, `/api/branches`, and `/api/schedules` endpoints. No new API needed.
+
+### Acceptance Criteria
+
+- AC1: `/projects/[slug]` page accessible; 404 if slug not in channels.json
+- AC2: Health score ring, goal chip, git status, memory count, token total all visible without scrolling on ≥ 1280px
+- AC3: Inject button opens InjectTerminal pre-filled with the project slug
+- AC4: Page auto-refreshes every 30s
+- AC5: "Open in Graph" link navigates to `/graph?highlight=<slug>`
+- AC6: Back-link from SpotlightDrawer → `/projects/[slug]`
+
+---
+
+## P89 — Session Replay Mode
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+The Flamegraph (P66) shows timing across turns and the Turn Diff Viewer (P78) shows changes between two specific turns, but there is no way to step through an agent session sequentially — reading what the agent said, which tools it called, and how the output changed — without manually cross-referencing the raw JSONL transcript.
+
+### Proposed Solution
+
+Add a "Replay" button to the Flamegraph page (and SpotlightDrawer). Clicking it opens a full-screen Replay panel for the selected project's latest session. The panel shows: current turn number / total, the agent's reply text, tool calls made (name + truncated input/output), and a diff strip showing the change from the previous turn. Previous / Next buttons step through turns. A timeline scrubber at the bottom allows jumping to any turn. Auto-play mode advances every 3 seconds. Data sourced from existing `/api/diff` and `/api/flamegraph` endpoints.
+
+### Acceptance Criteria
+
+- AC1: "Replay" button on Flamegraph page opens the replay panel
+- AC2: Replay panel shows: turn N/total, reply text, tool calls, diff from prior turn
+- AC3: Previous / Next navigation; keyboard arrow keys work
+- AC4: Timeline scrubber at bottom; clicking a turn jumps to it
+- AC5: Auto-play mode (3s per turn) with pause/resume button
+- AC6: Panel dismissible with Escape key
+
+---
+
+## P90 — Inject Command Templates
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+Operators frequently inject the same message types (e.g. "continue", "summarize progress", "run tests") into multiple projects. The InjectTerminal (command palette) has no memory — each inject starts with a blank textarea. There is no way to save, name, or recall common messages without copy-pasting from a separate document.
+
+### Proposed Solution
+
+Add a "Templates" section to the InjectTerminal sidebar. Templates are saved in localStorage (up to 20 entries). Each template has a name (1–30 chars) and body text. A "Save as template" button in the InjectTerminal saves the current text. Clicking a template populates the textarea. A manage view lists all templates with delete/rename. Templates are also surfaced in the CommandPalette under a "Templates" group.
+
+### Acceptance Criteria
+
+- AC1: "Save as template" button in InjectTerminal; prompts for a name
+- AC2: Template list shown in InjectTerminal sidebar; click to populate textarea
+- AC3: Manage view: list all templates with delete and rename (inline edit)
+- AC4: Templates persisted in localStorage; survive page refresh
+- AC5: CommandPalette shows templates under a "Templates" group; selecting one opens InjectTerminal with the text pre-filled
+- AC6: Max 20 templates enforced; oldest evicted when limit reached
