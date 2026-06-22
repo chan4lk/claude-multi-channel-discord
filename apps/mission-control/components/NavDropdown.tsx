@@ -28,6 +28,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/memory-graph', label: 'Memory Graph', icon: '✦' },
       { href: '/knowledge', label: 'Knowledge', icon: '◈' },
       { href: '/flamegraph', label: 'Turn Flame Graph', icon: '▬' },
+      { href: '/replay', label: 'Session Replay', icon: '⏮' },
       { href: '/ambient', label: 'Fleet Ambient', icon: '◌' },
       { href: '/ticker', label: 'Tool Call Ticker', icon: '▶' },
     ],

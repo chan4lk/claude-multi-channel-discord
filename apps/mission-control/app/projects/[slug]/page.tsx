@@ -321,6 +321,7 @@ export default function ProjectDetailPage() {
             {[
               { href: `/metrics?slug=${slug}`, label: '◱ Metrics' },
               { href: `/flamegraph?project=${slug}`, label: '↬ Flamegraph' },
+              { href: `/replay?project=${slug}`, label: '⏮ Replay' },
               { href: `/branches`, label: '⑂ Branches' },
               { href: `/goals`, label: '◎ Goals' },
               { href: `/timeline`, label: '◫ Timeline' },

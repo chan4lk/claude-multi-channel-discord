@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
+import Link from 'next/link'
 import SubPageHeader from '../../components/SubPageHeader'
 import type { FleetResponse } from '../api/fleet/route'
 import type { FlamegraphResponse, TurnFlame, ToolCallFlame, ToolCategory } from '../api/flamegraph/[slug]/route'
@@ -200,6 +201,15 @@ function FlamegraphInner() {
         >
           {loading ? '...' : '↺ Refresh'}
         </button>
+        {selected && (
+          <Link
+            href={`/replay?project=${encodeURIComponent(selected)}`}
+            className="text-[0.6rem] font-mono px-2 py-1 rounded border transition-colors"
+            style={{ borderColor: '#A78BFA40', color: '#A78BFA', background: 'transparent' }}
+          >
+            ⏮ Replay
+          </Link>
+        )}
       </SubPageHeader>
 
       <div className="flex-1 p-4 sm:p-6 overflow-x-auto">
