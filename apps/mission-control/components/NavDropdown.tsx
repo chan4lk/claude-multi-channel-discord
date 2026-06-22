@@ -61,6 +61,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/advisor', label: 'Fleet Advisor', icon: '◆' },
       { href: '/similarity', label: 'Memory Similarity', icon: '⬡' },
       { href: '/memory-audit', label: 'Memory Audit', icon: '≡' },
+      { href: '/memory-decay', label: 'Memory Decay', icon: '◑' },
       { href: '/compare', label: 'Project Compare', icon: '⇌' },
       { href: '/proposal-graph', label: 'Proposal Graph', icon: '◎' },
     ],

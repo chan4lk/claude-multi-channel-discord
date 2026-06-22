@@ -425,6 +425,56 @@ function FleetBadge({ state, count, active, onClick, sparkData }: FleetBadgeProp
 
 const EMPTY_FLEET: FleetResponse = { idle: 0, active: 0, stalled: 0, autonomous: 0, projects: [] }
 
+function TokenBurnGauge() {
+  const [data, setData] = useState<{ tokensPerMin: number; activeProjects: number } | null>(null)
+  const [lastUpdated, setLastUpdated] = useState(0)
+
+  useEffect(() => {
+    async function fetch_() {
+      try {
+        const res = await fetch('/api/burn-rate')
+        if (res.ok) {
+          const d = await res.json()
+          setData(d)
+          setLastUpdated(Date.now())
+        }
+      } catch {}
+    }
+    fetch_()
+    const id = setInterval(fetch_, 5_000)
+    return () => clearInterval(id)
+  }, [])
+
+  const tpm = data?.tokensPerMin ?? 0
+  const stale = data === null || Date.now() - lastUpdated > 30_000
+
+  // color zones: green <500, amber 500–2000, red >2000
+  const color = stale ? '#475569' : tpm < 500 ? '#4ADE80' : tpm < 2000 ? '#F59E0B' : '#EF4444'
+  const pct = Math.min(1, tpm / 3000)
+  const barWidth = Math.round(pct * 60)  // max 60px
+
+  const label = stale ? '—' : tpm >= 1000 ? `${(tpm / 1000).toFixed(1)}k` : String(Math.round(tpm))
+
+  return (
+    <div
+      className="flex flex-col gap-0.5 shrink-0 hidden xl:flex"
+      title={data ? `${Math.round(tpm)} tok/min over last 5 min (${data.activeProjects} active projects)` : 'Token burn rate (loading)'}
+    >
+      <div className="flex items-center gap-1">
+        <span className="text-[0.55rem] font-mono" style={{ color: '#475569' }}>⚡</span>
+        <span className="text-[0.7rem] font-mono font-bold tabular-nums" style={{ color }}>{label}</span>
+        <span className="text-[0.45rem] font-mono text-slate-600">tok/m</span>
+      </div>
+      <div className="h-1 w-[60px] rounded-full overflow-hidden" style={{ background: '#1e293b' }}>
+        <div
+          className="h-full rounded-full transition-all duration-1000"
+          style={{ width: barWidth, background: color, boxShadow: stale ? 'none' : `0 0 4px ${color}80` }}
+        />
+      </div>
+    </div>
+  )
+}
+
 function DashboardClient() {
   const [events, setEvents] = useState<McEventEntry[]>([])
   const [instances, setInstances] = useState<InstanceRow[]>([])
@@ -643,6 +693,8 @@ function DashboardClient() {
                 </span>
               </div>
             )}
+            {/* Token burn rate gauge (P107) */}
+            <TokenBurnGauge />
             {/* MC instance counters — hidden on small screens to reduce clutter */}
             <CountBadge value={instances.length} label="Instances" color="#00F5FF" className="shrink-0 hidden lg:flex" />
             <CountBadge value={eventsPerMin} label="Events/min" color="#00F5FF" className="shrink-0 hidden xl:flex" />

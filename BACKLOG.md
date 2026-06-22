@@ -2520,3 +2520,125 @@ Add a `/health-trends` page with per-project health score time series. A new `/a
 - AC5: Hover on any sparkline point shows: date, score, sub-score breakdown tooltip
 - AC6: Sort rows by: current score (default), trend magnitude, slug
 - AC7: Export as CSV: slug × date health score matrix
+
+---
+
+## P106 — Cross-Project Message Dependency Graph
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+When the operator broadcasts a message or injects context from one project into another, there is no way to visualize which projects depend on information from which other projects. Cross-pollination is invisible, making it hard to understand information flow or reason about cascading effects when one project's context changes.
+
+### Proposed Solution
+
+Add a `/dependency-graph` page that renders a directed graph of inter-project message flows. Read `inject` history from each project's transcript JSONL (look for `mcp__mcd__inject` tool calls which include a `source` slug field). Build an adjacency list of `source → target` edges. Render with a D3-force simulation: nodes = project slugs (colored by state), edges = inject flows (label: count). Edge thickness proportional to inject frequency. Clicking a node highlights its direct in/out edges and shows a side panel with inject count, last inject date, and the most recent injected message snippet.
+
+### Acceptance Criteria
+
+- AC1: `/dependency-graph` page renders within 3s; force layout settles within 2s
+- AC2: Nodes colored by project state (idle/active/stalled/autonomous) matching fleet badge colors
+- AC3: Directed edges with arrowheads; edge thickness = log(inject_count); hover shows count + last date
+- AC4: Click a node: highlights in/out edges (others dim to 15% opacity), side panel shows inject history
+- AC5: "Reset" button returns to full graph view
+- AC6: Node count + edge count shown in top-right legend
+- AC7: Added to NavDropdown → Observability
+
+---
+
+## P107 — Live Token Burn Rate Gauge
+
+**Status:** `[x] done`
+**Created:** 2026-06-22
+
+### Problem
+
+The Metrics page shows historical token totals and cost estimates but there is no real-time view of how fast tokens are being consumed right now. Operators cannot tell if the fleet is in a quiet period or actively burning through budget without navigating to individual project pages.
+
+### Proposed Solution
+
+Add a `TokenBurnGauge` component to the fleet header (next to fleet health badges). The gauge shows tokens/minute for the last 5 minutes, computed from the fleet broadcaster's SSE stream. A rolling 5-minute window of tool_result + assistant events from all active projects feeds a live tokens/min number. Display as a horizontal bar with color zones: green (<500 tok/min), amber (500–2000), red (>2000). Also add a `/api/burn-rate` endpoint that returns `{ tokensPerMin: number, activeProjects: number, windowMs: number }`.
+
+### Acceptance Criteria
+
+- AC1: `TokenBurnGauge` appears in fleet header; updates every 5s from SSE stream
+- AC2: Color zones: green <500, amber 500–2000, red >2000 tok/min
+- AC3: Tooltip on hover shows: "X tok/min over last 5 min (N active projects)"
+- AC4: `/api/burn-rate` endpoint returns current rate, active project count, window duration
+- AC5: Gauge shows "—" when no SSE data for > 30s (server disconnect)
+- AC6: On mobile (< 640px), gauge collapses to a colored dot in the header
+
+---
+
+## P108 — Project Lifecycle Heatmap
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+The fleet has projects that were created at different times and have different activity patterns. There is no holistic view of when each project was most active across its entire lifetime. The existing Turn Volume page shows fleet-level activity but not per-project temporal patterns.
+
+### Proposed Solution
+
+Add a `/lifecycle-heatmap` page with a GitHub-style contribution heatmap per project. X-axis = weeks (up to 52 weeks back), Y-axis = projects. Each cell = turn count for that week. Color: white (0), light cyan (1–5), medium cyan (6–20), bright cyan (>20), with a glowing effect on the max cell. Hovering a cell shows: project slug, week, turn count. Projects sorted by creation date (oldest first). A "normalize" toggle scales each row independently (showing relative activity pattern) vs fleet-absolute scale.
+
+### Acceptance Criteria
+
+- AC1: `/lifecycle-heatmap` renders within 3s; up to 52 columns × N project rows
+- AC2: Color scale: 0=transparent, 1–5=dim, 6–20=mid, >20=bright with glow
+- AC3: Hover tooltip: slug, ISO week, exact turn count
+- AC4: Toggle between absolute and per-row normalized color scales
+- AC5: Y-axis labels (slug) link to `/projects/[slug]`
+- AC6: Added to NavDropdown → Observability
+
+---
+
+## P109 — Memory Decay Visualizer
+
+**Status:** `[x] done`
+**Created:** 2026-06-22
+
+### Problem
+
+Project memories accumulate over time but there is no view of which memories are "fresh" vs "stale" or likely to be forgotten. Operators cannot tell which projects need a memory refresh or which memories are anchoring outdated assumptions.
+
+### Proposed Solution
+
+Add a `/memory-decay` page. For each project, list its memory files sorted by staleness (mtime). Render each memory as a card with a decay bar: bright green (written today) fading to red (>60 days). Cards show: slug, memory name, age in days, first 2 lines of body. A "most stale" section shows the top 10 stalest memory files fleet-wide. A "refresh needed" flag appears on any project with >50% of memories older than 30 days. Clicking a card expands to show full memory body.
+
+### Acceptance Criteria
+
+- AC1: `/memory-decay` renders within 3s; shows all projects with at least one memory file
+- AC2: Decay bar color: green (0–7d), yellow (7–30d), red (>30d), based on mtime
+- AC3: "Most stale" fleet leaderboard shows top 10 oldest individual memories with slug + age
+- AC4: "Refresh needed" badge on projects with majority of memories > 30d old
+- AC5: Click card expands full body (no navigation away)
+- AC6: Sort: by most stale project (default), by most memories, by slug
+- AC7: Added to NavDropdown → Intelligence
+
+---
+
+## P110 — Conversation Turn Diff Viewer
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-22
+
+### Problem
+
+When reviewing a project's session history in the Session Replay page, it is hard to see what changed between consecutive assistant turns — what new tool calls were added, what output changed, how the context evolved. Debugging stuck agents or unusual behavior requires manually comparing turns.
+
+### Proposed Solution
+
+Add a diff mode to the Session Replay page. When two turns are selected (hold shift and click a second turn), render a side-by-side diff of their `tool_use` arrays and text content. Highlight new tool calls in green, removed tool calls in red, changed input parameters in amber. Also show token delta (Δ input, Δ output) between the two turns. A "diff URL" button copies a deep link with `?from=<turn_idx>&to=<turn_idx>` so operators can share specific comparisons.
+
+### Acceptance Criteria
+
+- AC1: Shift-click second turn in replay page activates diff mode; side-by-side view replaces single-turn view
+- AC2: New tool calls highlighted green, removed red, changed amber (input param diff)
+- AC3: Token delta shown: `Δ in: +1234 / Δ out: −456`
+- AC4: "Copy diff link" button generates `?from=X&to=Y` deep link
+- AC5: "Exit diff" button returns to single-turn view
+- AC6: Works with keyboard: D key toggles diff mode when two turns are selected
