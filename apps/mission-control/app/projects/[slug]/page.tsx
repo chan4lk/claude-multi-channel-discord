@@ -319,6 +319,7 @@ export default function ProjectDetailPage() {
           {/* Quick links */}
           <div className="flex flex-wrap gap-2 mt-6">
             {[
+              { href: `/projects/${slug}/terminal`, label: '▶ Terminal' },
               { href: `/metrics?slug=${slug}`, label: '◱ Metrics' },
               { href: `/flamegraph?project=${slug}`, label: '↬ Flamegraph' },
               { href: `/replay?project=${slug}`, label: '⏮ Replay' },
