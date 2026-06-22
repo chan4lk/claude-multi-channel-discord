@@ -55,6 +55,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/goals', label: 'Goals', icon: '◎' },
       { href: '/metrics', label: 'Metrics', icon: '◱' },
       { href: '/cost', label: 'Fleet Cost', icon: '$' },
+      { href: '/anomalies', label: 'Anomaly Detection', icon: '⚠' },
       { href: '/reports', label: 'Weekly Report', icon: '◻' },
       { href: '/advisor', label: 'Fleet Advisor', icon: '◆' },
       { href: '/similarity', label: 'Memory Similarity', icon: '⬡' },

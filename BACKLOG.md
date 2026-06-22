@@ -2450,7 +2450,7 @@ Add a template library to the Inject Terminal drawer. A new `/api/inject-templat
 
 ## P103 — Fleet Anomaly Detection
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -2475,7 +2475,7 @@ Add an `/anomalies` page powered by a new `/api/anomalies` endpoint. The endpoin
 
 ## P104 — Project Relationship Radial Map
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
