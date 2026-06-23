@@ -3604,7 +3604,7 @@ Add a `/nexus` page rendering one deterministic radial map. Each project is a hu
 
 ## P152 — Fleet Momentum River
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
@@ -3627,7 +3627,7 @@ Add a `/momentum` page with a 14-day streamgraph: x-axis = day, each band = one 
 
 ## P153 — Proposal Flow Sankey
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
