@@ -3762,7 +3762,7 @@ Add a `/themes` page with a squarified-treemap (pure SVG) of BACKLOG.md proposal
 
 ## P159 — Memory Growth Stream
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
@@ -3785,7 +3785,7 @@ Add a `/memory-stream` page with a stacked-area "stream graph" (pure SVG) of mem
 
 ## P160 — Backlog Velocity Forecast
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
