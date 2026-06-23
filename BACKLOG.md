@@ -3924,7 +3924,7 @@ Add a `/memory-footprint` page rendering a squarified-treemap (pure SVG, same te
 
 ## P166 — Goal Convergence Gauge Wall
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
@@ -3947,7 +3947,7 @@ Add a `/convergence-wall` page rendering a responsive grid of radial gauges, one
 
 ## P167 — Fleet State Sunburst
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
