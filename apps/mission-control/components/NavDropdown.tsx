@@ -53,6 +53,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/broadcast', label: 'Broadcast', icon: '◉' },
       { href: '/audit', label: 'Audit Log', icon: '≡' },
       { href: '/commands', label: 'Fleet Commands', icon: '⌨' },
+      { href: '/idle-fleet', label: 'Idle Fleet', icon: '◫' },
     ],
   },
   {
@@ -86,6 +87,7 @@ const NAV_GROUPS: NavGroup[] = [
     color: '#6B7280',
     items: [
       { href: '/permissions', label: 'Permissions', icon: '⊛' },
+      { href: '/project-config', label: 'Project Config', icon: '⚙' },
       { href: '/search', label: 'Search', icon: '⌕' },
       { href: '/admin', label: 'Admin', icon: '⚙' },
     ],
