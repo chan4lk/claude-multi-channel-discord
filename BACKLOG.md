@@ -4231,7 +4231,7 @@ Add a `/vitals` page rendering a responsive grid of small pure-SVG radar charts,
 
 ## P179 — Platform × State Matrix
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
@@ -4248,3 +4248,72 @@ Add a `/platform-matrix` page rendering a matrix heatmap: rows = platform (disco
 - AC2: Cell background opacity ∝ count; empty cells faint
 - AC3: Row totals, column totals, and grand total shown in margins
 - AC4: Reuses `/api/fleet`; added to `NAV_GROUPS` under Observability
+
+---
+
+## P180 — Fleet Command Center
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+Holistic situational awareness is spread across many pages: who needs attention (`/scoreboard`), what's queued (`/queue-board`), what's about to compact (`/context-eta`), and how much backlog is pending (`/backlog`). There is no single "control room" landing that fuses the top signals from each into one above-the-fold digest an operator can open first thing.
+
+### Proposed Solution
+
+Add a `/command-center` page with a compact multi-panel grid: (1) **Top attention** — the three highest-scoring projects from the shared `lib/attention.ts`, each with score + reason; (2) **Queue/breakers** — count of queued messages and open breakers, with the worst offender; (3) **Context imminent** — the soonest-to-compact project and its ETA; (4) **Backlog** — pending proposal count from `/api/backlog` and the oldest pending title. Each panel links to its full view. Reuses `/api/fleet` + `/api/backlog`; no new endpoint.
+
+### Acceptance Criteria
+
+- AC1: `/command-center` renders four panels: top-attention, queue/breakers, context-imminent, backlog
+- AC2: Top-attention reuses `lib/attention.ts` (no duplicated scoring)
+- AC3: Each panel deep-links to its corresponding full view
+- AC4: Backlog panel reads `/api/backlog` for pending count + oldest pending title
+- AC5: Graceful empty states per panel; reuses existing endpoints only
+- AC6: Added to `NAV_GROUPS` under Intelligence
+
+---
+
+## P181 — Goal Status Funnel
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+Per-project `goalStatus` (active / paused / completed) is exposed in `/api/fleet` but never aggregated into a lifecycle view. Operators cannot see, at a glance, how the fleet's goals distribute across the active→paused→completed lifecycle, nor how many projects have no goal at all.
+
+### Proposed Solution
+
+Add a `/goal-funnel` page rendering a horizontal funnel (pure SVG): stacked proportional bars for active, paused, completed, and "no goal", each labeled with count and percentage, colored by status. A header shows the completion rate (completed ÷ projects-with-a-goal). Clicking a band deep-links to `/goals` (the existing goals view). Reuses `/api/fleet`.
+
+### Acceptance Criteria
+
+- AC1: `/goal-funnel` renders proportional bars for active/paused/completed/no-goal
+- AC2: Each band labeled with count and percentage; colored by status
+- AC3: Header shows completion rate among projects that have a goal
+- AC4: Reuses `/api/fleet`; added to `NAV_GROUPS` under Intelligence
+
+---
+
+## P182 — Convergence Distribution Histogram
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+The Convergence Gauge Wall (P166) shows each project's `convergenceScore` individually, but there is no view of the *distribution shape* — whether the fleet clusters near goal completion or is spread thin across low convergence. A histogram answers "is the fleet broadly converging?" in one glance.
+
+### Proposed Solution
+
+Add a `/convergence-dist` page rendering a pure-SVG histogram of `convergenceScore` bucketed into ten 0.1-wide bins (0–0.1 … 0.9–1.0). Bar height ∝ project count; bars colored on a red→amber→green ramp by bin position. Hovering a bar lists member slugs. Header shows the fleet mean convergence and the count of projects in the top bin (≥0.9). Only projects with a `convergenceScore` are counted. Reuses `/api/fleet`.
+
+### Acceptance Criteria
+
+- AC1: `/convergence-dist` renders a 10-bin histogram of `convergenceScore`
+- AC2: Bar height ∝ count; color ramps red→green by bin position
+- AC3: Hover lists member slugs of a bin
+- AC4: Header shows fleet mean convergence and count in the ≥0.9 bin
+- AC5: Reuses `/api/fleet`; added to `NAV_GROUPS` under Intelligence
