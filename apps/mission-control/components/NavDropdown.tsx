@@ -87,6 +87,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/turn-correlation', label: 'Turn Correlation', icon: '⊹' },
       { href: '/proposal-flow', label: 'Proposal Flow', icon: '⟿' },
       { href: '/momentum-index', label: 'Momentum Index', icon: '◔' },
+      { href: '/burndown', label: 'Backlog Burndown', icon: '◣' },
     ],
   },
   {

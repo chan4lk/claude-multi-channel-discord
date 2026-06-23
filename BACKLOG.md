@@ -3688,3 +3688,118 @@ Add a `/momentum-index` page ranking projects by a composite momentum score: wei
 - AC2: `/api/metrics/momentum-index` returns `{ slug, score, burn7d, goalDelta, proposalsDone }[]` sorted desc
 - AC3: Each row shows a radial gauge; top mover (green) and biggest decliner (red) badged
 - AC4: NavDropdown adds "Momentum Index" under Intelligence group
+
+---
+
+## P156 — Backlog Burndown Chart
+
+**Status:** `[x] done`
+**Created:** 2026-06-23
+
+### Problem
+
+The backlog page (P78) shows a static done-vs-pending split and the proposal-velocity page (P153) shows daily throughput, but neither shows the classic burndown trajectory — cumulative remaining work over time against total scope. Operators planning capacity cannot see whether the backlog is actually shrinking, when scope was added, or extrapolate a completion date.
+
+### Proposed Solution
+
+Add a `/burndown` page rendering a pure-SVG burndown chart of the main repo BACKLOG.md. A new `/api/metrics/burndown` endpoint parses BACKLOG.md proposals (P-number, status), maps each done proposal to its completion date (earliest linked commit date matching its P-number via `git log`, falling back to its `**Created:**` date), and builds a daily time series of `{ date, total, done, remaining }`. The chart draws: a grey "total scope" step line (rises when proposals are added), a green "completed" area, and a red "remaining" line. An "ideal" dashed guide runs from first-day remaining to zero at the latest completion. A header strip shows total / done / remaining counts and a projected completion date (linear extrapolation from the last 7 days' completion rate).
+
+### Acceptance Criteria
+
+- AC1: `/burndown` renders an SVG burndown chart with total, completed, and remaining series over time
+- AC2: `/api/metrics/burndown` returns `{ series: { date, total, done, remaining }[], projectedDone: string | null }`
+- AC3: Done proposals dated by earliest linked commit (P-number regex on `git log`), falling back to `**Created:**`
+- AC4: Header shows total / done / remaining counts and a projected completion date (or "—" if no recent velocity)
+- AC5: NavDropdown adds "Backlog Burndown" under the Intelligence group
+
+---
+
+## P157 — Fleet Pulse Radar
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+The fleet's freshness is scattered across the Instance Grid and Fleet Health Bar as text counters. There is no single at-a-glance scope view where an operator can sweep the whole fleet and instantly spot which projects have gone quiet, ranked by how stale they are.
+
+### Proposed Solution
+
+Add a `/pulse` page rendering a radar-scope visualization (pure SVG). Each active project is a blip; angular position is assigned by hashing the slug into a stable sector, radial distance encodes staleness (centre = active in last minute, outer rim = stalled/idle for hours). An animated sweep line rotates continuously; blips brighten as the sweep passes. Blip colour follows `classifyChannel` state (green active, cyan idle, red stalled, purple autonomous). Data comes from the existing `/api/fleet` endpoint — no new server route. Hovering a blip shows slug, state, and minutes-since-last-turn.
+
+### Acceptance Criteria
+
+- AC1: `/pulse` renders a circular radar scope with one blip per project from `/api/fleet`
+- AC2: Radial distance encodes staleness; angular sector is stable per slug across refreshes
+- AC3: An animated sweep line rotates; blips brighten when swept
+- AC4: Blip colour matches fleet state; hover tooltip shows slug, state, minutes idle
+- AC5: NavDropdown adds "Fleet Pulse Radar" under the Observability group
+
+---
+
+## P158 — Proposal Theme Treemap
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+The backlog has grown past 150 proposals but there is no view of how effort is distributed across themes (graph views, memory, scheduler, metrics, alerts, etc.). Operators cannot see which areas are over- or under-invested, nor how done-vs-pending splits within each theme.
+
+### Proposed Solution
+
+Add a `/themes` page with a squarified-treemap (pure SVG) of BACKLOG.md proposals grouped by inferred theme. A `/api/metrics/themes` endpoint parses BACKLOG.md, classifies each proposal into a theme by title/solution keyword matching (graph, memory, scheduler, metrics, alerts, git, whatsapp, ui, other), and returns `{ theme, total, done, pending }[]`. Treemap tile area encodes total proposal count per theme; tile fill is a done/pending gradient (proportion done shown as a filled bar within the tile). Clicking a tile filters a list below it showing that theme's proposals with status badges.
+
+### Acceptance Criteria
+
+- AC1: `/themes` renders a treemap where tile area ∝ proposal count per theme
+- AC2: `/api/metrics/themes` returns `{ theme, total, done, pending }[]` sorted by total desc
+- AC3: Each tile shows theme name, count, and a done/pending fill proportion
+- AC4: Clicking a tile lists that theme's proposals with status badges below the map
+- AC5: NavDropdown adds "Proposal Themes" under the Intelligence group
+
+---
+
+## P159 — Memory Growth Stream
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+Each project accumulates memory entries over time, but there is no view of memory growth as a fleet-wide trend. Operators cannot see which projects are actively learning versus stagnant, or spot a sudden burst of memory writes that signals heavy autonomous activity.
+
+### Proposed Solution
+
+Add a `/memory-stream` page with a stacked-area "stream graph" (pure SVG) of memory entry counts per project over time. A `/api/memory/growth` endpoint reads each project's memory directory, derives a per-entry creation date from file mtime, buckets by day over the last 30 days, and returns a cumulative per-project series. The stream graph stacks each project's band; band thickness encodes that project's memory count. A legend lists projects by current memory total. Hovering shows the per-project count at that day.
+
+### Acceptance Criteria
+
+- AC1: `/memory-stream` renders a stacked-area stream graph of per-project memory counts over 30 days
+- AC2: `/api/memory/growth` returns `{ projects: { slug, daily: { date, count }[] }[] }`
+- AC3: Entry dates derived from memory file mtime, bucketed daily, cumulative per project
+- AC4: Legend lists projects by current memory total; hover shows per-day per-project count
+- AC5: NavDropdown adds "Memory Stream" under the Observability group
+
+---
+
+## P160 — Backlog Velocity Forecast
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+Operators have no estimate of when the remaining backlog will clear. The burndown (P156) shows trajectory, but a dedicated forecast that models multiple velocity scenarios and surfaces a confidence band would help prioritise whether to add scope or accelerate.
+
+### Proposed Solution
+
+Add a `/forecast` page that projects backlog completion under three velocity scenarios: pessimistic (slowest 7-day rate in history), expected (trailing 14-day mean), and optimistic (fastest 7-day rate). A `/api/metrics/forecast` endpoint reuses the burndown series (P156) to compute historical daily completion rates, then extrapolates remaining work forward under each scenario, returning projected completion dates and a per-day fan-chart band. The page renders the fan chart (pure SVG): the historical remaining line continues into three forward rays with a shaded band between pessimistic and optimistic. A summary shows the three projected dates and current trailing velocity (proposals/week).
+
+### Acceptance Criteria
+
+- AC1: `/forecast` renders a fan chart with historical remaining line plus three forward scenario rays
+- AC2: `/api/metrics/forecast` returns `{ scenarios: { name, rate, projectedDone }[], band: { date, low, high }[] }`
+- AC3: Scenarios computed from historical 7/14-day completion rates over the burndown series
+- AC4: Summary shows three projected completion dates and trailing velocity (proposals/week)
+- AC5: NavDropdown adds "Velocity Forecast" under the Intelligence group
