@@ -40,6 +40,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/narrative', label: 'Narrative Timeline', icon: '◫' },
       { href: '/context-pressure', label: 'Context Pressure', icon: '◑' },
       { href: '/turn-quality', label: 'Turn Quality', icon: '▦' },
+      { href: '/calendar', label: 'Fleet Calendar', icon: '◫' },
     ],
   },
   {

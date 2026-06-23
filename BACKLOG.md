@@ -3455,3 +3455,123 @@ Add a `/turn-correlation` page: a D3 scatter plot where each point is a (project
 - AC3: Hover tooltip: slug, date, turn count, quality score; point grows on hover
 - AC4: Time range selector (7d / 14d / 30d) updates data; data from `/api/turn-quality` + `/api/turns` combined client-side; 30-min refresh
 - AC5: NavDropdown adds "Turn Correlation" under Intelligence group; clicking a point deep-links to `/turn-quality?slug=<slug>&day=<YYYY-MM-DD>`
+
+---
+
+## P146 — Fleet Activity Calendar
+
+**Status:** `[x] done`
+**Created:** 2026-06-23
+
+### Problem
+
+There is no bird's-eye temporal view of fleet-wide activity across days and weeks. The Scheduler Heatmap shows per-project job history but not organic agent activity density. Operators cannot tell which days were "hot" (high fleet turn count) vs quiet without navigating multiple pages.
+
+### Proposed Solution
+
+Add a `/calendar` page with a GitHub-style contribution calendar. Each cell is one day; color intensity (dark → neon-cyan) encodes total assistant turns across all projects that day. Rows = weeks, columns = days. Clicking a day opens a slide-out panel showing per-project turn counts for that day as a horizontal bar chart. A `/api/metrics/calendar` endpoint reads transcript `.jsonl` files and returns `{ day: string, totalTurns: number, perProject: { slug: string, turns: number }[] }[]` for the last 52 weeks. A "Today" marker is highlighted in amber.
+
+### Acceptance Criteria
+
+- AC1: `/calendar` page renders a 52-week GitHub-style heatmap grid within 2s; newest day = bottom-right
+- AC2: Cell color: 0 turns = `#0d1117`, 1–5 = `#0e4429`, 6–20 = `#006d32`, 21–50 = `#26a641`, 51+ = `#22D3EE`
+- AC3: Hover tooltip shows: date, total turns, top 3 most active projects
+- AC4: Clicking a day opens a side panel with a per-project bar chart for that day
+- AC5: Today's cell highlighted with amber border; month labels shown above grid
+- AC6: `/api/metrics/calendar` cached for 30 min; loading skeleton shown during first fetch
+
+---
+
+## P147 — Agent Focus Mode
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+Operators monitoring a single project must switch between 4–6 different dashboard pages (Transcript, Diff, Goals, Health, Inject, Audit). There is no single full-screen view that combines all project-level signals into one immersive layout for deep focus on one agent.
+
+### Proposed Solution
+
+Add a `/focus/[slug]` page: a full-screen, dark-mode immersive layout with a fixed 3-column grid. Left column: GOAL.md content (editable inline, same as P44) + health score ring + watchdog countdown. Center column: live transcript tail (last 20 entries, auto-scroll, same as P12) + inject textarea (Ctrl+Enter to send). Right column: recent git diff stat (last 5 commits from P11) + memory chip (MEMORY.md size + "Distill" button from P42) + mini audit log (last 10 events). Accessible from the InstanceGrid slug chip via a new "Focus" icon. No polling — subscribes to SSE FleetContext for live updates.
+
+### Acceptance Criteria
+
+- AC1: `/focus/[slug]` renders within 1.5s; 404s if slug not found in channels.json
+- AC2: Left: GOAL.md editable inline (PUT `/api/projects/[slug]/goal`); health ring + watchdog badge live from SSE
+- AC3: Center: transcript tail auto-scrolls; inject textarea sends via `/api/inject`; Ctrl+Enter submits
+- AC4: Right: git diff stat via `/api/diff/[slug]`; memory chip with distill button; audit events from `/api/audit?slug=<slug>&limit=10`
+- AC5: "Focus" icon on InstanceGrid slug chip opens `/focus/[slug]` in same tab; `Esc` navigates back
+- AC6: Page title shows slug + current state badge; browser tab title updates to `Focus: <slug>`
+
+---
+
+## P148 — Predictive Stall Forecaster
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+The Stall Alert Panel (P3) detects stalls reactively — only after the agent has been silent past its threshold. By then, momentum is lost and the operator must diagnose and reinject. There is no forward-looking view that warns operators before a stall occurs.
+
+### Proposed Solution
+
+Add a "Stall Risk" widget to the Fleet Advisor panel (P52) and as a standalone `/stall-risk` page. A `/api/stall-risk` endpoint computes a risk score (0–100) for each active project using four heuristics: (1) context pressure trend (rising fast → high risk); (2) turn quality trend (falling over last 3 turns → high risk); (3) time since last reply (approaching watchdog threshold → high risk); (4) recent watchdog-kill history (killed > 2× in last 24h → structural risk). Score = weighted sum (30% context, 30% quality trend, 25% recency, 15% history). Projects with score ≥ 60 shown in amber; ≥ 80 in red. Each high-risk project shows top contributing factor + a one-click "Pre-inject" action that opens InjectTerminal with a suggested "check-in" prompt.
+
+### Acceptance Criteria
+
+- AC1: `/stall-risk` page lists projects with risk score ≥ 40; sorted by score desc; < 40 shown dimmed
+- AC2: Risk score bar (0–100) with color: green < 40, amber 40–79, red ≥ 80
+- AC3: Top contributing factor shown per project (e.g. "context at 87%", "quality dropping", "near threshold")
+- AC4: "Pre-inject" button opens InjectTerminal with pre-filled "Please checkpoint your progress and confirm your next step."
+- AC5: `/api/stall-risk` returns `{ slug, score, factors: string[], state }[]`; refreshes every 60s
+- AC6: Widget in Fleet Advisor panel shows top 3 at-risk projects when stall-risk panel not open
+
+---
+
+## P149 — Fleet State Snapshot & Diff
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+After a deployment, configuration change, or model upgrade, operators have no way to compare fleet health before and after. Data from `/api/fleet` and `/api/health` is ephemeral — previous states are gone. Post-change analysis requires relying on memory of what the dashboard showed.
+
+### Proposed Solution
+
+Add a "Snapshot" button to the fleet dashboard header. Clicking saves a fleet snapshot to `mc.db` (`fleet_snapshots` table: id, ts, label, payload JSON). A `/snapshots` page lists all snapshots (newest first). Selecting two snapshots shows a side-by-side diff table: one row per project, columns = health score Δ, token usage Δ, state change (idle→active, etc.), goal status change. Changed cells highlighted (green = improved, red = degraded). A "Label" input lets operators annotate snapshots ("before model upgrade", "after stall incident"). A `/api/snapshots` POST endpoint saves; GET lists; DELETE removes.
+
+### Acceptance Criteria
+
+- AC1: "Snapshot" button in dashboard header; clicking saves current `/api/fleet` + `/api/health` payload to `mc.db` with ISO timestamp
+- AC2: `/snapshots` page lists all snapshots: id, ts, label, project count; sorted newest-first
+- AC3: Selecting two snapshots renders side-by-side diff table: slug, health Δ, token Δ, state change, goal Δ
+- AC4: Improved cells green-highlighted; degraded cells red-highlighted; unchanged cells dim
+- AC5: Each snapshot has an editable label input (PATCH `/api/snapshots/[id]`); delete button (soft-delete)
+- AC6: `fleet_snapshots` table in mc.db; schema migrated on startup; snapshots older than 30 days auto-purged
+
+---
+
+## P150 — Token Burn Rate Forecaster
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+The Token Budget Gauge (P18) shows current month usage vs budget but gives no forward projection. Operators cannot tell if a project will exhaust its monthly budget in 3 days or 3 weeks. Proactive budget reallocation is impossible without this forecast.
+
+### Proposed Solution
+
+Add a `/burn-rate` page (extends existing `/cost` page or standalone) with a per-project burn forecast. A `/api/metrics/burn-rate` endpoint computes: (1) tokens used this calendar month so far; (2) daily average burn rate (tokens/day over last 7 days); (3) projected end-of-month usage = current + rate × days_remaining; (4) days until budget exhausted (if `monthlyTokenBudget` set). Render as a table: slug, today's burn rate, projected month-end usage, budget %, "exhausts in N days" or "within budget". A sparkline (last 7 days daily token counts) per row. Projects on pace to exceed budget highlighted red; within 20% highlighted amber. A fleet-total row at the top.
+
+### Acceptance Criteria
+
+- AC1: `/burn-rate` page renders table within 2s; fleet-total row pinned to top
+- AC2: Per-project: daily rate (tokens/day), projected month-end, budget % bar, exhausts-in badge
+- AC3: "Exhausts in N days" badge: red ≤ 7 days, amber 8–14 days, green > 14 days or no budget set
+- AC4: 7-day sparkline per row (inline SVG); each bar = one day's token count
+- AC5: `/api/metrics/burn-rate` returns `{ slug, dailyRate, projectedMonthEnd, daysUntilExhausted?, budgetPct? }[]`
+- AC6: NavDropdown adds "Burn Rate" under Intelligence group (replace or alongside existing Fleet Cost)
