@@ -23,6 +23,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/feed', label: 'Project Feed', icon: '≣' },
       { href: '/galaxy', label: 'Galaxy Map', icon: '✵' },
+      { href: '/nexus', label: 'Nexus Map', icon: '⬢' },
       { href: '/constellation', label: 'Fleet Constellation', icon: '✦' },
       { href: '/graph', label: 'Project Graph', icon: '⬡' },
       { href: '/timeline', label: 'Timeline', icon: '◫' },
