@@ -81,6 +81,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/memory-audit', label: 'Memory Audit', icon: '≡' },
       { href: '/memory-decay', label: 'Memory Decay', icon: '◑' },
       { href: '/compare', label: 'Project Compare', icon: '⇌' },
+      { href: '/scoreboard', label: 'Attention Scoreboard', icon: '◆' },
+      { href: '/convergence-budget', label: 'Convergence vs Budget', icon: '⊹' },
       { href: '/proposal-graph', label: 'Proposal Graph', icon: '◎' },
       { href: '/sequence', label: 'Mission Sequence', icon: '▷' },
       { href: '/goal-radar', label: 'Goal Radar', icon: '◎' },
