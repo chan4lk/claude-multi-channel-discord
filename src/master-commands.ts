@@ -1253,7 +1253,7 @@ export async function handleModel(rest: string[], ctx: MasterContext): Promise<s
  * fallback provider with a single command instead of editing
  * channels.json + restarting.
  */
-async function handleProvider(rest: string[], ctx: MasterContext): Promise<string> {
+export async function handleProvider(rest: string[], ctx: MasterContext): Promise<string> {
   const { positional, flags } = parseFlags(rest)
   if (positional.length === 0) {
     return '`provider` needs a chat_id or slug. usage: `provider <slug> [--set <alias> | --clear]`'
