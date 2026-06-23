@@ -1049,6 +1049,7 @@ async function scheduleAdd(tail: string[]): Promise<string> {
   const sched: Schedule = isInterval
     ? {
         id,
+        type: 'prompt',
         chatId: entry.chatId,
         interval: atRaw,
         prompt,
@@ -1060,6 +1061,7 @@ async function scheduleAdd(tail: string[]): Promise<string> {
       }
     : {
         id,
+        type: 'prompt',
         chatId: entry.chatId,
         at: atRaw,
         prompt,
