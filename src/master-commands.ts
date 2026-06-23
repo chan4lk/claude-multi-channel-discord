@@ -1208,7 +1208,7 @@ function scheduleRemove(tail: string[]): string {
  * (Most provider endpoints alias arbitrary names to their own model
  * anyway, but having the UI tell the truth avoids confusion.)
  */
-async function handleModel(rest: string[], ctx: MasterContext): Promise<string> {
+export async function handleModel(rest: string[], ctx: MasterContext): Promise<string> {
   const { positional, flags } = parseFlags(rest)
   if (positional.length === 0) return '`model` needs a chat_id or slug'
   const target = positional[0]!

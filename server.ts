@@ -54,6 +54,7 @@ import { backupMemory, type R2Config } from './src/memory-backup.ts'
 import { Scheduler } from './src/scheduler.ts'
 import { VoicePipeline } from './src/voice-pipeline.ts'
 import { voiceSlashCommands, handleVoiceInteraction } from './src/voice-commands.ts'
+import { modelSlashCommands, handleModelInteraction } from './src/model-command.ts'
 import { insertVoiceTurn } from './src/voice-db.ts'
 
 // Single-source state dir. MCD_CHANNELS_DIR is the multi-channel-discord
@@ -975,6 +976,19 @@ client.on('interactionCreate', async (interaction: Interaction) => {
       })
     } else {
       await interaction.reply({ content: 'Voice pipeline not initialized.', ephemeral: true }).catch(() => {})
+    }
+    return
+  }
+  if (interaction.isChatInputCommand() && interaction.commandName === 'model') {
+    if (projectPool) {
+      await handleModelInteraction(interaction, {
+        mutator: buildMutator(),
+        isAllowed: (userId) => loadAccess().allowFrom.includes(userId),
+      }).catch(err => {
+        process.stderr.write(`model: interaction error: ${err}\n`)
+      })
+    } else {
+      await interaction.reply({ content: 'Project pool not initialized.', ephemeral: true }).catch(() => {})
     }
     return
   }
@@ -1991,8 +2005,8 @@ async function handleInbound(msg: Message): Promise<void> {
 }
 
 function registerVoiceCommands(guild: Guild) {
-  guild.commands.set(voiceSlashCommands).catch(err => {
-    process.stderr.write(`discord: failed to register voice slash commands in guild ${guild.id}: ${err}\n`)
+  guild.commands.set([...voiceSlashCommands, ...modelSlashCommands]).catch(err => {
+    process.stderr.write(`discord: failed to register slash commands in guild ${guild.id}: ${err}\n`)
   })
 }
 
@@ -2000,7 +2014,7 @@ function registerVoiceCommands(guild: Guild) {
 // (the deprecated 'ready' alias fires on the gateway READY packet, before guilds are cached)
 client.once('clientReady', c => {
   process.stderr.write(`discord channel: gateway connected as ${c.user.tag}\n`)
-  process.stderr.write(`discord: registering voice commands in ${c.guilds.cache.size} guild(s)\n`)
+  process.stderr.write(`discord: registering slash commands in ${c.guilds.cache.size} guild(s)\n`)
   c.guilds.cache.forEach(guild => registerVoiceCommands(guild))
 })
 
