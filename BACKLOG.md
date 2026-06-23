@@ -4015,3 +4015,96 @@ Add a `/proposal-aging` page rendering a horizontal spectrum (beeswarm-style dot
 - AC3: A transient toast shows the destination view label on each jump
 - AC4: Hotkeys are suppressed while an INPUT/TEXTAREA is focused
 - AC5: Pages outside any NavDropdown category are a no-op (no crash)
+
+---
+
+## P170 — Inbound Queue & Circuit Board
+
+**Status:** `[x] done`
+**Created:** 2026-06-23
+
+### Problem
+
+`queuedCount` (messages buffered while a project is busy or budget-exhausted) and `circuitOpen` (the breaker that pauses inbound delivery) are both exposed in `/api/fleet` but only surfaced as small markers on the InstanceGrid card. There is no fleet-wide view that answers "which projects are backing up work, and whose circuit breaker has tripped" — the two clearest signals that a channel needs operator attention right now.
+
+### Proposed Solution
+
+Add a `/queue-board` page rendering a ranked board of horizontal bars, one per project that has `queuedCount > 0` or `circuitOpen === true`. Bar length encodes queued message count; rows with an open circuit get a pulsing red "BREAKER OPEN" badge and sort to the very top regardless of queue depth. Each row shows slug, queued count, runtime state, and platform. Header shows total queued messages across the fleet and the number of open breakers. Clicking a row deep-links to `/focus/<slug>`. Reuses `/api/fleet`.
+
+### Acceptance Criteria
+
+- AC1: `/queue-board` renders one row per project with `queuedCount > 0` or `circuitOpen`
+- AC2: Bar length ∝ `queuedCount`; open-breaker rows show a pulsing "BREAKER OPEN" badge
+- AC3: Open-breaker rows sort above all others; remaining rows sort by queuedCount desc
+- AC4: Header shows total queued messages and count of open breakers
+- AC5: Empty state ("no backlog, all breakers closed") when nothing qualifies
+- AC6: Clicking a row navigates to `/focus/<slug>`; reuses `/api/fleet`; added to `NAV_GROUPS` under Operations
+
+---
+
+## P171 — Stuck Headroom Gauge
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+Each project is killed by the watchdog when its idle age crosses `stuckThresholdMinutes`. Both `ageMins` and `stuckThresholdMinutes` are in `/api/fleet`, but no view shows how close each project is to that kill line. Operators learn a project was reaped only after the fact, instead of seeing it approach the threshold.
+
+### Proposed Solution
+
+Add a `/stuck-headroom` page rendering one horizontal gauge per active project: a track representing `stuckThresholdMinutes` with a fill of `ageMins`, colored by headroom band (green <60%, amber <85%, red ≥85% of threshold). Rows sort by headroom fraction desc so the closest-to-reap float to the top. Each row shows slug, `ageMins`/`stuckThresholdMinutes`, and remaining minutes. Header shows the single most-at-risk project. Reuses `/api/fleet`; projects in a terminal/idle-evicted state are omitted.
+
+### Acceptance Criteria
+
+- AC1: `/stuck-headroom` renders one gauge per active project with `stuckThresholdMinutes`
+- AC2: Fill ∝ `ageMins / stuckThresholdMinutes`; color band green/amber/red at 60%/85%
+- AC3: Rows sorted by headroom fraction desc; header names the most-at-risk project
+- AC4: Each row shows ageMins, threshold, and remaining minutes to reap
+- AC5: Reuses `/api/fleet`; added to `NAV_GROUPS` under Observability
+
+---
+
+## P172 — Context Fill ETA Countdown
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+`contextUsagePct` and `contextFillEtaMinutes` (projected minutes until the context window fills and the session must compact) are computed in `/api/fleet` but only appear on the InstanceGrid card. There is no view that ranks projects by *time until forced compaction* — the metric that predicts an imminent session disruption.
+
+### Proposed Solution
+
+Add a `/context-eta` page rendering a ranked countdown list: one row per project with a finite `contextFillEtaMinutes`, sorted ascending (soonest to fill first). Each row shows slug, a small fill bar for `contextUsagePct`, and the ETA rendered as a human countdown (e.g. "12m", "1.4h"). Rows under 15 minutes are flagged red; under 60 amber. Header shows the soonest-to-fill project. Reuses `/api/fleet`; projects with no ETA (idle or plenty of headroom) are listed separately as "stable".
+
+### Acceptance Criteria
+
+- AC1: `/context-eta` renders one row per project with a finite `contextFillEtaMinutes`, sorted soonest-first
+- AC2: Each row shows a `contextUsagePct` fill bar and the ETA as a human countdown
+- AC3: ETA <15m flagged red, <60m amber, otherwise green
+- AC4: Header names the soonest-to-fill project; projects with no ETA grouped as "stable"
+- AC5: Reuses `/api/fleet`; added to `NAV_GROUPS` under Observability
+
+---
+
+## P173 — Fleet Age Distribution Histogram
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+Project `ageMins` (minutes since last activity) is shown per-card but never aggregated. Operators cannot see the shape of fleet freshness — whether most projects are recently active or the fleet has drifted into a long idle tail — in a single glance.
+
+### Proposed Solution
+
+Add a `/age-distribution` page rendering a pure-SVG histogram of `ageMins` across all projects, bucketed into log-ish age bands (<5m, 5–15m, 15–60m, 1–4h, 4–12h, 12h+). Bar height ∝ project count in each band; bars colored cool→warm by band age. Hovering a bar lists the member slugs. Header shows median fleet age and the count of projects idle >4h. Reuses `/api/fleet`.
+
+### Acceptance Criteria
+
+- AC1: `/age-distribution` renders a histogram of `ageMins` across fixed age bands
+- AC2: Bar height ∝ project count per band; color scales cool→warm with age
+- AC3: Hover lists member slugs of a band
+- AC4: Header shows median fleet age and count idle >4h
+- AC5: Reuses `/api/fleet`; added to `NAV_GROUPS` under Observability
