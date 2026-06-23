@@ -3649,7 +3649,7 @@ Add a `/proposal-flow` page with a Sankey diagram: left nodes = projects, flowin
 
 ## P154 — Holistic Spotlight (Omni-Search ⌘K)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
@@ -3671,7 +3671,7 @@ Add a `⌘K` / `Ctrl+K` command palette overlay mounted globally. Typing fuzzy-m
 
 ## P155 — Project Momentum Index
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
