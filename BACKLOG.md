@@ -3803,3 +3803,95 @@ Add a `/forecast` page that projects backlog completion under three velocity sce
 - AC3: Scenarios computed from historical 7/14-day completion rates over the burndown series
 - AC4: Summary shows three projected completion dates and trailing velocity (proposals/week)
 - AC5: NavDropdown adds "Velocity Forecast" under the Intelligence group
+
+---
+
+## P161 — Stale Data Sentinel
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+The dashboard now has 80+ views that each poll their own `/api/*` endpoint on independent intervals (5s–60s). When an endpoint errors or the MCD server is down, most pages silently keep rendering the last good data with no indication it is stale — an operator can stare at a frozen radar or treemap believing the fleet is quiet when in fact the data feed died. There is no shared freshness signal across views.
+
+### Proposed Solution
+
+Add a tiny shared `useFreshness` hook (in `lib/`) wrapping the fetch+interval pattern these pages repeat. It tracks `lastSuccessAt`, `isStale` (no success within 2.5× the poll interval), and `lastError`. Render a small reusable `FreshnessBadge` in the page header: green dot + "live" when fresh, amber "stale Ns" when the last success is aging, red "offline" when the last fetch errored. Retrofit the most-trafficked polling pages first (`/pulse`, `/themes`, `/`, `/feed`, `/burndown`). No new server route — purely client-side derivation from existing fetch outcomes.
+
+### Acceptance Criteria
+
+- AC1: `useFreshness(url, intervalMs)` hook returns `{ data, isStale, lastError, lastSuccessAt }`
+- AC2: `FreshnessBadge` shows live (green) / stale (amber, with seconds) / offline (red) states
+- AC3: Stale threshold = 2.5× the page's poll interval; offline shown on any fetch rejection or non-2xx
+- AC4: `/pulse`, `/themes`, `/`, `/feed`, `/burndown` headers render the badge
+- AC5: No new API route; existing endpoints unchanged
+
+---
+
+## P162 — Blip & Tile Deep-Links
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+The newest visualizations (P157 Fleet Pulse Radar, P158 Proposal Theme Treemap) are read-only: a radar blip only shows a hover tooltip and a treemap tile only toggles a list. Operators who spot an interesting project or theme cannot jump from the visual to the canonical detail surface — they must mentally note the slug/number and navigate elsewhere, breaking the investigation flow that these "at-a-glance" views are meant to start.
+
+### Proposed Solution
+
+Make blips and tiles click-through. On `/pulse`, clicking a blip navigates to the existing project spotlight (`/?spotlight=<slug>`), matching the pattern already used by the Momentum Index rows. On `/themes`, each proposal row in the drill-down list links to the Proposal Graph or backlog anchor for that P-number. Add a subtle "↗" affordance on hover so the click target is discoverable. No backend changes.
+
+### Acceptance Criteria
+
+- AC1: Clicking a radar blip on `/pulse` navigates to `/?spotlight=<slug>`
+- AC2: Hovering a blip shows a click affordance (cursor + "↗" or ring) distinct from the tooltip
+- AC3: Each proposal row in the `/themes` drill-down links to that proposal's canonical view
+- AC4: Keyboard focus + Enter activates the same navigation (accessible)
+- AC5: No new API route
+
+---
+
+## P163 — Recently Shipped Rail
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+New views ship most days (P151–P158 in the last week alone) but the only way to discover them is scrolling the increasingly long "All Views" NavDropdown. Operators have no sense of what was added recently, so freshly built capabilities go unused. There is no surface that answers "what's new in the dashboard."
+
+### Proposed Solution
+
+Add a `/api/whats-new` endpoint that parses `BACKLOG.md` for the most recently completed proposals (status done, ordered by linked git commit date) and maps each to its dashboard route via a small title→href lookup. Render a dismissible "Recently Shipped" rail on the home dashboard (`/`) showing the last ~6 shipped views as chips linking straight to them, with the ship date. Dismissal persists in localStorage and resets when a newer item appears.
+
+### Acceptance Criteria
+
+- AC1: `/api/whats-new` returns the last N done proposals with `{ number, title, href, shippedAt }`
+- AC2: Home dashboard renders a "Recently Shipped" rail of chips linking to each view
+- AC3: Proposals without a known route are omitted (no dead links)
+- AC4: Rail is dismissible; dismissal persists and re-appears when a newer item ships
+- AC5: Ship date derived from the proposal's linked commit date, falling back to Created date
+
+---
+
+## P164 — View Cycler Hotkeys
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+With 80+ views, comparing related visualizations (e.g. Pulse Radar → Constellation → Galaxy, or Burndown → Forecast → Velocity) means returning to the NavDropdown between each. There is no fast way to step through the views in a category, which discourages the side-by-side exploration these observability surfaces are built for.
+
+### Proposed Solution
+
+Add a global keyboard handler (in the shared layout) that cycles to the next/previous view within the current NavDropdown category using `[` and `]`. Reuse the existing `NAV_GROUPS` definition as the ordering source so no list is duplicated. Show a brief toast naming the destination view on each jump. Keys are ignored while an input/textarea is focused, consistent with the existing `V` toggle.
+
+### Acceptance Criteria
+
+- AC1: `]` navigates to the next view in the current page's NavDropdown category; `[` to the previous (wrapping)
+- AC2: Category and ordering are derived from the existing `NAV_GROUPS`, not a duplicated list
+- AC3: A transient toast shows the destination view label on each jump
+- AC4: Hotkeys are suppressed while an INPUT/TEXTAREA is focused
+- AC5: Pages outside any NavDropdown category are a no-op (no crash)
