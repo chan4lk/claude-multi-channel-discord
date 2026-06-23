@@ -102,6 +102,12 @@ const ProjectSchema = z.object({
    * Set higher for channels that run long pipelines (TTS, video rendering).
    */
   stuckThresholdMinutes: z.number().int().positive().optional(),
+  /**
+   * Ordered list of model names and/or provider aliases to auto-try when this
+   * project hits a usage limit (429). e.g. ["opus", "minimax"]. Absent/empty →
+   * offer-only (no auto-switch).
+   */
+  limitFallback: z.array(z.string()).optional(),
   /** Inject a compression prompt when input tokens exceed this % of the model context (0–100). Default 80. */
   contextWarningThresholdPct: z.number().int().min(1).max(100).optional(),
   voice: VoiceProjectConfigSchema.optional(),

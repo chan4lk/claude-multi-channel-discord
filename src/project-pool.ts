@@ -2,7 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import type { ChannelsConfig, Project } from './channels-config.ts'
-import type { InboundEnvelope, OutboundReply, ProjectProcess, ToolProgressEvent } from './project-process.ts'
+import type { InboundEnvelope, OutboundReply, ProjectProcess, ToolProgressEvent, LimitHitEvent } from './project-process.ts'
 
 export type PoolEvent =
   | { kind: 'spawn'; chatId: string; slug: string }
@@ -12,6 +12,7 @@ export type PoolEvent =
   | { kind: 'stuck'; chatId: string; slug: string; sinceLastReplyMs: number; effectiveThresholdMs: number }
   | { kind: 'progress-skip'; chatId: string; slug: string; sinceLastReplyMs: number; sinceTranscriptMs: number; effectiveThresholdMs: number }
   | { kind: 'tool-progress'; chatId: string; slug: string; event: ToolProgressEvent }
+  | { kind: 'limit-hit'; chatId: string; slug: string; event: LimitHitEvent }
   | { kind: 'respawn-scheduled'; chatId: string; slug: string; backoffMs: number; attempt: number }
   | { kind: 'circuit-open'; chatId: string; slug: string; failureCount: number }
   | { kind: 'circuit-reset'; chatId: string; slug: string }
@@ -482,10 +483,14 @@ export class ProjectPool {
     const offToolProgress = proc.onToolProgress?.((ev) => {
       this.fireEvent({ kind: 'tool-progress', chatId, slug: project.slug, event: ev })
     })
+    const offLimitHit = proc.onLimitHit?.((ev) => {
+      this.fireEvent({ kind: 'limit-hit', chatId, slug: project.slug, event: ev })
+    })
     this.cleanups.set(chatId, () => {
       offReply()
       offExit()
       offToolProgress?.()
+      offLimitHit?.()
     })
 
     this.fireEvent({ kind: 'spawn', chatId, slug: project.slug })

@@ -31,6 +31,7 @@ import type { ClaudeArgs } from './channels-config.ts'
 import type { MasterMcpServer } from './master-mcp-server.ts'
 import { projectDir, projectGoalFile, projectSessionFile } from './paths.ts'
 import { runDistillation } from './distillation.ts'
+import { parseLimitMessage, type LimitHitEvent } from './limit-offer.ts'
 import { buildGitEnv, type GitResult as _GitResultUnused } from './git-ops.ts'
 import { getCredential, loadCredentials, type Credential } from './git-credentials.ts'
 import { loadUserEnv, UserEnvError } from './user-env.ts'
@@ -334,6 +335,8 @@ export class ClaudeProjectProcess implements ProjectProcess {
   private observedSessionId: string | null = null
   private replyHandlers = new Set<(reply: OutboundReply) => void>()
   private toolProgressHandlers = new Set<(ev: ToolProgressEvent) => void>()
+  private limitHitHandlers = new Set<(ev: LimitHitEvent) => void>()
+  private lastLimitRaw: string | null = null
   private _lastContextWarnAt = 0
   private _latestInputTokens = 0
   private readonly turnHistory: number[] = []
@@ -995,10 +998,21 @@ export class ClaudeProjectProcess implements ProjectProcess {
     }
   }
 
+  onLimitHit(handler: (ev: LimitHitEvent) => void): () => void {
+    this.limitHitHandlers.add(handler)
+    return () => this.limitHitHandlers.delete(handler)
+  }
+
+  private fireLimitHit(ev: LimitHitEvent): void {
+    for (const h of this.limitHitHandlers) {
+      try { h(ev) } catch {}
+    }
+  }
+
   private startTranscriptWatcher(): void {
     if (this.transcriptWatcherTimer) return
     const poll = () => {
-      if (!this._alive || this.toolProgressHandlers.size === 0) return
+      if (!this._alive || (this.toolProgressHandlers.size === 0 && this.limitHitHandlers.size === 0)) return
       const sessionId = this.resolveSessionId()
       if (!sessionId || !this.projectCwd) return
       const path = join(homedir(), '.claude', 'projects', encodeProjectCwd(this.projectCwd), `${sessionId}.jsonl`)
@@ -1031,6 +1045,17 @@ export class ClaudeProjectProcess implements ProjectProcess {
         if (!trimmed) continue
         let obj: Record<string, unknown>
         try { obj = JSON.parse(trimmed) as Record<string, unknown> } catch { continue }
+        const rec = obj
+        if ((rec as any).isApiErrorMessage === true && (rec as any).apiErrorStatus === 429) {
+          const msg = (rec as any).message
+          let text = ''
+          if (typeof msg?.content === 'string') text = msg.content
+          else if (Array.isArray(msg?.content)) text = msg.content.map((b: any) => b?.text ?? '').join(' ').trim()
+          if (text && text !== this.lastLimitRaw) {
+            this.lastLimitRaw = text
+            this.fireLimitHit(parseLimitMessage(text))
+          }
+        }
         const msg = obj.message as { role?: string; content?: unknown[] } | undefined
         if (!msg) continue
         if (msg.role === 'assistant' && Array.isArray(msg.content)) {
