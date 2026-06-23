@@ -83,6 +83,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/compare', label: 'Project Compare', icon: '⇌' },
       { href: '/scoreboard', label: 'Attention Scoreboard', icon: '◆' },
       { href: '/convergence-budget', label: 'Convergence vs Budget', icon: '⊹' },
+      { href: '/memory-convergence', label: 'Memory vs Convergence', icon: '⊕' },
       { href: '/proposal-graph', label: 'Proposal Graph', icon: '◎' },
       { href: '/sequence', label: 'Mission Sequence', icon: '▷' },
       { href: '/goal-radar', label: 'Goal Radar', icon: '◎' },

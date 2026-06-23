@@ -4161,7 +4161,7 @@ Add a `/convergence-budget` page with a pure-SVG scatter plot: x-axis = budget u
 
 ## P176 — Memory vs Convergence Quadrant
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
@@ -4180,3 +4180,71 @@ Add a `/memory-convergence` page with a pure-SVG scatter: x-axis = memory size (
 - AC4: Hover shows slug, human-readable size, convergence %, goal text
 - AC5: Header shows a coarse correlation hint and the prune-candidate count; reuses `/api/fleet`
 - AC6: Added to `NAV_GROUPS` under Intelligence
+
+---
+
+## P177 — Fleet Attention Heat Strip
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+The Attention Scoreboard (P174) ranks projects but takes a full row each, so a large fleet scrolls off-screen and there is no single dense glance at overall fleet health. Operators want a compact "is anything red?" overview that fits entirely above the fold regardless of fleet size.
+
+### Proposed Solution
+
+Add a `/heat-strip` page rendering one small square cell per project in a wrapping grid, each cell colored by its composite attention score (reusing the same four-factor scoring as P174: budget, headroom, context-ETA, queue/circuit) on a green→amber→red ramp. Cells sort by score desc so hot cells cluster top-left. Hovering a cell shows slug, score, and dominant reason; clicking deep-links to `/focus/<slug>`. A header bar shows fleet-wide min/median/max attention. Extract the P174 scoring into a tiny shared `lib/attention.ts` so both pages share one source of truth. Reuses `/api/fleet`.
+
+### Acceptance Criteria
+
+- AC1: `/heat-strip` renders one cell per project, colored by composite attention score
+- AC2: Scoring is shared with P174 via `lib/attention.ts` (no duplicated formula)
+- AC3: Cells sorted by score desc; hover shows slug/score/reason; click → `/focus/<slug>`
+- AC4: Header shows fleet min/median/max attention score
+- AC5: Reuses `/api/fleet`; added to `NAV_GROUPS` under Intelligence
+
+---
+
+## P178 — Project Vitals Radar Cards
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+Per-project health is spread across budget, convergence, freshness, and context views. There is no single small-multiples surface where each project's overall shape is legible at once, making it hard to compare whole-project profiles side by side.
+
+### Proposed Solution
+
+Add a `/vitals` page rendering a responsive grid of small pure-SVG radar charts, one per project. Each radar has four normalized axes (0–1): convergence (`convergenceScore`), budget headroom (`1 − usage fraction`), freshness (`1 − ageMins/stuckThresholdMinutes`, clamped), and context headroom (`1 − contextUsagePct/100`). The filled polygon area gives an at-a-glance "bigger = healthier" read. Card header shows slug; missing axes render at zero with a muted spoke. Cards sort by mean axis value desc. Reuses `/api/fleet`.
+
+### Acceptance Criteria
+
+- AC1: `/vitals` renders one 4-axis radar per project (convergence, budget headroom, freshness, context headroom)
+- AC2: All axes normalized 0–1; missing data renders at zero, not omitted
+- AC3: Cards sorted by mean axis value desc; each labeled with slug
+- AC4: Clicking a card deep-links to `/focus/<slug>`
+- AC5: Reuses `/api/fleet`; added to `NAV_GROUPS` under Intelligence
+
+---
+
+## P179 — Platform × State Matrix
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+The Fleet Sunburst (P167) shows state-within-platform as nested arcs, but reading exact counts off arcs is imprecise. Operators sometimes want the plain cross-tab: how many projects sit at each (platform, state) intersection, with row/column totals.
+
+### Proposed Solution
+
+Add a `/platform-matrix` page rendering a matrix heatmap: rows = platform (discord/teams/whatsapp), columns = runtime state (idle/active/stalled/autonomous), each cell a count with background opacity ∝ count and a numeric label. Row and column totals are shown in a margin, plus a grand total. Empty cells render faint. Clicking a cell deep-links to a filtered fleet view (`/?platform=&state=` if supported, else `/`). Reuses `/api/fleet`.
+
+### Acceptance Criteria
+
+- AC1: `/platform-matrix` renders a platform×state count matrix with numeric cells
+- AC2: Cell background opacity ∝ count; empty cells faint
+- AC3: Row totals, column totals, and grand total shown in margins
+- AC4: Reuses `/api/fleet`; added to `NAV_GROUPS` under Observability
