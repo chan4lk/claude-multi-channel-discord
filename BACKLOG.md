@@ -3391,7 +3391,7 @@ Add a `/scorecard` page: a sortable table where each row is a project and column
 
 ## P143 — Per-Project Config Editor
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
@@ -3414,7 +3414,7 @@ Add a `/project-config` page: a form UI where operators select a project from a 
 
 ## P144 — Idle Fleet Detector
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
