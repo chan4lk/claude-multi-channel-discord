@@ -40,6 +40,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/narrative', label: 'Narrative Timeline', icon: '◫' },
       { href: '/context-pressure', label: 'Context Pressure', icon: '◑' },
       { href: '/turn-quality', label: 'Turn Quality', icon: '▦' },
+      { href: '/calendar', label: 'Fleet Calendar', icon: '◫' },
     ],
   },
   {
@@ -80,6 +81,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/goal-heatmap', label: 'Goal Heatmap', icon: '▦' },
       { href: '/capability-map', label: 'Capability Map', icon: '⊞' },
       { href: '/scorecard', label: 'Health Scorecard', icon: '⊕' },
+      { href: '/turn-correlation', label: 'Turn Correlation', icon: '⊹' },
     ],
   },
   {
