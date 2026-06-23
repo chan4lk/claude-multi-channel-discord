@@ -78,6 +78,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/memory-health', label: 'Memory Health', icon: '◑' },
       { href: '/goal-heatmap', label: 'Goal Heatmap', icon: '▦' },
       { href: '/capability-map', label: 'Capability Map', icon: '⊞' },
+      { href: '/scorecard', label: 'Health Scorecard', icon: '⊕' },
     ],
   },
   {

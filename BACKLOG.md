@@ -3345,7 +3345,7 @@ Add a `/capability-map` page: a grid where rows = tool names (aggregated from al
 
 ## P141 — Goal Editor UI
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
@@ -3368,7 +3368,7 @@ Add inline edit controls to the `/goals` page. Each goal card gets an Edit butto
 
 ## P142 — Composite Project Health Scorecard
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
