@@ -30,6 +30,9 @@ export type ToolProgressEvent =
   | { phase: 'start'; toolId: string; toolName: string; inputSummary: string }
   | { phase: 'done'; toolId: string; toolName: string; durationMs: number; isError: boolean }
 
+import type { LimitHitEvent } from './limit-offer.ts'
+export type { LimitHitEvent } from './limit-offer.ts'
+
 export interface ProcessStats {
   /** Resolved claude PID. null if we couldn't find one. */
   pid: number | null
@@ -101,6 +104,7 @@ export interface ProjectProcess {
   onExit(handler: (info: { code: number | null; signal: NodeJS.Signals | null }) => void): () => void
   /** Subscribe to tool-call progress events (optional — not all backends emit these). */
   onToolProgress?(handler: (ev: ToolProgressEvent) => void): () => void
+  onLimitHit?(handler: (ev: LimitHitEvent) => void): () => void
   /**
    * Tear down the process. Idempotent. Returns once exit handlers have fired.
    */
@@ -207,6 +211,10 @@ export class MockProjectProcess implements ProjectProcess {
   }
 
   onToolProgress(_handler: (ev: ToolProgressEvent) => void): () => void {
+    return () => {}
+  }
+
+  onLimitHit(_handler: (ev: LimitHitEvent) => void): () => void {
     return () => {}
   }
 

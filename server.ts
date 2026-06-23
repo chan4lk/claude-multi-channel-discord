@@ -37,7 +37,8 @@ import { join, sep } from 'path'
 
 import { buildEmitter } from './src/mission-control-emitter.ts'
 
-import { loadConfig as loadChannelsConfig, resolveClaudeArgs, resolveProvider } from './src/channels-config.ts'
+import { loadConfig as loadChannelsConfig, saveConfig, resolveClaudeArgs, resolveProvider } from './src/channels-config.ts'
+import { computeLimitOffer } from './src/limit-offer.ts'
 import { TeamsAdapter } from './src/teams-adapter.ts'
 import { WhatsAppAdapter } from './src/whatsapp-adapter.ts'
 import { toBuffer as qrToBuffer } from 'qrcode'
@@ -1362,6 +1363,40 @@ async function maybeInitProjectsBackend(): Promise<void> {
             (evt.threshold === 100 ? ' New messages queued until next month.' : ''),
         }
         routeNotification(loadChannelsConfig(), notice, `budget-alert-${evt.threshold}`)
+      }
+      if (evt.kind === 'limit-hit') {
+        const cfg = loadChannelsConfig()
+        const { limitedModel, resetsAt } = evt.event
+        const modelLabel = limitedModel ?? 'usage'
+        const resetLabel = resetsAt ? ` · resets ${resetsAt}` : ''
+        const { autoSwitch, offerLines } = computeLimitOffer(cfg, evt.chatId, evt.slug, limitedModel, process.env)
+        mcEmit('limit_hit', { slug: evt.slug, chatId: evt.chatId, limitedModel, resetsAt })
+        if (autoSwitch) {
+          const entry = cfg.projects[evt.chatId]
+          if (entry) {
+            const updated = { ...entry }
+            if (autoSwitch.kind === 'model') updated.model = autoSwitch.value
+            else updated.provider = autoSwitch.value
+            saveConfig({ ...cfg, projects: { ...cfg.projects, [evt.chatId]: updated } })
+            void projectPool?.killChat(evt.chatId).catch(() => {})
+          }
+          const notice: OutboundReply = {
+            kind: 'text',
+            chatId: evt.chatId,
+            text: `🔄 \`${evt.slug}\`: hit the ${modelLabel} limit${resetLabel}. Auto-switched to \`${autoSwitch.value}\` — send a message to resume.`,
+          }
+          void routeNotification(cfg, notice, 'limit-hit auto-switch')
+        } else {
+          const offer = offerLines.length
+            ? '\n' + offerLines.map((l) => `\`${l}\``).join('\n')
+            : ''
+          const notice: OutboundReply = {
+            kind: 'text',
+            chatId: evt.chatId,
+            text: `⚠️ \`${evt.slug}\`: hit the ${modelLabel} limit${resetLabel}. Agent paused — switch to keep going:${offer}`,
+          }
+          void routeNotification(cfg, notice, 'limit-hit offer')
+        }
       }
       if (evt.kind === 'budget-restored') {
         const masterChatId = loadChannelsConfig().master?.chatId ?? evt.chatId

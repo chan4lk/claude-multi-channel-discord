@@ -12,7 +12,8 @@ export type McEventType =
   | 'command_executed'
   | 'context_warning'
   | 'distillation_complete'
-  | 'tool_progress';
+  | 'tool_progress'
+  | 'limit_hit';
 
 export interface McEvent {
   instance_id: string;   // SHA1(realpath(MCD_CHANNELS_DIR))
