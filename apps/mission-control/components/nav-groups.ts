@@ -90,6 +90,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/burndown', label: 'Backlog Burndown', icon: '◣' },
       { href: '/themes', label: 'Proposal Themes', icon: '⊞' },
       { href: '/forecast', label: 'Velocity Forecast', icon: '⤳' },
+      { href: '/memory-footprint', label: 'Memory Footprint', icon: '⊞' },
     ],
   },
   {
