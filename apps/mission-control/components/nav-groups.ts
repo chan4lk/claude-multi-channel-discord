@@ -43,6 +43,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/momentum', label: 'Momentum River', icon: '⇴' },
       { href: '/pulse', label: 'Fleet Pulse Radar', icon: '◎' },
       { href: '/memory-stream', label: 'Memory Stream', icon: '⇶' },
+      { href: '/fleet-sunburst', label: 'Fleet Sunburst', icon: '◍' },
     ],
   },
   {
@@ -91,6 +92,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/themes', label: 'Proposal Themes', icon: '⊞' },
       { href: '/forecast', label: 'Velocity Forecast', icon: '⤳' },
       { href: '/memory-footprint', label: 'Memory Footprint', icon: '⊞' },
+      { href: '/convergence-wall', label: 'Convergence Wall', icon: '◎' },
     ],
   },
   {
