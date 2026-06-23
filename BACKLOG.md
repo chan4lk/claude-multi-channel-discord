@@ -3437,7 +3437,7 @@ Add an idle-projects section to the `/projects` page (or a dedicated `/idle-flee
 
 ## P145 — Turn Volume vs Quality Correlation Chart
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem

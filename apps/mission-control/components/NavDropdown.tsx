@@ -80,6 +80,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/goal-heatmap', label: 'Goal Heatmap', icon: '▦' },
       { href: '/capability-map', label: 'Capability Map', icon: '⊞' },
       { href: '/scorecard', label: 'Health Scorecard', icon: '⊕' },
+      { href: '/turn-correlation', label: 'Turn Correlation', icon: '⊹' },
     ],
   },
   {
