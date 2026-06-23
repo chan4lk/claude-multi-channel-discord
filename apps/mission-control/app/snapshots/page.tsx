@@ -97,6 +97,8 @@ export default function SnapshotsPage() {
   const [diffLoading, setDiffLoading] = useState(false)
   const [snapshotALabel, setSnapshotALabel] = useState('')
   const [snapshotBLabel, setSnapshotBLabel] = useState('')
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editLabel, setEditLabel] = useState('')
 
   const loadSnapshots = useCallback(async () => {
     const res = await fetch('/api/snapshots')
@@ -126,11 +128,22 @@ export default function SnapshotsPage() {
   }
 
   async function deleteSnapshot(id: number) {
-    await fetch(`/api/snapshots?id=${id}`, { method: 'DELETE' })
+    await fetch(`/api/snapshots/${id}`, { method: 'DELETE' })
     setSnapshots(prev => prev.filter(s => s.id !== id))
     if (selectedA === id) setSelectedA(null)
     if (selectedB === id) setSelectedB(null)
     if (selectedA === id || selectedB === id) setDiffData(null)
+  }
+
+  async function renameSnapshot(id: number, label: string) {
+    const trimmed = label.trim().slice(0, 120)
+    await fetch(`/api/snapshots/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: trimmed }),
+    })
+    setSnapshots(prev => prev.map(s => (s.id === id ? { ...s, label: trimmed } : s)))
+    setEditingId(null)
   }
 
   async function loadDiff(idA: number, idB: number) {
@@ -390,10 +403,33 @@ export default function SnapshotsPage() {
 
                   {/* Label + timestamp */}
                   <div className="flex-1 min-w-0">
-                    {snap.label ? (
-                      <span className="text-slate-300 font-mono text-xs">{snap.label}</span>
+                    {editingId === snap.id ? (
+                      <input
+                        autoFocus
+                        value={editLabel}
+                        onClick={e => e.stopPropagation()}
+                        onChange={e => setEditLabel(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') { e.preventDefault(); void renameSnapshot(snap.id, editLabel) }
+                          if (e.key === 'Escape') setEditingId(null)
+                        }}
+                        onBlur={() => void renameSnapshot(snap.id, editLabel)}
+                        placeholder="Label…"
+                        maxLength={120}
+                        className="bg-[#0a1628] border border-cyan-500/40 rounded px-1.5 py-0.5 text-slate-200 font-mono text-xs w-48 outline-none"
+                      />
                     ) : (
-                      <span className="text-slate-500 font-mono text-xs italic">Unlabeled</span>
+                      <span
+                        onClick={e => { e.stopPropagation(); setEditingId(snap.id); setEditLabel(snap.label) }}
+                        title="Click to rename"
+                        className="cursor-text"
+                      >
+                        {snap.label ? (
+                          <span className="text-slate-300 font-mono text-xs hover:text-cyan-400 transition-colors">{snap.label}</span>
+                        ) : (
+                          <span className="text-slate-500 font-mono text-xs italic hover:text-cyan-400 transition-colors">Unlabeled</span>
+                        )}
+                      </span>
                     )}
                     <span className="text-slate-700 font-mono text-[0.6rem] ml-2">{formatTs(snap.ts)}</span>
                   </div>

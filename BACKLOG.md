@@ -3532,7 +3532,7 @@ Add a "Stall Risk" widget to the Fleet Advisor panel (P52) and as a standalone `
 
 ## P149 — Fleet State Snapshot & Diff
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
@@ -3556,7 +3556,7 @@ Add a "Snapshot" button to the fleet dashboard header. Clicking saves a fleet sn
 
 ## P150 — Token Burn Rate Forecaster
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem

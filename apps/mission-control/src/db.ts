@@ -239,6 +239,11 @@ const cutoff = Math.floor(Date.now() / 1000) - retentionDays * 86400;
 db.prepare("DELETE FROM events WHERE created_at < ?").run(cutoff);
 db.prepare("DELETE FROM alert_events WHERE ts < ?").run(cutoff);
 
+// P149 — fleet_snapshots soft-delete migration + 30-day auto-purge
+try { db.exec("ALTER TABLE fleet_snapshots ADD COLUMN deleted_at INTEGER"); } catch { /* column already present */ }
+const snapshotCutoff = Math.floor(Date.now() / 1000) - 30 * 86400;
+db.prepare("DELETE FROM fleet_snapshots WHERE ts < ?").run(snapshotCutoff);
+
 export function insertEvent(e: McEvent): void {
   db.prepare(
     `INSERT INTO events (instance_id, host, user, ts, type, payload)
@@ -473,18 +478,26 @@ export function insertSnapshot(label: string, projectCount: number, data: unknow
 
 export function getSnapshots(limit = 50): SnapshotRow[] {
   return db.prepare(
-    `SELECT id, label, ts, project_count, data FROM fleet_snapshots ORDER BY ts DESC LIMIT ?`
+    `SELECT id, label, ts, project_count, data FROM fleet_snapshots WHERE deleted_at IS NULL ORDER BY ts DESC LIMIT ?`
   ).all(limit) as SnapshotRow[]
 }
 
 export function getSnapshot(id: number): SnapshotRow | null {
   return db.prepare(
-    `SELECT id, label, ts, project_count, data FROM fleet_snapshots WHERE id = ?`
+    `SELECT id, label, ts, project_count, data FROM fleet_snapshots WHERE id = ? AND deleted_at IS NULL`
   ).get(id) as SnapshotRow | null
 }
 
+export function updateSnapshotLabel(id: number, label: string): boolean {
+  const res = db.prepare(
+    `UPDATE fleet_snapshots SET label = ? WHERE id = ? AND deleted_at IS NULL`
+  ).run(label, id)
+  return res.changes > 0
+}
+
+// Soft-delete: stamp deleted_at so the row drops out of listings but survives for audit.
 export function deleteSnapshot(id: number): void {
-  db.prepare(`DELETE FROM fleet_snapshots WHERE id = ?`).run(id)
+  db.prepare(`UPDATE fleet_snapshots SET deleted_at = unixepoch() WHERE id = ? AND deleted_at IS NULL`).run(id)
 }
 
 // ── Alert Events (P87) ────────────────────────────────────────────────────
