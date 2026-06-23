@@ -3970,7 +3970,7 @@ Add a `/fleet-sunburst` page with a two-ring pure-SVG sunburst: inner ring = run
 
 ## P168 — Budget Pressure Bullet Chart
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
@@ -3994,7 +3994,7 @@ Add a `/budget-pressure` page rendering a horizontal bullet-chart row per projec
 
 ## P169 — Proposal Aging Spectrum
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
