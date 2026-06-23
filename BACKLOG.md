@@ -3340,3 +3340,118 @@ Add a `/capability-map` page: a grid where rows = tool names (aggregated from al
 - AC3: Use counts from JSONL scan: count `tool_use` blocks per tool per project per day; `/api/capability-map` endpoint; 1-hour cache
 - AC4: Coverage score per project = distinct tools used / distinct tools allowed; shown as a small bar chart below each project column header
 - AC5: NavDropdown adds "Capability Map" under Intelligence group; clicking a row label deep-links to `/permissions?tool=<name>`
+
+---
+
+## P141 — Goal Editor UI
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+The `/goals` page shows goal text and allows status cycling (active → paused → completed) but cannot create, edit, or delete goal text from the browser. Goals are stored in per-project `.goal` files that must be hand-edited on the filesystem. This creates friction for operators who want to set or update goals without SSH access.
+
+### Proposed Solution
+
+Add inline edit controls to the `/goals` page. Each goal card gets an Edit button (pencil icon) that opens an inline textarea pre-populated with the goal text. Save calls a new `PUT /api/goals` endpoint that writes the `.goal` file atomically. A "New Goal" button at the top creates a `.goal` file for projects that don't have one yet, with a placeholder prompt. Delete (trash icon, confirm dialog) removes the `.goal` file.
+
+### Acceptance Criteria
+
+- AC1: Edit button on each goal card opens inline textarea; Save/Cancel buttons; ESC cancels
+- AC2: `PUT /api/goals` endpoint accepts `{ slug, text }`, writes `MCD_CHANNELS_DIR/projects/<slug>/.goal` atomically (write-rename); returns updated goal object
+- AC3: `POST /api/goals` endpoint with `{ slug }` creates a new `.goal` file with placeholder text "Define goal here…"; shown as a new card in active state
+- AC4: `DELETE /api/goals?slug=<slug>` removes `.goal` file; card disappears from list
+- AC5: Projects without a `.goal` file show an "Add Goal" ghost card with a + button; clicking opens the new-goal flow
+
+---
+
+## P142 — Composite Project Health Scorecard
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+The dashboard has many specialized views — memory health radar, turn quality heatmap, context pressure monitor, anomaly detection — but no single page that aggregates all dimensions into one health score per project. Operators must cross-reference 5+ pages to understand if a project is healthy. A scorecard would surface the worst-performing projects at a glance.
+
+### Proposed Solution
+
+Add a `/scorecard` page: a sortable table where each row is a project and columns are health dimensions pulled from existing API endpoints (turn quality score, memory composite, goal progress rate, context pressure, anomaly count). Each cell is a color-coded badge. A final "Overall" column is the weighted average (turn 30%, memory 30%, goal 20%, context 10%, anomaly 10%). Row background pulses red for overall < 40, amber for 40–70. Clicking a row expands an accordion with quick-links to relevant detail pages.
+
+### Acceptance Criteria
+
+- AC1: `/scorecard` page: sortable table, one row per non-master project; columns: Turn Quality, Memory Health, Goal Progress, Context Pressure (inverted), Anomaly (inverted); Overall weighted composite
+- AC2: Data from parallel fetch of existing `/api/turn-quality`, `/api/memory-health`, `/api/goal-heatmap`, `/api/context-pressure`, `/api/anomalies`; assembled client-side; 5-min auto-refresh
+- AC3: Cell color: green ≥70, amber 40–70, red <40; Overall column bold with matching background tint
+- AC4: Click row → accordion expands showing 5 quick-link buttons to detail pages for that slug
+- AC5: Sort by any column; default sort = Overall ascending (worst first); sort state persists in URL query param
+
+---
+
+## P143 — Per-Project Config Editor
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+Operators must edit `channels.json` by hand to change per-project settings like `model`, `progressMode`, `stuckThresholdMinutes`, `allowedTools`, and `disallowedTools`. There is no browser UI to do this. The `/permissions` and `/capability-map` pages are read-only. Editing channels.json is error-prone and requires filesystem access.
+
+### Proposed Solution
+
+Add a `/project-config` page: a form UI where operators select a project from a dropdown and see its current config fields. Editable fields: model (text input with autocomplete of known models), progressMode (select: off/post/edit), stuckThresholdMinutes (number input, 1–60), allowedTools (tag input), disallowedTools (tag input). Save calls `PUT /api/project-config` which updates the project's entry in channels.json atomically. A warning banner notes that process restart is needed for most changes to take effect.
+
+### Acceptance Criteria
+
+- AC1: `/project-config` page: project selector dropdown; form fields for model, progressMode, stuckThresholdMinutes, allowedTools (comma-sep or tag input), disallowedTools; Save + Reset buttons
+- AC2: `GET /api/project-config?slug=<slug>` returns current effective config (merged with defaults); `PUT /api/project-config` accepts `{ slug, model?, progressMode?, stuckThresholdMinutes?, allowedTools?, disallowedTools? }`, writes channels.json atomically
+- AC3: Unsaved changes show a dirty indicator (dot on Save button); Reset reverts to saved values; navigation-away prompt if dirty
+- AC4: After save, a success toast shows "Config saved — restart session to apply"; link to `/admin` for session controls
+- AC5: NavDropdown adds "Project Config" under Admin group
+
+---
+
+## P144 — Idle Fleet Detector
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+Projects that have been idle (no turns) for days or weeks silently consume registry entries and confuse fleet overview visualizations. There is no view that surfaces dormant projects and tells operators how long they have been quiet. Operators discover stale projects by accident rather than by design.
+
+### Proposed Solution
+
+Add an idle-projects section to the `/projects` page (or a dedicated `/idle-fleet` page): a list of projects sorted by days since last turn, color-coded by idle duration (< 7d = white, 7–30d = amber, > 30d = red). Each row shows last turn timestamp, total turn count, memory file count. A "Nudge" button sends a templated inject to the project to resume work. An "Archive" button (with confirmation) calls `!project rm --yes` via master command.
+
+### Acceptance Criteria
+
+- AC1: `/idle-fleet` page: table sorted by days-since-last-turn descending; columns: slug, last turn (relative + absolute), total turns, memory files, idle badge
+- AC2: Idle thresholds: < 7d = no badge, 7–30d = amber "Idle", > 30d = red "Dormant"
+- AC3: Data from `/api/idle-fleet`: scans JSONL transcripts for most-recent assistant turn timestamp per project; response includes `{ slug, lastTurnAt, daysSince, turnCount, memoryFileCount }`; 15-min cache
+- AC4: "Nudge" button POSTs to `/api/idle-fleet/nudge` with `{ slug }`, which injects "What are you working on? Summarize current status." into the project; returns success/error
+- AC5: NavDropdown adds "Idle Fleet" under Fleet group
+
+---
+
+## P145 — Turn Volume vs Quality Correlation Chart
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+The dashboard tracks turn quality scores and turn counts separately (heatmap page, quality page) but never shows their relationship. Operators cannot tell whether a busy project is doing high-quality work or thrashing — many low-quality turns. A scatter plot of volume vs quality would reveal burnout, thrash, and peak performance patterns across the fleet.
+
+### Proposed Solution
+
+Add a `/turn-correlation` page: a D3 scatter plot where each point is a (project, day) pair. X-axis = turn count for that day, Y-axis = average quality score for that day. Points colored by project (consistent color per slug). Hover shows tooltip: project, date, turn count, quality score. A fleet-average trend line (linear regression). Time range selector (last 7d / 14d / 30d). Clicking a point deep-links to the turn-quality heatmap filtered to that project and day.
+
+### Acceptance Criteria
+
+- AC1: `/turn-correlation` page: D3 scatter plot, X = daily turn count (0–max), Y = avg quality score (0–100); one point per (slug, day) pair; colored by project
+- AC2: Linear regression trend line across all points; slope label ("quality ↑ with volume" vs "quality ↓ with volume")
+- AC3: Hover tooltip: slug, date, turn count, quality score; point grows on hover
+- AC4: Time range selector (7d / 14d / 30d) updates data; data from `/api/turn-quality` + `/api/turns` combined client-side; 30-min refresh
+- AC5: NavDropdown adds "Turn Correlation" under Intelligence group; clicking a point deep-links to `/turn-quality?slug=<slug>&day=<YYYY-MM-DD>`
