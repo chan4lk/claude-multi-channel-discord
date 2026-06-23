@@ -64,6 +64,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/goals', label: 'Goals', icon: '◎' },
       { href: '/metrics', label: 'Metrics', icon: '◱' },
       { href: '/cost', label: 'Fleet Cost', icon: '$' },
+      { href: '/burn-rate', label: 'Burn Rate', icon: '⥮' },
       { href: '/anomalies', label: 'Anomaly Detection', icon: '⚠' },
       { href: '/health-trends', label: 'Health Trends', icon: '↗' },
       { href: '/reports', label: 'Weekly Report', icon: '◻' },
