@@ -4090,7 +4090,7 @@ Add a `/context-eta` page rendering a ranked countdown list: one row per project
 
 ## P173 — Fleet Age Distribution Histogram
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
@@ -4108,3 +4108,75 @@ Add a `/age-distribution` page rendering a pure-SVG histogram of `ageMins` acros
 - AC3: Hover lists member slugs of a band
 - AC4: Header shows median fleet age and count idle >4h
 - AC5: Reuses `/api/fleet`; added to `NAV_GROUPS` under Observability
+
+---
+
+## P174 — Fleet Attention Scoreboard
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+An operator deciding "which channel needs me right now" currently has to scan four separate views — Budget Pressure, Stuck Headroom, Context Fill ETA, and the Queue/Circuit board. The signals that demand intervention are scattered. There is no single ranked pane that fuses them into one "needs attention" ordering.
+
+### Proposed Solution
+
+Add a `/scoreboard` page computing a composite **attention score** per project from `/api/fleet` signals: budget pressure (usage fraction, weighted up when `budgetStatus` is critical/exhausted), stuck headroom (`ageMins / stuckThresholdMinutes`), context fill urgency (inverse of `contextFillEtaMinutes`), and queue/circuit state (`queuedCount`, `circuitOpen`). Render a ranked list, highest score first, each row showing the score, a stacked mini-bar breaking the score into its contributing factors (color-coded), and the dominant reason as a short tag (e.g. "breaker open", "near-reap", "budget critical"). Header shows the count of projects above an "attention" threshold. Rows deep-link to `/focus/<slug>`. Pure client-side composite; reuses `/api/fleet`.
+
+### Acceptance Criteria
+
+- AC1: `/scoreboard` computes a composite attention score per project from budget, headroom, context-ETA, and queue/circuit signals
+- AC2: Rows ranked by score desc; each shows the score and a stacked factor mini-bar
+- AC3: Each row shows the dominant-factor reason tag
+- AC4: Header shows count of projects above the attention threshold
+- AC5: Rows deep-link to `/focus/<slug>`; reuses `/api/fleet` (no new endpoint)
+- AC6: Added to `NAV_GROUPS` under Intelligence
+
+---
+
+## P175 — Convergence vs Budget Scatter
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+Two of the most important per-project signals — how close a project is to its goal (`convergenceScore`) and how much of its token budget it has burned (`monthlyTokensUsed / monthlyTokenBudget`) — are never plotted against each other. The dangerous quadrant (high spend, low convergence: burning budget without progress) is invisible.
+
+### Proposed Solution
+
+Add a `/convergence-budget` page with a pure-SVG scatter plot: x-axis = budget usage fraction (0–1), y-axis = `convergenceScore` (0–1), bubble radius ∝ `ageMins`. Draw quadrant guides at x=0.5 / y=0.5 and label the four quadrants (e.g. top-left "efficient", bottom-right "burning — at risk"). Bubble color by `budgetStatus`. Hovering a bubble shows slug, convergence %, budget %, and age. Only projects with both a `monthlyTokenBudget` and a `convergenceScore` are plotted. Header counts projects in the at-risk (high-spend / low-convergence) quadrant. Reuses `/api/fleet`.
+
+### Acceptance Criteria
+
+- AC1: `/convergence-budget` plots a bubble per project with both budget and convergence data
+- AC2: x = budget usage fraction, y = convergenceScore, radius ∝ ageMins
+- AC3: Quadrant guides + labels at the 0.5/0.5 cross; bubble color by budgetStatus
+- AC4: Hover shows slug, convergence %, budget %, age
+- AC5: Header counts projects in the at-risk quadrant; reuses `/api/fleet`
+- AC6: Added to `NAV_GROUPS` under Intelligence
+
+---
+
+## P176 — Memory vs Convergence Quadrant
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+The vision prioritises token/memory efficiency, but there is no view testing whether heavier memory footprints actually correlate with goal progress. Operators can't tell apart projects that carry a lot of memory and converge (good) from those that hoard memory yet stall (bloat to prune).
+
+### Proposed Solution
+
+Add a `/memory-convergence` page with a pure-SVG scatter: x-axis = memory size (`memoryStatus.sizeBytes`, log-scaled), y-axis = `convergenceScore`. Bubble color by goal status. Quadrant guides split "lean & converging", "heavy & converging", "lean & stalled", "heavy & stalled (prune candidate)". Hover shows slug, human-readable memory size, convergence %, and goal text. A computed Pearson-style correlation hint is shown in the header ("memory↔convergence: weak/none/positive"). Only projects with both a memory footprint and a convergence score are plotted. Reuses `/api/fleet`.
+
+### Acceptance Criteria
+
+- AC1: `/memory-convergence` plots a bubble per project with both memory size and convergenceScore
+- AC2: x = log-scaled `memoryStatus.sizeBytes`, y = convergenceScore; bubble color by goal status
+- AC3: Quadrant guides + labels including a "heavy & stalled (prune candidate)" quadrant
+- AC4: Hover shows slug, human-readable size, convergence %, goal text
+- AC5: Header shows a coarse correlation hint and the prune-candidate count; reuses `/api/fleet`
+- AC6: Added to `NAV_GROUPS` under Intelligence
