@@ -76,6 +76,8 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/goal-radar', label: 'Goal Radar', icon: '◎' },
       { href: '/proposal-velocity', label: 'Proposal Velocity', icon: '◈' },
       { href: '/memory-health', label: 'Memory Health', icon: '◑' },
+      { href: '/goal-heatmap', label: 'Goal Heatmap', icon: '▦' },
+      { href: '/capability-map', label: 'Capability Map', icon: '⊞' },
     ],
   },
   {

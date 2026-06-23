@@ -3299,7 +3299,7 @@ Add a `/memory-health` page with a fleet-wide memory health radar. Each project 
 
 ## P139 — Live Goal Progress Heatmap
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -3322,7 +3322,7 @@ Add a `/goal-heatmap` page: a 2D heatmap (D3) where rows = projects with active 
 
 ## P140 — Agent Capability Map
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
