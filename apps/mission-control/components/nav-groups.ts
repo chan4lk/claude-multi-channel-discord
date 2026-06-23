@@ -47,6 +47,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/stuck-headroom', label: 'Stuck Headroom', icon: '⏱' },
       { href: '/context-eta', label: 'Context Fill ETA', icon: '◷' },
       { href: '/age-distribution', label: 'Age Distribution', icon: '▥' },
+      { href: '/platform-matrix', label: 'Platform × State', icon: '▦' },
     ],
   },
   {
