@@ -3575,3 +3575,116 @@ Add a `/burn-rate` page (extends existing `/cost` page or standalone) with a per
 - AC4: 7-day sparkline per row (inline SVG); each bar = one day's token count
 - AC5: `/api/metrics/burn-rate` returns `{ slug, dailyRate, projectedMonthEnd, daysUntilExhausted?, budgetPct? }[]`
 - AC6: NavDropdown adds "Burn Rate" under Intelligence group (replace or alongside existing Fleet Cost)
+
+---
+
+## P151 — Unified Nexus Map (Project · Memory · Proposal)
+
+**Status:** `[x] done`
+**Created:** 2026-06-23
+
+### Problem
+
+Holistic fleet state is fragmented across separate views: `/knowledge` links projects↔memories↔goals, `/proposal-graph` shows proposals, `/backlog` lists per-project items. No single screen answers "for each project, how much memory has it accumulated, how many proposals are pending vs done, and is its goal active?" Operators must hop between 3+ pages to assess a project's overall footprint.
+
+### Proposed Solution
+
+Add a `/nexus` page rendering one deterministic radial map. Each project is a hub node arranged on a ring; around each hub orbit three satellite glyphs — Memory (cyan, sized by memory count), Proposal (amber, split pending/done), Goal (purple, colored by status). A `/api/nexus` endpoint aggregates per-project rollups from `channels.json` (projects + state), `memory.db` (memory count by `channel_slug`), per-project `BACKLOG.md` (pending/done counts), and `GOAL.md` (goal status). Hovering a hub shows a detail card (state, age, memory/proposal/goal breakdown). A fleet summary bar pins totals at top. No physics sim — coordinates computed server-trivially / client-deterministically so layout is stable across reloads.
+
+### Acceptance Criteria
+
+- AC1: `/nexus` renders within 2s; project hubs on a ring, three satellites each (memory/proposal/goal)
+- AC2: `/api/nexus` returns `{ projects: { slug, state, ageMins, memoryCount, proposalPending, proposalDone, goalStatus }[], fleet: {...} }`
+- AC3: Memory satellite sized by memoryCount; proposal satellite shows pending/done split; goal satellite colored by status (active/paused/completed/none)
+- AC4: Hovering/tapping a hub opens a detail card with the full breakdown
+- AC5: Fleet summary bar pins totals (projects, memories, pending proposals, active goals)
+- AC6: NavDropdown adds "Nexus Map" under Observability group
+
+---
+
+## P152 — Fleet Momentum River
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+`/turns` shows turn volume and `/burn-rate` shows token forecasts, but neither shows the *shape* of fleet activity over time — which projects dominated activity on which days, and how the mix shifted. A stacked stream (streamgraph) reveals momentum shifts at a glance.
+
+### Proposed Solution
+
+Add a `/momentum` page with a 14-day streamgraph: x-axis = day, each band = one project, band thickness = that project's daily token (or turn) total. A `/api/metrics/momentum` endpoint reads per-project transcripts and buckets daily totals over 14 days. Bands colored per-project; legend toggles bands on/off. Hover shows day + project + value tooltip.
+
+### Acceptance Criteria
+
+- AC1: `/momentum` renders a 14-day streamgraph; one band per project
+- AC2: `/api/metrics/momentum` returns `{ days: string[], series: { slug, values: number[] }[] }`
+- AC3: Band thickness = daily token total; bands stack symmetrically (stream layout)
+- AC4: Legend toggles individual bands; hover tooltip shows day/slug/value
+- AC5: NavDropdown adds "Momentum River" under Observability group
+
+---
+
+## P153 — Proposal Flow Sankey
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+Proposal lifecycle (pending → done) across the fleet has no flow visualization. Operators cannot see how proposal volume distributes across projects and statuses in one diagram.
+
+### Proposed Solution
+
+Add a `/proposal-flow` page with a Sankey diagram: left nodes = projects, flowing to right nodes = statuses (pending, done). Link width = count. Reuses `/api/backlog`. Built with d3-sankey (d3 already a dependency).
+
+### Acceptance Criteria
+
+- AC1: `/proposal-flow` renders a Sankey: project nodes → status nodes
+- AC2: Link width proportional to proposal count; pending vs done color-coded
+- AC3: Hover highlights a flow and shows project/status/count
+- AC4: NavDropdown adds "Proposal Flow" under Intelligence group
+
+---
+
+## P154 — Holistic Spotlight (Omni-Search ⌘K)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+`/search` is a dedicated page. There's no global keyboard-driven palette to jump across projects, memories, proposals, and goals from anywhere in the dashboard.
+
+### Proposed Solution
+
+Add a `⌘K` / `Ctrl+K` command palette overlay mounted globally. Typing fuzzy-matches across projects (→ project page), memories (→ knowledge), proposals (→ backlog), and nav destinations. Arrow keys navigate; Enter routes. A `/api/spotlight` (exists) or client-side index backs results.
+
+### Acceptance Criteria
+
+- AC1: `⌘K`/`Ctrl+K` opens palette from any page; `Esc` closes
+- AC2: Fuzzy search across projects, memories, proposals, nav views; grouped results
+- AC3: Arrow keys move selection; Enter routes to the destination
+- AC4: Palette mounted in root layout; no per-page wiring needed
+
+---
+
+## P155 — Project Momentum Index
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+No single composite score ranks projects by overall momentum (recent activity + goal advancement + proposal throughput). The scorecard shows health but not forward momentum.
+
+### Proposed Solution
+
+Add a `/momentum-index` page ranking projects by a composite momentum score: weighted blend of 7-day token burn, goal advancement delta, and proposals-completed-this-week. A `/api/metrics/momentum-index` computes and returns ranked rows with a radial momentum gauge per project. Top mover and biggest decliner highlighted.
+
+### Acceptance Criteria
+
+- AC1: `/momentum-index` ranks projects by composite momentum score (0–100)
+- AC2: `/api/metrics/momentum-index` returns `{ slug, score, burn7d, goalDelta, proposalsDone }[]` sorted desc
+- AC3: Each row shows a radial gauge; top mover (green) and biggest decliner (red) badged
+- AC4: NavDropdown adds "Momentum Index" under Intelligence group
