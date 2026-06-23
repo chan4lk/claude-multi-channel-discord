@@ -3253,7 +3253,7 @@ Add a full-viewport "Holographic Overview" mode to the dashboard root, toggled b
 
 ## P137 — Proposal Velocity Sparkboard
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
@@ -3276,7 +3276,7 @@ Add a `/proposal-velocity` page with a multi-panel velocity dashboard. Top panel
 
 ## P138 — Memory Health Radar
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-22
 
 ### Problem
