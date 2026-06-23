@@ -4185,7 +4185,7 @@ Add a `/memory-convergence` page with a pure-SVG scatter: x-axis = memory size (
 
 ## P177 — Fleet Attention Heat Strip
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
@@ -4208,7 +4208,7 @@ Add a `/heat-strip` page rendering one small square cell per project in a wrappi
 
 ## P178 — Project Vitals Radar Cards
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem

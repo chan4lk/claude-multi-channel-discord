@@ -5,77 +5,9 @@ import Link from 'next/link'
 import type { FleetResponse, FleetProject } from '../api/fleet/route'
 import { useFreshness } from '../../lib/useFreshness'
 import FreshnessBadge from '../../components/FreshnessBadge'
+import { scoreProject, WEIGHT, ATTENTION_THRESHOLD, FACTOR_META, type AttentionScore } from '../../lib/attention'
 
-// Four attention factors, each scored 0..1 and weighted equally.
-interface Factor {
-  key: 'budget' | 'headroom' | 'context' | 'queue'
-  label: string
-  color: string
-  score: number // 0..1
-}
-
-interface Row {
-  slug: string
-  total: number // 0..100
-  factors: Factor[]
-  reason: string
-}
-
-const WEIGHT = 0.25
-const ATTENTION_THRESHOLD = 50 // composite score that flags "needs attention"
-
-const FACTOR_META: Record<Factor['key'], { label: string; color: string }> = {
-  budget: { label: 'budget', color: '#ef4444' },
-  headroom: { label: 'reap', color: '#f59e0b' },
-  context: { label: 'context', color: '#22d3ee' },
-  queue: { label: 'queue', color: '#a78bfa' },
-}
-
-function clamp01(n: number): number {
-  return Math.max(0, Math.min(1, n))
-}
-
-function scoreProject(p: FleetProject): Row {
-  // Budget: usage fraction, floored up when status escalates.
-  let budget = 0
-  if (p.monthlyTokenBudget && p.monthlyTokenBudget > 0) {
-    budget = clamp01((p.monthlyTokensUsed ?? 0) / p.monthlyTokenBudget)
-  }
-  if (p.budgetStatus === 'critical') budget = Math.max(budget, 0.8)
-  if (p.budgetStatus === 'exhausted') budget = 1
-
-  // Headroom: how close idle age is to the watchdog reap line.
-  const headroom = p.stuckThresholdMinutes > 0 ? clamp01(p.ageMins / p.stuckThresholdMinutes) : 0
-
-  // Context: urgency inverse of fill ETA (0m→1, ≥120m→0).
-  let context = 0
-  if (p.contextFillEtaMinutes != null && Number.isFinite(p.contextFillEtaMinutes)) {
-    context = clamp01(1 - p.contextFillEtaMinutes / 120)
-  }
-
-  // Queue/circuit: open breaker is max; otherwise scale queue depth.
-  const queue = p.circuitOpen ? 1 : clamp01((p.queuedCount ?? 0) / 5)
-
-  const factors: Factor[] = [
-    { key: 'budget', ...FACTOR_META.budget, score: budget },
-    { key: 'headroom', ...FACTOR_META.headroom, score: headroom },
-    { key: 'context', ...FACTOR_META.context, score: context },
-    { key: 'queue', ...FACTOR_META.queue, score: queue },
-  ]
-  const total = factors.reduce((s, f) => s + f.score * WEIGHT, 0) * 100
-
-  // Dominant factor → human reason tag.
-  const dom = factors.reduce((a, b) => (b.score > a.score ? b : a))
-  let reason = 'nominal'
-  if (dom.score > 0.05) {
-    if (dom.key === 'budget') reason = p.budgetStatus === 'exhausted' ? 'budget exhausted' : p.budgetStatus === 'critical' ? 'budget critical' : 'budget pressure'
-    else if (dom.key === 'headroom') reason = headroom >= 0.85 ? 'near-reap' : 'idling'
-    else if (dom.key === 'context') reason = 'context filling'
-    else reason = p.circuitOpen ? 'breaker open' : 'queue backlog'
-  }
-
-  return { slug: p.slug, total, factors, reason }
-}
+type Row = AttentionScore
 
 function ScoreRow({ r }: { r: Row }) {
   const flagged = r.total >= ATTENTION_THRESHOLD
