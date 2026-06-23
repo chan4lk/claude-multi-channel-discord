@@ -3895,3 +3895,123 @@ Add a global keyboard handler (in the shared layout) that cycles to the next/pre
 - AC3: A transient toast shows the destination view label on each jump
 - AC4: Hotkeys are suppressed while an INPUT/TEXTAREA is focused
 - AC5: Pages outside any NavDropdown category are a no-op (no crash)
+
+---
+
+## P165 — Memory Footprint Treemap
+
+**Status:** `[x] done`
+**Created:** 2026-06-23
+
+### Problem
+
+The fleet's memory files (`memory/MEMORY.md` and per-fact files) grow silently per project. Operators have no single view showing which projects carry the heaviest memory footprint, so memory bloat — a direct drain on the token budget the vision prioritises — goes unnoticed until a project feels sluggish.
+
+### Proposed Solution
+
+Add a `/memory-footprint` page rendering a squarified-treemap (pure SVG, same technique as `/themes`) where each tile is a project and tile area encodes total memory size in bytes (`memoryStatus.sizeBytes` from `/api/fleet`). Tile fill is a heat gradient by size (cool → hot). Tile label shows slug + human-readable size. A summary header shows total fleet memory and the heaviest project. Clicking a tile deep-links to that project's `/memory-audit?slug=`. Projects with no memory file are omitted.
+
+### Acceptance Criteria
+
+- AC1: `/memory-footprint` renders a treemap where tile area ∝ `memoryStatus.sizeBytes` per project
+- AC2: Reuses `/api/fleet` (no new endpoint); projects lacking a memory file are excluded
+- AC3: Each tile shows slug and human-readable size; fill color scales with size
+- AC4: Header shows total fleet memory bytes and the single heaviest project
+- AC5: Clicking a tile navigates to `/memory-audit?slug=<slug>`
+- AC6: Added to `NAV_GROUPS` under Intelligence
+
+---
+
+## P166 — Goal Convergence Gauge Wall
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+`convergenceScore` (0–1, how close a project is to its goal) is computed and exposed in `/api/fleet` but only surfaced as a single fleet average. Operators cannot see, at a glance, which individual projects are converging vs. stalled relative to their goals.
+
+### Proposed Solution
+
+Add a `/convergence-wall` page rendering a responsive grid of radial gauges, one per project with a goal. Each gauge is a pure-SVG arc filled proportional to `convergenceScore`, colored by band (red <0.34, amber <0.67, green ≥0.67), with the slug and goal text beneath. Sort highest-convergence first. Header shows fleet average convergence. Reuses `/api/fleet`.
+
+### Acceptance Criteria
+
+- AC1: `/convergence-wall` renders one radial gauge per project that has a `goalText`
+- AC2: Arc fill ∝ `convergenceScore`; color band red/amber/green by threshold
+- AC3: Gauges sorted by convergenceScore desc; header shows fleet average
+- AC4: Reuses `/api/fleet`; projects without a goal are omitted
+- AC5: Added to `NAV_GROUPS` under Intelligence
+
+---
+
+## P167 — Fleet State Sunburst
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+Fleet composition (how projects break down by runtime state and platform) is only available as flat counts in the health bar. There is no hierarchical view showing, e.g., how many `stalled` projects are on WhatsApp vs. Discord.
+
+### Proposed Solution
+
+Add a `/fleet-sunburst` page with a two-ring pure-SVG sunburst: inner ring = runtime state (idle/active/stalled/autonomous), outer ring = platform within each state. Arc angle ∝ project count. State colors match the existing palette. Hovering a segment shows count and the project slugs. Reuses `/api/fleet`.
+
+### Acceptance Criteria
+
+- AC1: `/fleet-sunburst` renders a 2-ring sunburst: inner=state, outer=platform
+- AC2: Segment angle ∝ project count; inner colors match state palette
+- AC3: Hover tooltip shows segment count and member slugs
+- AC4: Reuses `/api/fleet` (no new endpoint)
+- AC5: Added to `NAV_GROUPS` under Observability
+
+---
+
+## P168 — Budget Pressure Bullet Chart
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+Per-project token budget consumption (`monthlyTokensUsed` vs `monthlyTokenBudget`, `budgetStatus`) is shown only as a color chip on InstanceGrid cards. Operators cannot quickly rank which projects are closest to exhausting their budget across the whole fleet.
+
+### Proposed Solution
+
+Add a `/budget-pressure` page rendering a horizontal bullet-chart row per project that has a `monthlyTokenBudget`: a track of the full budget, a filled bar of `monthlyTokensUsed`, and threshold ticks at 50%/80%/100%. Bar color follows `budgetStatus` (green/amber/red/grey). Rows sorted by usage fraction desc so the most-pressured projects float to the top. Header shows aggregate fleet usage. Reuses `/api/fleet`.
+
+### Acceptance Criteria
+
+- AC1: `/budget-pressure` renders one bullet row per project with a `monthlyTokenBudget`
+- AC2: Filled bar ∝ usage fraction; 50/80/100% threshold ticks shown
+- AC3: Bar color follows `budgetStatus`; rows sorted by usage fraction desc
+- AC4: Header shows aggregate used/budget across the fleet
+- AC5: Reuses `/api/fleet`; projects without a budget are omitted
+- AC6: Added to `NAV_GROUPS` under Intelligence
+
+---
+
+## P169 — Proposal Aging Spectrum
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-23
+
+### Problem
+
+Pending proposals accumulate, but there is no view of *how long* each has been waiting. A proposal created weeks ago and still pending is a stronger signal than its mere presence in a list. The backlog page shows status but not age distribution.
+
+### Proposed Solution
+
+Add a `/proposal-aging` page rendering a horizontal spectrum (beeswarm-style dot strip, pure SVG) where the x-axis is age in days since `createdAt` and each dot is a pending proposal, colored by age band (fresh <7d green, aging <30d amber, stale ≥30d red). Dots are grouped/labeled by project. Header shows count of stale proposals and the oldest pending item. Reuses `/api/backlog`; proposals without a `createdAt` are bucketed as "undated".
+
+### Acceptance Criteria
+
+- AC1: `/proposal-aging` plots one dot per pending proposal positioned by age in days
+- AC2: Dot color band: green <7d, amber <30d, red ≥30d
+- AC3: Header shows stale (≥30d) count and the oldest pending proposal title
+- AC4: Reuses `/api/backlog`; undated proposals shown in a separate "undated" lane
+- AC5: Added to `NAV_GROUPS` under Intelligence
+- AC3: A transient toast shows the destination view label on each jump
+- AC4: Hotkeys are suppressed while an INPUT/TEXTAREA is focused
+- AC5: Pages outside any NavDropdown category are a no-op (no crash)
