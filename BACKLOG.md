@@ -3484,7 +3484,7 @@ Add a `/calendar` page with a GitHub-style contribution calendar. Each cell is o
 
 ## P147 — Agent Focus Mode
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
@@ -3508,7 +3508,7 @@ Add a `/focus/[slug]` page: a full-screen, dark-mode immersive layout with a fix
 
 ## P148 — Predictive Stall Forecaster
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem

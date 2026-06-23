@@ -1,7 +1,9 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import type { AdvisorCard, AdvisorResponse } from '../app/api/advisor/route'
+import type { StallRiskResponse, StallRiskProject } from '../app/api/stall-risk/route'
 
 const STORAGE_KEY = 'mc_advisor_open'
 const REFRESH_INTERVAL_MS = 5 * 60_000
@@ -84,6 +86,7 @@ export default function FleetAdvisorPanel() {
     try { return localStorage.getItem(STORAGE_KEY) === '1' } catch { return false }
   })
   const [data, setData] = useState<AdvisorResponse | null>(null)
+  const [stallRisk, setStallRisk] = useState<StallRiskProject[]>([])
   const [loading, setLoading] = useState(false)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -92,6 +95,13 @@ export default function FleetAdvisorPanel() {
     try {
       const res = await fetch('/api/advisor')
       if (res.ok) setData(await res.json() as AdvisorResponse)
+    } catch {}
+    try {
+      const res = await fetch('/api/stall-risk', { cache: 'no-store' })
+      if (res.ok) {
+        const d = await res.json() as StallRiskResponse
+        setStallRisk(d.projects.filter((p) => p.score >= 40).slice(0, 3))
+      }
     } catch {}
     setLoading(false)
   }, [])
@@ -178,6 +188,34 @@ export default function FleetAdvisorPanel() {
               </button>
             </div>
           </div>
+
+          {/* Stall risk widget (P148, AC6) — top 3 at-risk projects */}
+          {stallRisk.length > 0 && (
+            <div className="px-2 pt-2">
+              <Link
+                href="/stall-risk"
+                className="block rounded border border-amber-500/25 bg-amber-500/5 p-2 hover:bg-amber-500/10 transition-colors"
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[0.6rem] font-mono text-amber-400 uppercase tracking-wider">⚠ Stall Risk</span>
+                  <span className="text-[0.55rem] font-mono text-slate-500">view all →</span>
+                </div>
+                <div className="flex flex-col gap-1">
+                  {stallRisk.map((p) => (
+                    <div key={p.slug} className="flex items-center gap-2">
+                      <span className="text-[0.6rem] font-mono text-slate-300 truncate flex-1">{p.slug}</span>
+                      <span
+                        className="text-[0.6rem] font-mono font-bold"
+                        style={{ color: p.score >= 80 ? '#EF4444' : '#F59E0B' }}
+                      >
+                        {p.score}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </Link>
+            </div>
+          )}
 
           {/* Cards */}
           <div className="flex flex-col gap-2 p-2 max-h-[70vh] overflow-y-auto">
