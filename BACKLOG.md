@@ -3808,7 +3808,7 @@ Add a `/forecast` page that projects backlog completion under three velocity sce
 
 ## P161 — Stale Data Sentinel
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
@@ -3831,7 +3831,7 @@ Add a tiny shared `useFreshness` hook (in `lib/`) wrapping the fetch+interval pa
 
 ## P162 — Blip & Tile Deep-Links
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem

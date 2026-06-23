@@ -1,8 +1,10 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef } from 'react'
 import * as d3 from 'd3'
 import SubPageHeader from '../../components/SubPageHeader'
+import FreshnessBadge from '../../components/FreshnessBadge'
+import { useFreshness } from '../../lib/useFreshness'
 import type { BurndownResponse, BurndownPoint } from '../api/metrics/burndown/route'
 
 function BurndownChart({ series }: { series: BurndownPoint[] }) {
@@ -80,17 +82,8 @@ function BurndownChart({ series }: { series: BurndownPoint[] }) {
 }
 
 export default function BurndownPage() {
-  const [data, setData] = useState<BurndownResponse | null>(null)
-  const [loading, setLoading] = useState(true)
-
-  const load = useCallback(() => {
-    fetch('/api/metrics/burndown')
-      .then((r) => r.json())
-      .then((d: BurndownResponse) => { setData(d); setLoading(false) })
-      .catch(() => setLoading(false))
-  }, [])
-
-  useEffect(() => { load() }, [load])
+  const { data, isStale, lastError, lastSuccessAt } = useFreshness<BurndownResponse>('/api/metrics/burndown', 60_000)
+  const loading = data === null && lastError === null
 
   const t = data?.totals
   const kpis = [
@@ -104,6 +97,7 @@ export default function BurndownPage() {
     <div className="min-h-screen p-4 md:p-6" style={{ background: '#080f1c', color: '#E2E8F0' }}>
       <SubPageHeader title="Backlog Burndown">
         <span className="text-[0.6rem] font-mono text-slate-500">Scope · Completed · Remaining</span>
+        <FreshnessBadge isStale={isStale} lastError={lastError} lastSuccessAt={lastSuccessAt} />
       </SubPageHeader>
 
       {loading && <div className="text-center py-20 text-slate-600 font-mono text-sm">Loading…</div>}
