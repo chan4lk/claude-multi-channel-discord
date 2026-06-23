@@ -14,6 +14,7 @@ export const KEYBINDINGS: ShortcutEntry[] = [
   { keys: ['V'], description: 'Toggle All Views nav dropdown', context: 'Global' },
   { keys: ['Ctrl', 'K'], description: 'Open command palette', context: 'Global' },
   { keys: ['A'], description: 'Toggle Fleet Advisor panel', context: 'Global' },
+  { keys: [']', '['], description: 'Cycle next / prev view in current category', context: 'Global' },
   { keys: ['Esc'], description: 'Close modal / go back', context: 'Global' },
   // Graph
   { keys: ['T'], description: 'Toggle Thought Stream (tool particles)', context: 'Graph (/graph)' },

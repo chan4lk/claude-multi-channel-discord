@@ -11,6 +11,7 @@ import SpotlightDrawer from './SpotlightDrawer'
 import KeyboardShortcutsModal from './KeyboardShortcutsModal'
 import NotificationBell from './NotificationBell'
 import PresenceAvatars from './PresenceAvatars'
+import ViewCycler from './ViewCycler'
 import { FleetContextProvider } from './FleetContext'
 import { authClient } from '../src/auth-client'
 
@@ -221,6 +222,7 @@ export default function ClientShell({ children }: { children: React.ReactNode })
       <CommandPalette onInject={handleInject} />
       <FleetAdvisorPanel />
       <Suspense><SpotlightDrawer /></Suspense>
+      <ViewCycler />
       {showShortcuts && <KeyboardShortcutsModal onClose={() => setShowShortcuts(false)} />}
       <AnimatePresence>
         {injectState !== null && (
