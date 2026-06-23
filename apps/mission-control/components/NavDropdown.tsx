@@ -86,6 +86,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/scorecard', label: 'Health Scorecard', icon: '⊕' },
       { href: '/turn-correlation', label: 'Turn Correlation', icon: '⊹' },
       { href: '/proposal-flow', label: 'Proposal Flow', icon: '⟿' },
+      { href: '/momentum-index', label: 'Momentum Index', icon: '◔' },
     ],
   },
   {

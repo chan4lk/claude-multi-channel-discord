@@ -3,10 +3,26 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { FleetResponse, ProjectState } from '../app/api/fleet/route'
+import type { BacklogResponse } from '../app/api/backlog/route'
 
 export interface InjectRequest {
   slug: string
 }
+
+interface MemoryRow { id: number; channel_slug: string; type: string; content: string }
+interface GoalRow { slug: string; goalText: string; status: string }
+
+type CmdCategory = 'navigate' | 'project' | 'memory' | 'proposal' | 'goal'
+
+const CATEGORY_LABELS: Record<CmdCategory, string> = {
+  navigate: 'Navigate',
+  project: 'Projects',
+  memory: 'Memories',
+  proposal: 'Proposals',
+  goal: 'Goals',
+}
+
+const CATEGORY_ORDER: CmdCategory[] = ['navigate', 'project', 'proposal', 'memory', 'goal']
 
 const STATE_COLORS: Record<ProjectState, string> = {
   idle: '#00F5FF',
@@ -23,7 +39,7 @@ interface Command {
   label: string
   description: string
   icon: string
-  category: 'navigate' | 'project'
+  category: CmdCategory
   badge?: { text: string; color: string }
   action: () => void
 }
@@ -71,6 +87,9 @@ export default function CommandPalette({ onInject }: Props) {
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState(0)
   const [fleet, setFleet] = useState<FleetResponse | null>(null)
+  const [memories, setMemories] = useState<MemoryRow[]>([])
+  const [backlog, setBacklog] = useState<BacklogResponse | null>(null)
+  const [goals, setGoals] = useState<GoalRow[]>([])
   const [recent, setRecent] = useState<string[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -98,6 +117,9 @@ export default function CommandPalette({ onInject }: Props) {
       window.addEventListener('keydown', closeWithEsc)
       if (!fleet) {
         fetch('/api/fleet').then((r) => r.json()).then((d) => setFleet(d)).catch(() => {})
+        fetch('/api/memories?limit=200').then((r) => r.json()).then((d) => setMemories(Array.isArray(d) ? d : [])).catch(() => {})
+        fetch('/api/backlog').then((r) => r.json()).then((d) => setBacklog(d)).catch(() => {})
+        fetch('/api/goals').then((r) => r.json()).then((d) => setGoals(Array.isArray(d?.goals) ? d.goals : [])).catch(() => {})
       }
     } else {
       window.removeEventListener('keydown', closeWithEsc)
@@ -265,13 +287,57 @@ export default function CommandPalette({ onInject }: Props) {
       },
     ])
 
-    return [...navigate, ...projects]
+    const proposals: Command[] = (backlog?.projects ?? []).flatMap((p) =>
+      p.items.map((item, idx) => ({
+        id: `proposal:${p.slug}:${idx}`,
+        label: item.title,
+        description: `Proposal in ${p.slug}`,
+        icon: '⟿',
+        category: 'proposal' as const,
+        badge: item.status === 'done'
+          ? { text: 'done', color: '#4ADE80' }
+          : item.status === 'pending'
+            ? { text: 'pending', color: '#F59E0B' }
+            : undefined,
+        action: () => router.push(`/backlog?slug=${encodeURIComponent(p.slug)}`),
+      }))
+    )
+
+    const memoryCmds: Command[] = memories.map((m) => {
+      const text = (m.content ?? '').replace(/\s+/g, ' ').trim()
+      return {
+        id: `memory:${m.id}`,
+        label: text.length > 60 ? text.slice(0, 60) + '…' : (text || `memory #${m.id}`),
+        description: `${m.type} memory · ${m.channel_slug}`,
+        icon: '✦',
+        category: 'memory' as const,
+        action: () => router.push(`/knowledge?slug=${encodeURIComponent(m.channel_slug)}`),
+      }
+    })
+
+    const goalCmds: Command[] = goals.map((g) => {
+      const text = (g.goalText ?? '').replace(/\s+/g, ' ').trim()
+      return {
+        id: `goal:${g.slug}`,
+        label: text.length > 60 ? text.slice(0, 60) + '…' : (text || `${g.slug} goal`),
+        description: `Goal · ${g.slug}`,
+        icon: '◎',
+        category: 'goal' as const,
+        badge: { text: g.status, color: g.status === 'completed' ? '#4ADE80' : g.status === 'paused' ? '#94A3B8' : '#00F5FF' },
+        action: () => router.push(`/goals?slug=${encodeURIComponent(g.slug)}`),
+      }
+    })
+
+    return [...navigate, ...projects, ...proposals, ...memoryCmds, ...goalCmds]
   }
 
   const allCommands = buildCommands()
 
   const filtered = query
-    ? allCommands.filter((c) => fuzzyMatch(query, c.label) || fuzzyMatch(query, c.description))
+    ? allCommands
+        .filter((c) => fuzzyMatch(query, c.label) || fuzzyMatch(query, c.description))
+        .sort((a, b) => CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category))
+        .slice(0, 60)
     : recent.length > 0
       ? recent
           .map((id) => allCommands.find((c) => c.id === id))
@@ -314,7 +380,7 @@ export default function CommandPalette({ onInject }: Props) {
           <input
             ref={inputRef}
             type="text"
-            placeholder={recent.length > 0 && !query ? 'Recent commands…' : 'Search commands and projects…'}
+            placeholder={recent.length > 0 && !query ? 'Recent commands…' : 'Search projects, proposals, memories, goals…'}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
@@ -329,8 +395,13 @@ export default function CommandPalette({ onInject }: Props) {
             <div className="py-8 text-center text-xs text-slate-600 font-mono">No results for &ldquo;{query}&rdquo;</div>
           ) : (
             filtered.map((cmd, i) => (
+              <div key={cmd.id}>
+              {query && (i === 0 || filtered[i - 1].category !== cmd.category) && (
+                <div className="px-4 pt-2 pb-1 text-[0.55rem] font-mono uppercase tracking-widest text-slate-600">
+                  {CATEGORY_LABELS[cmd.category]}
+                </div>
+              )}
               <button
-                key={cmd.id}
                 onClick={() => execute(cmd)}
                 onMouseEnter={() => setSelected(i)}
                 className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors"
@@ -359,6 +430,7 @@ export default function CommandPalette({ onInject }: Props) {
                   <kbd className="text-[0.6rem] text-slate-600 border border-slate-700 rounded px-1 py-0.5 font-mono shrink-0">↵</kbd>
                 )}
               </button>
+              </div>
             ))
           )}
         </div>
