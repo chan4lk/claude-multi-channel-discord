@@ -16,6 +16,7 @@ import NavDropdown from '../components/NavDropdown'
 import FreshnessBadge from '../components/FreshnessBadge'
 import AdvisorTile from '../components/AdvisorTile'
 import HolographicView from '../components/HolographicView'
+import RecentlyShippedRail from '../components/RecentlyShippedRail'
 import { useFleet } from '../components/FleetContext'
 import type { FleetResponse, ProjectState } from './api/fleet/route'
 import type { WhatsAppResponse } from './api/whatsapp/route'
@@ -802,6 +803,9 @@ function DashboardClient() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, ease: 'easeOut' }}
       >
+        {/* P163: Recently Shipped rail */}
+        <RecentlyShippedRail />
+
         {/* P136: Holographic mode */}
         {holographic && (
           <HolographicView narrow={holographicNarrow} />

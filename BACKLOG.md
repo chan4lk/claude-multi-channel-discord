@@ -3854,7 +3854,7 @@ Make blips and tiles click-through. On `/pulse`, clicking a blip navigates to th
 
 ## P163 — Recently Shipped Rail
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
@@ -3877,7 +3877,7 @@ Add a `/api/whats-new` endpoint that parses `BACKLOG.md` for the most recently c
 
 ## P164 — View Cycler Hotkeys
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
