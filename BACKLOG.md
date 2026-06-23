@@ -4044,7 +4044,7 @@ Add a `/queue-board` page rendering a ranked board of horizontal bars, one per p
 
 ## P171 — Stuck Headroom Gauge
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
@@ -4067,7 +4067,7 @@ Add a `/stuck-headroom` page rendering one horizontal gauge per active project: 
 
 ## P172 — Context Fill ETA Countdown
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem

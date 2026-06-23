@@ -44,6 +44,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/pulse', label: 'Fleet Pulse Radar', icon: '◎' },
       { href: '/memory-stream', label: 'Memory Stream', icon: '⇶' },
       { href: '/fleet-sunburst', label: 'Fleet Sunburst', icon: '◍' },
+      { href: '/stuck-headroom', label: 'Stuck Headroom', icon: '⏱' },
+      { href: '/context-eta', label: 'Context Fill ETA', icon: '◷' },
     ],
   },
   {
