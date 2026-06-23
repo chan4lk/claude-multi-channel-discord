@@ -646,6 +646,15 @@ export default function InstanceGrid({ events = [], filterSlugs = null, fleetPro
                                 >
                                   ⧉
                                 </a>
+                                <a
+                                  href={`/focus/${encodeURIComponent(slug)}`}
+                                  title={`Focus mode for ${slug}`}
+                                  className="text-[10px] font-mono px-1 py-0.5 rounded transition-colors"
+                                  style={{ color: 'rgb(103 232 249 / 0.4)', background: 'transparent', lineHeight: 1 }}
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  ◎
+                                </a>
                                 <SpotlightButton slug={slug} />
                                 <button
                                   title={`Deep dive: ${slug} (Shift+D)`}
