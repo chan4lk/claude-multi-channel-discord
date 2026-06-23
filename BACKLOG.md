@@ -3716,7 +3716,7 @@ Add a `/burndown` page rendering a pure-SVG burndown chart of the main repo BACK
 
 ## P157 — Fleet Pulse Radar
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
@@ -3739,7 +3739,7 @@ Add a `/pulse` page rendering a radar-scope visualization (pure SVG). Each activ
 
 ## P158 — Proposal Theme Treemap
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem

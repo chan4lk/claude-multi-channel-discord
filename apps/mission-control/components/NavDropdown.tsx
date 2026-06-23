@@ -43,6 +43,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/turn-quality', label: 'Turn Quality', icon: '▦' },
       { href: '/calendar', label: 'Fleet Calendar', icon: '◫' },
       { href: '/momentum', label: 'Momentum River', icon: '⇴' },
+      { href: '/pulse', label: 'Fleet Pulse Radar', icon: '◎' },
     ],
   },
   {
@@ -88,6 +89,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/proposal-flow', label: 'Proposal Flow', icon: '⟿' },
       { href: '/momentum-index', label: 'Momentum Index', icon: '◔' },
       { href: '/burndown', label: 'Backlog Burndown', icon: '◣' },
+      { href: '/themes', label: 'Proposal Themes', icon: '⊞' },
     ],
   },
   {
