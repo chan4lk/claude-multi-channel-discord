@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import SubPageHeader from '../../components/SubPageHeader'
+import FreshnessBadge from '../../components/FreshnessBadge'
 import InjectTerminal from '../../components/InjectTerminal'
 import type { FleetProject, ProjectState } from '../api/fleet/route'
 import type { PipelineStage } from '../api/pipeline/route'
@@ -208,6 +209,8 @@ export default function FeedPage() {
   const [stopSlug, setStopSlug] = useState<string | null>(null)
   const [stopPending, setStopPending] = useState(false)
   const [lastUpdated, setLastUpdated] = useState('')
+  const [freshAt, setFreshAt] = useState<number | null>(null)
+  const [freshError, setFreshError] = useState<string | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
 
   const loadData = useCallback(async () => {
@@ -245,6 +248,10 @@ export default function FeedPage() {
 
       setCards(merged)
       setLastUpdated(new Date().toLocaleTimeString())
+      setFreshAt(Date.now())
+      setFreshError(null)
+    } catch (err) {
+      setFreshError(err instanceof Error ? err.message : 'fetch failed')
     } finally {
       setLoading(false)
     }
@@ -310,6 +317,11 @@ export default function FeedPage() {
         <span className="text-[0.55rem] font-mono text-slate-600">
           {loading ? 'loading...' : `${cards.length} projects · ${lastUpdated}`}
         </span>
+        <FreshnessBadge
+          isStale={freshAt !== null && Date.now() - freshAt > 30_000 * 2.5}
+          lastError={freshError}
+          lastSuccessAt={freshAt}
+        />
       </SubPageHeader>
 
       {/* Search + filter bar */}

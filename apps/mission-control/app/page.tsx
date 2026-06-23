@@ -13,6 +13,7 @@ import StallAlertPanel from '../components/StallAlertPanel'
 import TranscriptPanel from '../components/TranscriptPanel'
 import CountBadge from '../components/ui/CountBadge'
 import NavDropdown from '../components/NavDropdown'
+import FreshnessBadge from '../components/FreshnessBadge'
 import AdvisorTile from '../components/AdvisorTile'
 import HolographicView from '../components/HolographicView'
 import { useFleet } from '../components/FleetContext'
@@ -786,6 +787,11 @@ function DashboardClient() {
               />
               <span className="text-[0.6rem] text-slate-500 uppercase tracking-widest">SSE</span>
             </div>
+            <FreshnessBadge
+              isStale={sseStatus === 'reconnecting'}
+              lastError={sseStatus === 'disconnected' ? 'SSE disconnected' : null}
+              lastSuccessAt={sseStatus === 'connected' ? Date.now() : null}
+            />
           </div>
         </div>
       </header>

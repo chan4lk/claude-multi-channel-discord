@@ -1,8 +1,10 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import type { ThemesResponse, ThemeBucket, ThemeProposal } from '../api/metrics/themes/route'
+import { useFreshness } from '../../lib/useFreshness'
+import FreshnessBadge from '../../components/FreshnessBadge'
 
 const THEME_COLORS: Record<string, string> = {
   graph: '#22D3EE',
@@ -84,21 +86,9 @@ function squarify(buckets: ThemeBucket[], x: number, y: number, w: number, h: nu
 }
 
 export default function ThemesPage() {
-  const [data, setData] = useState<ThemesResponse | null>(null)
-  const [loading, setLoading] = useState(true)
+  const { data, isStale, lastError, lastSuccessAt } = useFreshness<ThemesResponse>('/api/metrics/themes', 60_000)
+  const loading = data === null && lastError === null
   const [selected, setSelected] = useState<string | null>(null)
-
-  useEffect(() => {
-    function load() {
-      fetch('/api/metrics/themes')
-        .then((r) => r.json() as Promise<ThemesResponse>)
-        .then((d) => { setData(d); setLoading(false) })
-        .catch(() => setLoading(false))
-    }
-    load()
-    const t = setInterval(load, 60_000)
-    return () => clearInterval(t)
-  }, [])
 
   const W = 900, H = 460
   const rects = useMemo(() => squarify(data?.themes ?? [], 0, 0, W, H), [data])
@@ -128,6 +118,7 @@ export default function ThemesPage() {
             Proposal Theme Treemap
           </h1>
           <span className="text-[0.6rem] font-mono text-slate-500 border border-slate-700 px-2 py-0.5 rounded">effort distribution by theme</span>
+          <FreshnessBadge isStale={isStale} lastError={lastError} lastSuccessAt={lastSuccessAt} />
           <div className="flex-1" />
           <Link href="/burndown" className="text-[0.6rem] font-mono text-slate-500 hover:text-cyber-cyan transition-colors border border-slate-700 hover:border-cyber-cyan/30 px-2 py-1 rounded">Burndown →</Link>
         </div>
@@ -196,7 +187,9 @@ export default function ThemesPage() {
                 </div>
                 <div className="space-y-1">
                   {selectedProposals.map((p) => (
-                    <div key={p.number} className="flex items-center gap-2 text-[0.65rem] font-mono">
+                    <Link key={p.number} href={`/proposal-graph?focus=P${p.number}`}
+                      className="group flex items-center gap-2 text-[0.65rem] font-mono rounded px-1 -mx-1 py-0.5 hover:bg-cyber-cyan/5 transition-colors"
+                      title={`Open P${p.number} in the Proposal Graph`}>
                       <span className="text-slate-600 w-10">P{p.number}</span>
                       <span className="px-1.5 py-0.5 rounded text-[0.5rem] font-bold uppercase"
                         style={{
@@ -204,8 +197,9 @@ export default function ThemesPage() {
                           border: `1px solid ${p.status === 'done' ? '#4ADE8040' : '#F59E0B40'}`,
                           background: p.status === 'done' ? '#4ADE8012' : '#F59E0B12',
                         }}>{p.status}</span>
-                      <span className="text-slate-300 truncate">{p.title}</span>
-                    </div>
+                      <span className="text-slate-300 truncate group-hover:text-cyber-cyan">{p.title}</span>
+                      <span className="ml-auto text-cyber-cyan opacity-0 group-hover:opacity-100 transition-opacity">↗</span>
+                    </Link>
                   ))}
                 </div>
               </div>

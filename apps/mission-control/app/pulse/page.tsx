@@ -1,8 +1,11 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import type { FleetResponse, FleetProject, ProjectState } from '../api/fleet/route'
+import { useFreshness } from '../../lib/useFreshness'
+import FreshnessBadge from '../../components/FreshnessBadge'
 
 const STATE_COLOR: Record<ProjectState, string> = {
   active: '#4ADE80',
@@ -41,21 +44,10 @@ interface Blip {
 }
 
 export default function PulsePage() {
-  const [data, setData] = useState<FleetResponse | null>(null)
-  const [loading, setLoading] = useState(true)
+  const router = useRouter()
+  const { data, isStale, lastError, lastSuccessAt } = useFreshness<FleetResponse>('/api/fleet', 5_000)
+  const loading = data === null && lastError === null
   const [hover, setHover] = useState<Blip | null>(null)
-
-  useEffect(() => {
-    function load() {
-      fetch('/api/fleet')
-        .then((r) => r.json() as Promise<FleetResponse>)
-        .then((d) => { setData(d); setLoading(false) })
-        .catch(() => setLoading(false))
-    }
-    load()
-    const t = setInterval(load, 5_000)
-    return () => clearInterval(t)
-  }, [])
 
   const SIZE = 520
   const C = SIZE / 2
@@ -104,6 +96,7 @@ export default function PulsePage() {
             Fleet Pulse Radar
           </h1>
           <span className="text-[0.6rem] font-mono text-slate-500 border border-slate-700 px-2 py-0.5 rounded">centre = fresh · rim = stale</span>
+          <FreshnessBadge isStale={isStale} lastError={lastError} lastSuccessAt={lastSuccessAt} />
           <div className="flex-1" />
           <Link href="/constellation" className="text-[0.6rem] font-mono text-slate-500 hover:text-cyber-cyan transition-colors border border-slate-700 hover:border-cyber-cyan/30 px-2 py-1 rounded">Constellation →</Link>
         </div>
@@ -138,16 +131,23 @@ export default function PulsePage() {
                 <line x1={C} y1={C} x2={C} y2={C - R} stroke="#22D3EE" strokeWidth={1.5} strokeOpacity={0.7} />
               </g>
 
-              {/* blips */}
+              {/* blips — click or Enter navigates to the project spotlight (P162) */}
               {blips.map((b) => {
                 const isHover = hover?.project.slug === b.project.slug
+                const go = () => router.push(`/?spotlight=${encodeURIComponent(b.project.slug)}`)
                 return (
                   <g key={b.project.slug}
+                    role="link" tabIndex={0}
+                    aria-label={`Open ${b.project.slug} spotlight`}
+                    onClick={go}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go() } }}
                     onMouseEnter={() => setHover(b)} onMouseLeave={() => setHover((h) => (h?.project.slug === b.project.slug ? null : h))}
-                    style={{ cursor: 'pointer' }}>
+                    onFocus={() => setHover(b)} onBlur={() => setHover((h) => (h?.project.slug === b.project.slug ? null : h))}
+                    style={{ cursor: 'pointer', outline: 'none' }}>
                     {isHover && <circle cx={b.cx} cy={b.cy} r={9} fill="none" stroke={b.color} strokeWidth={1} strokeOpacity={0.6} />}
                     <circle cx={b.cx} cy={b.cy} r={isHover ? 5 : 4} fill={b.color}
                       style={{ animation: `mc-blip ${SWEEP_PERIOD_S}s linear infinite`, animationDelay: `${b.delayS}s`, filter: `drop-shadow(0 0 4px ${b.color})` }} />
+                    {isHover && <text x={b.cx + 8} y={b.cy - 8} fontSize={10} fill={b.color} fontFamily="JetBrains Mono, monospace">↗</text>}
                   </g>
                 )
               })}
@@ -159,6 +159,7 @@ export default function PulsePage() {
                 style={{ borderColor: `${hover.color}55`, background: '#060d1aee', color: hover.color }}>
                 <div className="font-bold">{hover.project.slug}</div>
                 <div className="text-slate-400">{hover.project.state} · {hover.project.ageMins}m idle</div>
+                <div className="text-slate-600 mt-0.5">↗ click to open spotlight</div>
               </div>
             )}
           </div>
