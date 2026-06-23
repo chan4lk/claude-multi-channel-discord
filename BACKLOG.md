@@ -4113,7 +4113,7 @@ Add a `/age-distribution` page rendering a pure-SVG histogram of `ageMins` acros
 
 ## P174 — Fleet Attention Scoreboard
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
@@ -4137,7 +4137,7 @@ Add a `/scoreboard` page computing a composite **attention score** per project f
 
 ## P175 — Convergence vs Budget Scatter
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
