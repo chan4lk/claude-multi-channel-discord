@@ -4529,7 +4529,7 @@ Add a `/quadrant` page backed by a new `/api/quadrant` route. The route joins ea
 
 ## P192 — Convergence Sparkline Wall
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
@@ -4552,7 +4552,7 @@ Add a `/sparkline-wall` page backed by a new `/api/sparkline-wall` route returni
 
 ## P193 — Context Pressure Ridgeline
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem

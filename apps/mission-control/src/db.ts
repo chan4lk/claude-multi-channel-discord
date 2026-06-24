@@ -788,6 +788,31 @@ export function getConvergenceMovers(): ConvergenceMoverRow[] {
   return out
 }
 
+export type SparklinePoint = { date: string; score: number }
+export type SparklineSeries = { slug: string; points: SparklinePoint[] }
+
+/**
+ * Per-slug convergence series for the last `days` points (P192). Each slug's
+ * most recent `days` entries are returned oldest→newest for direct sparkline
+ * charting. Slugs with no history are simply absent.
+ */
+export function getConvergenceSparklines(days = 14): SparklineSeries[] {
+  const rows = db.prepare(
+    `SELECT slug, date, score FROM convergence_history ORDER BY slug ASC, date ASC`
+  ).all() as { slug: string; date: string; score: number }[]
+  const bySlug = new Map<string, SparklinePoint[]>()
+  for (const r of rows) {
+    const arr = bySlug.get(r.slug) ?? []
+    arr.push({ date: r.date, score: r.score })
+    bySlug.set(r.slug, arr)
+  }
+  const out: SparklineSeries[] = []
+  for (const [slug, points] of bySlug) {
+    out.push({ slug, points: points.slice(-days) })
+  }
+  return out
+}
+
 // ── Goal Advancement (P122) ───────────────────────────────────────────────
 
 export type GoalAdvancementRow = {
@@ -898,6 +923,32 @@ export function getLatestContextPressure(slug: string): (ContextPressureRow & { 
   ).get(slug) as ContextPressureRow | undefined
   if (!row) return null
   return { ...row, parsedBreakdown: JSON.parse(row.breakdown) as ContextPressureBreakdown }
+}
+
+export type PressurePoint = { ts: number; score: number }
+export type PressureSeries = { slug: string; points: PressurePoint[] }
+
+/**
+ * Per-slug recent context_pressure series (P193). Each slug's most recent
+ * `limit` points are returned oldest→newest. Slugs ordered by latest score
+ * descending so the most-pressured projects sort to the top.
+ */
+export function getContextPressureRidgeline(limit = 30): PressureSeries[] {
+  const rows = db.prepare(
+    `SELECT slug, ts, score FROM context_pressure ORDER BY slug ASC, ts ASC`
+  ).all() as { slug: string; ts: number; score: number }[]
+  const bySlug = new Map<string, PressurePoint[]>()
+  for (const r of rows) {
+    const arr = bySlug.get(r.slug) ?? []
+    arr.push({ ts: r.ts, score: r.score })
+    bySlug.set(r.slug, arr)
+  }
+  const out: PressureSeries[] = []
+  for (const [slug, points] of bySlug) {
+    out.push({ slug, points: points.slice(-limit) })
+  }
+  out.sort((a, b) => (b.points.at(-1)?.score ?? 0) - (a.points.at(-1)?.score ?? 0))
+  return out
 }
 
 // ── Digest Log (P128) ─────────────────────────────────────────────────────
