@@ -51,6 +51,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/platform-matrix', label: 'Platform × State', icon: '▦' },
       { href: '/snapshot-scrubber', label: 'Snapshot Scrubber', icon: '⏯' },
       { href: '/pressure-ridgeline', label: 'Pressure Ridgeline', icon: '⋰' },
+      { href: '/webhook-health', label: 'Webhook Health', icon: '⊶' },
+      { href: '/freshness', label: 'Feed Freshness', icon: '◷' },
     ],
   },
   {
