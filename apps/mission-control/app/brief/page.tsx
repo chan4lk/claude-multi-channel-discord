@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import type { BriefResponse, BriefSeverity } from '../api/brief/route'
+import type { BriefTrendResponse } from '../api/brief-trend/route'
 import { useFreshness } from '../../lib/useFreshness'
 import FreshnessBadge from '../../components/FreshnessBadge'
 
@@ -23,10 +24,41 @@ function sevLabel(s: BriefSeverity): string {
   }
 }
 
+function TrendSparkline({ points }: { points: BriefTrendResponse['points'] }) {
+  if (points.length < 2) return null
+  const W = 120, H = 22
+  const max = Math.max(1, ...points.map((p) => p.critical + p.warn + p.info))
+  const bw = W / points.length
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} aria-label="brief severity trend">
+      {points.map((p, i) => {
+        const segs: Array<[number, string]> = [
+          [p.critical, sevColor('critical')],
+          [p.warn, sevColor('warn')],
+          [p.info, sevColor('info')],
+        ]
+        let y = H
+        return (
+          <g key={p.date}>
+            {segs.map(([v, c], j) => {
+              const h = (v / max) * H
+              y -= h
+              return <rect key={j} x={i * bw + 0.5} y={y} width={Math.max(1, bw - 1)} height={h} fill={c} />
+            })}
+          </g>
+        )
+      })}
+    </svg>
+  )
+}
+
 export default function BriefPage() {
   const { data, isStale, lastError, lastSuccessAt } = useFreshness<BriefResponse>('/api/brief', 60_000)
+  const { data: trend } = useFreshness<BriefTrendResponse>('/api/brief-trend', 60_000)
   const loading = data === null && lastError === null
   const findings = data?.findings ?? []
+  const points = trend?.points ?? []
+  const recurring = trend?.recurring ?? []
 
   const counts = findings.reduce(
     (acc, f) => { acc[f.severity] = (acc[f.severity] ?? 0) + 1; return acc },
@@ -53,6 +85,12 @@ export default function BriefPage() {
           <span className="text-[0.6rem] font-mono text-slate-500 border border-slate-700 px-2 py-0.5 rounded">which projects need attention, and why</span>
           <FreshnessBadge isStale={isStale} lastError={lastError} lastSuccessAt={lastSuccessAt} />
           <div className="flex-1" />
+          {points.length >= 2 && (
+            <div className="flex flex-col items-end mr-1">
+              <TrendSparkline points={points} />
+              <span className="text-[0.45rem] font-mono text-slate-600 uppercase tracking-wider">{points.length}d trend</span>
+            </div>
+          )}
           <div className="flex items-center gap-4">
             {(['critical', 'warn', 'info'] as const).map((s) => (
               <div key={s} className="flex items-center gap-1.5">
@@ -66,6 +104,21 @@ export default function BriefPage() {
       </header>
 
       <main className="flex-1 p-6 max-w-2xl mx-auto w-full">
+        {recurring.length > 0 && (
+          <div className="mb-3 flex items-center gap-2 flex-wrap">
+            <span className="text-[0.55rem] font-mono text-slate-500 uppercase tracking-wider">chronic</span>
+            {recurring.map((r) => (
+              <Link
+                key={r.slug}
+                href={`/focus/${r.slug}`}
+                className="text-[0.55rem] font-mono px-1.5 py-0.5 rounded border border-amber-500/40 text-amber-300 hover:border-amber-400 transition-colors"
+                title={`${r.slug} in the brief ${r.streak}d running (${r.days}d total in window)`}
+              >
+                {r.slug} ×{r.streak}d
+              </Link>
+            ))}
+          </div>
+        )}
         {data?.fleetStatus === 'empty' ? (
           <div className="h-64 flex items-center justify-center text-slate-600 text-xs font-mono">No projects registered.</div>
         ) : (

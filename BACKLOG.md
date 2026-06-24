@@ -4849,7 +4849,7 @@ Add a `/brief` page backed by `/api/brief` that joins per-project convergence di
 
 ## P206 — Fleet Brief History & Trend
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
@@ -4870,7 +4870,7 @@ Persist a daily snapshot of brief findings. Add a `brief_snapshot` table (date, 
 
 ## P207 — Slug-Focused Deep-Links from Brief & Advisor
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
