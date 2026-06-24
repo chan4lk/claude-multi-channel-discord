@@ -4317,3 +4317,72 @@ Add a `/convergence-dist` page rendering a pure-SVG histogram of `convergenceSco
 - AC3: Hover lists member slugs of a bin
 - AC4: Header shows fleet mean convergence and count in the ≥0.9 bin
 - AC5: Reuses `/api/fleet`; added to `NAV_GROUPS` under Intelligence
+
+---
+
+## P183 — Fleet Convergence Trend Line
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+The `convergence_history` table records a daily per-project `score`, but every convergence view is a snapshot of *today*: the Convergence Gauge Wall (P166) shows current per-project scores and the Convergence Distribution Histogram (P182) shows today's shape. Nothing plots the fleet's convergence **over time**, so operators cannot tell whether the fleet is trending toward its goals week-over-week or quietly stalling.
+
+### Proposed Solution
+
+Add a `/convergence-trend` page backed by a new `/api/convergence-trend` route that aggregates `convergence_history` across all slugs into one row per day for the last 14 days: fleet mean `score` and the count of projects in the top bin (score ≥ 90). Render a pure-SVG line/area chart of the daily mean (green→red gradient fill under the curve) with a secondary thin bar/line for the ≥0.9 count. Header shows the 14-day delta (today's mean minus the mean 14 days ago) with an up/down arrow.
+
+### Acceptance Criteria
+
+- AC1: `/api/convergence-trend` returns ≤14 daily rows, each with `date`, `meanScore`, `topBinCount`, aggregated across all slugs
+- AC2: `/convergence-trend` plots daily fleet-mean convergence as an SVG line with gradient area fill
+- AC3: The ≥0.9 project count is shown as a secondary series
+- AC4: Header shows the 14-day delta with direction (▲ green / ▼ red)
+- AC5: Empty history renders a placeholder, no crash; added to `NAV_GROUPS` under Intelligence
+
+---
+
+## P184 — Pinned Views Bar
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+The dashboard now exposes 90+ views across four `NAV_GROUPS` categories, all funnelled through a single "All Views" dropdown. Operators who live in three or four specific views must reopen the dropdown and hunt for them on every visit. Spotlight (P154) helps find a view by name but offers no persistent quick-access for the handful an operator uses daily.
+
+### Proposed Solution
+
+Add a pin affordance to the navigation. Each item in `NavDropdown` gets a star toggle; pinned hrefs persist to `localStorage` (key `mc:pinnedViews`). A thin Pinned Views bar renders directly beneath the dashboard header showing pinned items in pin order as compact icon+label chips linking to each route. Cap at 8 pins; further stars are ignored with an inline "max 8 pinned" hint. The bar is hidden entirely when nothing is pinned.
+
+### Acceptance Criteria
+
+- AC1: A star toggle on each `NavDropdown` item pins/unpins that view
+- AC2: Pins persist across reloads via `localStorage` (`mc:pinnedViews`)
+- AC3: A Pinned Views bar under the header renders pinned items in pin order; clicking a chip navigates to its route
+- AC4: Pinning is capped at 8 with an inline hint when exceeded
+- AC5: The bar is absent (no empty shell) when no views are pinned
+
+---
+
+## P185 — Convergence Movers Leaderboard
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+Even with the current convergence views, an operator cannot quickly see *which projects changed* — a project that dropped from 0.8 to 0.3 overnight looks identical to a steadily-low one on the Gauge Wall, and the distribution histogram hides per-project movement entirely. Day-over-day momentum is the early-warning signal that matters, and it is invisible today.
+
+### Proposed Solution
+
+Add a `/convergence-movers` page backed by `/api/convergence-movers`, which reads the last two `convergence_history` entries per slug and computes each project's day-over-day delta. Render two ranked columns: Climbers (largest positive deltas, green) and Fallers (largest negative deltas, red), each row showing slug, yesterday→today scores, and a small delta sparkbar. Projects with only one history entry (no prior day) are listed separately as "new". Header shows the net fleet delta.
+
+### Acceptance Criteria
+
+- AC1: `/api/convergence-movers` returns per-slug `{ slug, prev, curr, delta }` from the latest two `convergence_history` rows
+- AC2: `/convergence-movers` shows ranked Climbers and Fallers columns colored by sign
+- AC3: Each row shows prev→curr scores and a delta indicator
+- AC4: Projects lacking a prior-day entry are grouped as "new", not ranked
+- AC5: Header shows net fleet delta; empty state handled; added to `NAV_GROUPS` under Intelligence
