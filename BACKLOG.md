@@ -4891,7 +4891,7 @@ Route per-project findings (those carrying a non-empty `slug`) to `/focus/<slug>
 
 ## P208 — Unify Fleet Advisor & Fleet Brief Attention Engine
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
@@ -4909,3 +4909,66 @@ Extract a single shared finding-generation module (`lib/attention-findings.ts`) 
 - AC3: Signal reads (transcript mtime, convergence, churn, alerts) are shared, not re-implemented per route
 - AC4: Existing advisor actions (inject/distill/command) and brief deep-links both preserved
 - AC5: Adding a new rule requires editing exactly one file; covered by a unit test asserting both routes see it
+
+## P209 — Attention Signal Timeline Heatmap
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+P208 unified all attention rules behind one engine that emits typed findings with a `signal` source (circuit/context/stall/idle/memory/budget/thrashing/declining/alerts). But findings are only ever shown as a *current* snapshot — there is no way to see *when* a signal fired or which signals recur for which project over time. The operator cannot answer "has beta been thrashing all week?" or "which signal dominates the fleet's attention load?".
+
+### Proposed Solution
+
+Persist each computed finding to an `attention_event` table (date, slug, signal, severity) via the same best-effort write already used for `brief_snapshot`, deduped per (date, slug, signal). Add `/api/signal-timeline` returning a signal × day matrix (counts per signal per day, plus per-slug breakdown), and a `/signal-timeline` page rendering a GitHub-style heatmap: rows = signal types, columns = days, cell intensity = number of projects firing that signal that day. Clicking a cell deep-links to `/brief` filtered context. Reuses the P208 finding generator; no new rule logic.
+
+### Acceptance Criteria
+
+- AC1: `attention_event` table with idempotent (date, slug, signal) upsert, written when `/api/brief` computes findings
+- AC2: `/api/signal-timeline` returns a signal × day matrix with per-slug breakdown over a configurable window
+- AC3: `/signal-timeline` renders a signal-row × day-column heatmap with intensity by project count
+- AC4: Empty/no-history state handled; added to `NAV_GROUPS` under Intelligence
+- AC5: Reuses the P208 `computeFindings` engine — no duplicated rule logic
+
+## P210 — Scheduled Fleet Brief Digest to Discord
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+The Fleet Brief (P205) and unified attention engine (P208) only surface findings when the operator opens the dashboard. For an autonomous harness the critical/warn findings should reach the operator proactively — a stalled or thrashing project can sit unseen for hours. There is no push path from the attention engine to Discord.
+
+### Proposed Solution
+
+Add a digest endpoint `/api/brief/digest` that renders the current critical+warn findings as a compact Markdown summary suitable for a Discord message (severity-grouped, deep-links as absolute URLs). Document a scheduler recipe that POSTs/pulls this digest into the master channel on a daily cadence. Include a de-dupe guard so an unchanged finding set is not re-sent (hash of finding ids vs the last sent hash, stored in a small state row). Purely additive; reuses `computeFindings`.
+
+### Acceptance Criteria
+
+- AC1: `/api/brief/digest` returns Markdown of current critical+warn findings, severity-grouped with absolute deep-links
+- AC2: De-dupe guard suppresses re-send when the finding-id set is unchanged since last digest
+- AC3: Empty/all-nominal fleet returns an explicit "all nominal" digest (or a documented no-send signal)
+- AC4: Reuses the P208 engine; no duplicated rule logic
+- AC5: README/scheduler note documents the daily master-channel digest recipe
+
+## P211 — Signal Co-occurrence Force Graph
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+Some attention signals travel together — thrashing usually rides with high context pressure; stalls cluster with budget exhaustion. The unified engine now labels every finding with a `signal`, but there is no view of which signals co-occur on the same project, so the operator cannot see the structural patterns behind fleet attention.
+
+### Proposed Solution
+
+Add `/api/signal-cooccurrence` that, over a window of `attention_event` history (from P209) or the live finding set, builds a co-occurrence graph: nodes = signal types (sized by frequency), edges = how often two signals fire on the same project (weighted). Render `/signal-graph` as a d3 force-directed graph reusing the existing MemoryGraph force-sim pattern, edge thickness = co-occurrence strength, node color by dominant severity. Hovering a node lists the projects currently firing it. Depends on P209's `attention_event` table for history (degrades to live-only if absent).
+
+### Acceptance Criteria
+
+- AC1: `/api/signal-cooccurrence` returns weighted nodes (signal, count) + edges (signalA, signalB, weight)
+- AC2: `/signal-graph` renders a force-directed graph (reusing the MemoryGraph sim) with edge weight = co-occurrence
+- AC3: Node size by frequency, color by dominant severity; hover lists affected projects
+- AC4: Degrades gracefully when no `attention_event` history exists (live finding set only)
+- AC5: Empty state handled; added to `NAV_GROUPS` under Observability

@@ -1,10 +1,17 @@
-import { computeBrief, BRIEF_WINDOW_DAYS, type BriefFinding } from '../../../lib/brief'
+import {
+  computeFindings,
+  toBriefResult,
+  hasProjects,
+  WINDOW_DAYS,
+  type BriefFinding,
+  type Severity,
+} from '../../../lib/attention-findings'
 import { upsertBriefSnapshot } from '../../../src/db'
 
 export const dynamic = 'force-dynamic'
 
-// Re-exported for existing consumers of the route's types.
-export type { BriefSeverity, BriefFinding } from '../../../lib/brief'
+export type BriefSeverity = Severity
+export type { BriefFinding }
 
 export interface BriefResponse {
   findings: BriefFinding[]
@@ -17,10 +24,11 @@ export async function GET(): Promise<Response> {
   const generatedAt = new Date().toISOString()
   const mcdDir = process.env.MCD_CHANNELS_DIR
   if (!mcdDir) {
-    return Response.json({ findings: [], fleetStatus: 'empty', windowDays: BRIEF_WINDOW_DAYS, generatedAt } satisfies BriefResponse)
+    return Response.json({ findings: [], fleetStatus: 'empty', windowDays: WINDOW_DAYS, generatedAt } satisfies BriefResponse)
   }
 
-  const { findings, fleetStatus } = computeBrief(mcdDir)
+  const allFindings = await computeFindings(mcdDir)
+  const { findings, fleetStatus } = toBriefResult(allFindings, hasProjects(mcdDir))
 
   // P206: persist today's brief as an idempotent daily snapshot for trending.
   try {
@@ -37,5 +45,5 @@ export async function GET(): Promise<Response> {
     // Snapshot persistence is best-effort; never fail the read on a write error.
   }
 
-  return Response.json({ findings, fleetStatus, windowDays: BRIEF_WINDOW_DAYS, generatedAt } satisfies BriefResponse)
+  return Response.json({ findings, fleetStatus, windowDays: WINDOW_DAYS, generatedAt } satisfies BriefResponse)
 }
