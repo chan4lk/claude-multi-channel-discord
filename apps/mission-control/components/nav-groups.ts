@@ -53,6 +53,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/pressure-ridgeline', label: 'Pressure Ridgeline', icon: '⋰' },
       { href: '/webhook-health', label: 'Webhook Health', icon: '⊶' },
       { href: '/freshness', label: 'Feed Freshness', icon: '◷' },
+      { href: '/ekg', label: 'Fleet Activity EKG', icon: '♥' },
     ],
   },
   {
@@ -122,6 +123,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/sparkline-wall', label: 'Sparkline Wall', icon: '⋀' },
       { href: '/alert-flow', label: 'Alert Type Flow', icon: '⇄' },
       { href: '/alert-sla', label: 'Alert Response Time', icon: '⏲' },
+      { href: '/impact', label: 'Proposal Impact Trace', icon: '⊶' },
     ],
   },
   {

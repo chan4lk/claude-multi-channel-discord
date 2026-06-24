@@ -4690,7 +4690,7 @@ Add a `/alert-sla` page backed by a new `/api/alert-sla` route that, over the la
 
 ## P199 — Fleet Activity EKG
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
@@ -4713,7 +4713,7 @@ Add an `/ekg` page backed by a new `/api/ekg` route that buckets the last 48 hou
 
 ## P200 — Proposal Impact Trace
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
