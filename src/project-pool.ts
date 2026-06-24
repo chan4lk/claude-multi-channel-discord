@@ -575,12 +575,35 @@ export class ProjectPool {
   }
 
   private fireEvent(evt: PoolEvent): void {
+    if (evt.kind === 'circuit-open' || evt.kind === 'circuit-reset') {
+      this.appendCircuitEvent(evt)
+    }
     if (!this.opts.onEvent) return
     try {
       this.opts.onEvent(evt)
     } catch (err) {
       process.stderr.write(`pool: onEvent handler threw: ${err}\n`)
     }
+  }
+
+  private appendCircuitEvent(evt: { kind: 'circuit-open'; chatId: string; slug: string; failureCount: number } | { kind: 'circuit-reset'; chatId: string; slug: string }): void {
+    const mcdDir = process.env.MCD_CHANNELS_DIR
+    if (!mcdDir) return
+    const projectDir = path.join(mcdDir, 'projects', evt.slug)
+    const logPath = path.join(projectDir, 'circuit-events.jsonl')
+    const ledger = this.failureLedger.get(evt.chatId)
+    const openAt = ledger?.circuitOpenAt
+    const entry: Record<string, unknown> = {
+      ts: new Date().toISOString(),
+      slug: evt.slug,
+      event: evt.kind === 'circuit-open' ? 'open' : 'close',
+      reason: evt.kind === 'circuit-open' ? `${evt.failureCount} failures in window` : 'auto-reset after cooldown',
+      stuckCount: evt.kind === 'circuit-open' ? evt.failureCount : undefined,
+      durationMs: evt.kind === 'circuit-reset' && openAt != null ? Date.now() - openAt : undefined,
+    }
+    try {
+      fs.appendFileSync(logPath, JSON.stringify(entry) + '\n', 'utf-8')
+    } catch { /* non-critical */ }
   }
 
   private now(): number {

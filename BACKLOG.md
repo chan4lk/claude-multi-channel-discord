@@ -5266,3 +5266,118 @@ From transcript JSONL + `turn_quality` scores, detect reactivation events: idle 
 - AC3: `/idle-recovery` renders scatter plot x=log(gap_hours) y=quality, colored by resumed
 - AC4: Hover tooltip; quality=50 reference line; optional trend line
 - AC5: Added to nav under Intelligence; graceful empty state with explanation
+
+---
+
+## P226 — Tool Call Frequency Heatmap (Per-Project MCP Usage)
+
+**Status:** `[x] done`
+**Created:** 2026-06-24
+
+### Problem
+
+Operators have no view of which MCP tools each project calls most frequently, whether tool usage patterns are shifting over time, or which projects are outliers in tool diversity. The live-turns feed shows the last tool called, but there is no aggregated view of tool call distributions.
+
+### Proposed Solution
+
+Parse all project JSONL transcripts, extract `tool_use` blocks, group by `project slug × tool name × day`. Add `/api/tool-frequency` returning per-project tool call counts with optional `?slug=` and `?days=` filters. Render `/tool-frequency` as a heatmap grid: rows = tool names (sorted by total calls desc), columns = days (last 30d), cell intensity = call count. Project selector dropdown. Cells clickable to drill into that day's turns. Top-5 tools bar chart sidebar. Suppress `mcp__mcd__*` tools by default (toggle to include).
+
+### Acceptance Criteria
+
+- AC1: `/api/tool-frequency` parses JSONL `tool_use` blocks and returns slug×tool×day counts for configurable window
+- AC2: `/tool-frequency` renders heatmap grid rows=tools, cols=days, intensity=count
+- AC3: Project selector; clicking cell shows turn list for that day/tool combo
+- AC4: Top-5 tools sidebar sorted by total; mcp__mcd__ suppressed by default with toggle
+- AC5: Added to nav under Intelligence; graceful empty state
+
+---
+
+## P227 — Circuit Breaker Timeline (Open/Close Event Log)
+
+**Status:** `[x] done`
+**Created:** 2026-06-24
+
+### Problem
+
+The fleet view shows current circuit state (open/closed) per project but has no history of when circuits opened or closed, how long they stayed open, or whether certain projects trip repeatedly. Operators diagnosing flaky projects need a timeline of circuit events.
+
+### Proposed Solution
+
+Instrument `ClaudeProjectProcess` to append a line to `circuit-events.jsonl` (under project dir) whenever circuit state changes: `{ts, slug, event: 'open'|'close', reason, stuckCount}`. Add `/api/circuit-timeline` reading these files across all projects, returning events sorted by ts desc with pagination. Render `/circuit-timeline` as a vertical event stream (like a git log): each entry shows slug badge, event type (red OPEN / green CLOSE), timestamp, reason, and duration-open for close events. Filter by slug or event type. Rolling 30d window.
+
+### Acceptance Criteria
+
+- AC1: `ClaudeProjectProcess` writes `circuit-events.jsonl` on every state transition with ts/slug/event/reason/stuckCount
+- AC2: `/api/circuit-timeline` reads all project `circuit-events.jsonl` files, returns sorted events with duration-open for CLOSE entries
+- AC3: `/circuit-timeline` renders vertical event stream: OPEN=red badge, CLOSE=green, duration for each open period
+- AC4: Slug and event-type filters; 30d window; pagination
+- AC5: Added to nav under Observability; graceful empty state; bot restart not required (JSONL appended at runtime)
+
+---
+
+## P228 — Proposal Coverage Heatmap (BACKLOG.md Progress Calendar)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+The BACKLOG.md is the project's living roadmap, but there is no visual summary of how many proposals were completed per week, where implementation velocity is slowing, or how many items are in each status bucket at a glance.
+
+### Proposed Solution
+
+Parse `BACKLOG.md` from `MCD_CHANNELS_DIR/../projects/claude-mcd/BACKLOG.md` (resolved via git remote or a configured path). Extract proposal entries: number, title, status (`done`/`pending`/`in_progress`), created date. Add `/api/backlog-coverage` returning proposal list + per-week completion counts + status breakdown. Render `/backlog-coverage`: GitHub contribution-calendar-style weekly grid (green=done, yellow=in_progress, gray=pending), sorted by created date. Sidebar: total counts per status, velocity (proposals/week last 4 weeks vs prior 4 weeks), next 3 pending items listed.
+
+### Acceptance Criteria
+
+- AC1: `/api/backlog-coverage` parses BACKLOG.md, returns proposals with number/title/status/created + weekly completion series
+- AC2: `/backlog-coverage` renders weekly calendar grid colored by completion density
+- AC3: Sidebar shows status counts, velocity comparison (last 4w vs prior 4w), next-3 pending
+- AC4: Clicking a week cell lists proposals completed that week in a drawer
+- AC5: Added to nav under Intelligence; fallback when BACKLOG.md not accessible
+
+---
+
+## P229 — Agent Spawn Tree (Subagent Hierarchy Visualizer)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+Many Claude turns spawn subagents via the `Agent` tool. The JSONL transcript records these as nested tool calls, but there is no visual showing how deep the spawn tree goes, how many subagents were created per turn, or which tools the subagents called. Operators debugging expensive turns have no tree view.
+
+### Proposed Solution
+
+Parse JSONL for turns containing `Agent` tool_use blocks. Recursively extract subagent tool calls from the tool_result content. Build a spawn tree: root = user message, level 1 = top-level agent calls, level 2+ = nested calls (if detectable). Add `/api/agent-tree?slug=X&turn=N` returning the spawn tree as a nested JSON. Render `/agent-tree` as a collapsible tree (CSS-only, no heavy library): each node shows tool name, duration, token cost. Color by depth. Total cost and depth stats in header. Project+turn selector.
+
+### Acceptance Criteria
+
+- AC1: `/api/agent-tree` parses JSONL and extracts nested Agent tool_use/tool_result chains, returns as nested JSON tree
+- AC2: `/agent-tree` renders collapsible indented tree; depth color-coded; duration and tokens per node
+- AC3: Total turn cost (tokens + time) shown in sticky header
+- AC4: Project selector + turn picker (list of turns with agent calls)
+- AC5: Added to nav under Intelligence; graceful empty state for projects with no agent calls
+
+---
+
+## P230 — Memory Staleness Radar (Per-Project Memory Age & Coverage)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+Each project accumulates memory files under `memory/`. There is no view of how old memories are, whether a project has gone weeks without any memory updates, or whether memory coverage (number of memories vs project age) is declining. Operators cannot spot memory rot.
+
+### Proposed Solution
+
+For each project, scan `memory/*.md` files: read `mtime` and frontmatter type. Compute per-project stats: total memories, oldest memory age (days), newest memory age (days), type breakdown, memory density (memories per week of project age). Add `/api/memory-staleness` returning these stats. Render `/memory-staleness` as a radar/spider chart: 5 axes — freshness (newest age), density (memories/week), diversity (type count), depth (avg body length), coverage (memories vs turns ratio). One polygon per project (color = slug hash). Legend sorted by staleness score desc. Hovering a project's polygon highlights it and shows per-axis values.
+
+### Acceptance Criteria
+
+- AC1: `/api/memory-staleness` scans `memory/*.md` for all projects, computes freshness/density/diversity/depth/coverage axes
+- AC2: `/memory-staleness` renders radar/spider chart with one polygon per project
+- AC3: Hover highlights project polygon and shows all 5 axis values in tooltip
+- AC4: Legend sorted by staleness score (weighted composite of all axes) desc
+- AC5: Added to nav under Intelligence; graceful empty state when no memory files found
