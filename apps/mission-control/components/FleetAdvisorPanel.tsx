@@ -69,9 +69,13 @@ function AdvisorCard({ card }: { card: AdvisorCard }) {
           {card.severity}
         </span>
         {card.slug && (
-          <span className="text-[0.6rem] font-mono text-slate-500 bg-slate-800 rounded px-1 py-0.5">
-            {card.slug}
-          </span>
+          <Link
+            href={`/focus/${card.slug}`}
+            className="text-[0.6rem] font-mono text-slate-400 hover:text-cyber-cyan bg-slate-800 rounded px-1 py-0.5 transition-colors"
+            title={`Open ${card.slug} focus view`}
+          >
+            {card.slug} →
+          </Link>
         )}
       </div>
       <p className="text-[0.7rem] font-mono text-slate-200 leading-snug">{card.title}</p>

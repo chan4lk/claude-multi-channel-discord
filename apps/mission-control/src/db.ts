@@ -232,6 +232,15 @@ CREATE TABLE IF NOT EXISTS constellation_coords (
   z           REAL NOT NULL DEFAULT 0,
   computed_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
+
+CREATE TABLE IF NOT EXISTS brief_snapshot (
+  date       TEXT PRIMARY KEY,
+  critical   INTEGER NOT NULL DEFAULT 0,
+  warn       INTEGER NOT NULL DEFAULT 0,
+  info       INTEGER NOT NULL DEFAULT 0,
+  findings   TEXT NOT NULL DEFAULT '[]',
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
 `);
 
 // Prune old events on startup
@@ -931,6 +940,49 @@ export function getConvergenceScore(slug: string): number | null {
     `SELECT score FROM convergence_history WHERE slug = ? ORDER BY date DESC LIMIT 1`
   ).get(slug) as { score: number } | undefined
   return row?.score ?? null
+}
+
+// ── Fleet Brief snapshots (P206) ────────────────────────────────────────────
+
+export type BriefSnapshotRow = {
+  date: string
+  critical: number
+  warn: number
+  info: number
+  findings: string // JSON array of { slug, severity }
+}
+
+/**
+ * Idempotent daily upsert of the Fleet Brief (P206), keyed on `date`
+ * (YYYY-MM-DD). Repeated writes the same day overwrite the counts and finding
+ * set, so the snapshot always reflects the latest computation for that day.
+ */
+export function upsertBriefSnapshot(
+  date: string,
+  critical: number,
+  warn: number,
+  info: number,
+  findings: string
+): void {
+  db.prepare(
+    `INSERT INTO brief_snapshot (date, critical, warn, info, findings, updated_at)
+     VALUES (?, ?, ?, ?, ?, unixepoch())
+     ON CONFLICT(date) DO UPDATE SET
+       critical = excluded.critical,
+       warn = excluded.warn,
+       info = excluded.info,
+       findings = excluded.findings,
+       updated_at = excluded.updated_at`
+  ).run(date, critical, warn, info, findings)
+}
+
+/** Brief snapshots over the last `days`, oldest→newest for direct charting. */
+export function getBriefTrend(days = 30): BriefSnapshotRow[] {
+  const since = new Date(Date.now() - days * 86400_000).toISOString().slice(0, 10)
+  return db.prepare(
+    `SELECT date, critical, warn, info, findings FROM brief_snapshot
+      WHERE date >= ? ORDER BY date ASC`
+  ).all(since) as BriefSnapshotRow[]
 }
 
 export type FleetConvergenceTrendRow = {
