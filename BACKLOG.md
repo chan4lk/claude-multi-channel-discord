@@ -5122,7 +5122,7 @@ Log each parsed master command to a `command_log` SQLite table (id, ts, user_id,
 
 ## P219 — Context Runway (Per-Project Turn Horizon)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
@@ -5143,7 +5143,7 @@ From each project's active JSONL transcript, compute tokens consumed per turn (r
 
 ## P220 — Memory Type Distribution Sunburst
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
