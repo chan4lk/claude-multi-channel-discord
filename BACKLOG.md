@@ -5164,7 +5164,7 @@ Parse each project's memory files for the `type:` frontmatter field (user / feed
 
 ## P221 — Fleet Operational Timeline (Cross-Project Activity Swimlanes)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
