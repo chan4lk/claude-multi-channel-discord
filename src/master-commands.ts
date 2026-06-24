@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
 
 import { parseFlags, splitArgv } from './argv.ts'
@@ -80,6 +80,24 @@ const READ_VERBS = ['list', 'show', 'status', 'help'] as const
 const MUTATION_VERBS = ['create', 'set', 'rename', 'rm', 'memory'] as const
 const PHASE_5_VERBS = ['clone', 'remote', 'pull'] as const
 
+function appendCommandLog(
+  userId: string,
+  verb: string,
+  args: string[],
+  outcomeSnippet: string,
+  error?: string,
+): void {
+  const mcdDir = process.env.MCD_CHANNELS_DIR
+  if (!mcdDir) return
+  try {
+    const entry =
+      JSON.stringify({ ts: new Date().toISOString(), userId, verb, args, outcomeSnippet: outcomeSnippet.slice(0, 150), error: error ?? null }) + '\n'
+    appendFileSync(join(mcdDir, 'command-log.jsonl'), entry)
+  } catch {
+    // Non-fatal
+  }
+}
+
 export async function handleMasterCommand(
   content: string,
   ctx: MasterContext,
@@ -112,52 +130,63 @@ export async function handleMasterCommand(
   const verb = argv[0]!
   const rest = argv.slice(1)
 
-  switch (verb) {
-    case 'list':
-      return { kind: 'reply', text: handleList(config) }
-    case 'show':
-    case 'status':
-      return { kind: 'reply', text: handleShow(config, rest) }
-    case 'create':
-      return { kind: 'reply', text: await handleCreate(rest, ctx) }
-    case 'set':
-      return { kind: 'reply', text: await handleSet(rest, ctx) }
-    case 'rename':
-      return { kind: 'reply', text: await handleRename(rest, ctx) }
-    case 'rm':
-      return { kind: 'reply', text: await handleRm(rest, ctx) }
-    case 'clone':
-      return { kind: 'reply', text: await handleClone(rest, ctx) }
-    case 'remote':
-      return { kind: 'reply', text: await handleRemote(rest, ctx) }
-    case 'pull':
-      return { kind: 'reply', text: await handlePull(rest, ctx) }
-    case 'usage':
-    case 'ps':
-    case 'top':
-      return { kind: 'reply', text: await handleUsage(ctx) }
-    case 'stop':
-      return { kind: 'reply', text: await handleStop(rest, ctx) }
-    case 'schedule':
-      return { kind: 'reply', text: await handleSchedule(rest, ctx) }
-    case 'provider':
-      return { kind: 'reply', text: await handleProvider(rest, ctx) }
-    case 'model':
-      return { kind: 'reply', text: await handleModel(rest, ctx) }
-    case 'progress':
-      return { kind: 'reply', text: await handleProgress(rest, ctx) }
-    case 'teams-setup':
-      return { kind: 'reply', text: handleTeamsSetup(rest) }
-    case 'heartbeat':
-      return { kind: 'reply', text: handleHeartbeat(rest, ctx) }
-    case 'memory':
-      return { kind: 'reply', text: await handleMemory(rest, ctx) }
-    default:
-      return {
-        kind: 'reply',
-        text: `unknown verb \`${verb}\`. try one of: ${[...READ_VERBS, ...MUTATION_VERBS, ...PHASE_5_VERBS].join(', ')}`,
-      }
+  let result: MasterCommandResult
+  let logError: string | undefined
+  try {
+    switch (verb) {
+      case 'list':
+        result = { kind: 'reply', text: handleList(config) }; break
+      case 'show':
+      case 'status':
+        result = { kind: 'reply', text: handleShow(config, rest) }; break
+      case 'create':
+        result = { kind: 'reply', text: await handleCreate(rest, ctx) }; break
+      case 'set':
+        result = { kind: 'reply', text: await handleSet(rest, ctx) }; break
+      case 'rename':
+        result = { kind: 'reply', text: await handleRename(rest, ctx) }; break
+      case 'rm':
+        result = { kind: 'reply', text: await handleRm(rest, ctx) }; break
+      case 'clone':
+        result = { kind: 'reply', text: await handleClone(rest, ctx) }; break
+      case 'remote':
+        result = { kind: 'reply', text: await handleRemote(rest, ctx) }; break
+      case 'pull':
+        result = { kind: 'reply', text: await handlePull(rest, ctx) }; break
+      case 'usage':
+      case 'ps':
+      case 'top':
+        result = { kind: 'reply', text: await handleUsage(ctx) }; break
+      case 'stop':
+        result = { kind: 'reply', text: await handleStop(rest, ctx) }; break
+      case 'schedule':
+        result = { kind: 'reply', text: await handleSchedule(rest, ctx) }; break
+      case 'provider':
+        result = { kind: 'reply', text: await handleProvider(rest, ctx) }; break
+      case 'model':
+        result = { kind: 'reply', text: await handleModel(rest, ctx) }; break
+      case 'progress':
+        result = { kind: 'reply', text: await handleProgress(rest, ctx) }; break
+      case 'teams-setup':
+        result = { kind: 'reply', text: handleTeamsSetup(rest) }; break
+      case 'heartbeat':
+        result = { kind: 'reply', text: handleHeartbeat(rest, ctx) }; break
+      case 'memory':
+        result = { kind: 'reply', text: await handleMemory(rest, ctx) }; break
+      default:
+        result = {
+          kind: 'reply',
+          text: `unknown verb \`${verb}\`. try one of: ${[...READ_VERBS, ...MUTATION_VERBS, ...PHASE_5_VERBS].join(', ')}`,
+        }
+    }
+  } catch (err) {
+    logError = (err as Error).message
+    throw err
+  } finally {
+    const snippet = result! && result.kind === 'reply' ? result.text : ''
+    appendCommandLog(userId, verb, rest, snippet, logError)
   }
+  return result
 }
 
 function helpText(prefix: string): string {

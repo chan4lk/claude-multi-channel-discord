@@ -137,6 +137,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/signal-graph', label: 'Signal Co-occurrence Graph', icon: '⬡' },
       { href: '/memory-bridge', label: 'Memory ⇄ Proposal Bridge', icon: '⇄' },
       { href: '/schedule-history', label: 'Schedule History', icon: '⏱' },
+      { href: '/command-log', label: 'Operator Command Log', icon: '≡' },
     ],
   },
   {
