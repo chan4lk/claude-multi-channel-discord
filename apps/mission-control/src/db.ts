@@ -839,6 +839,31 @@ export function getGoalAdvancementStream(limit = 200): GoalStreamRow[] {
   ).all(limit) as GoalStreamRow[]
 }
 
+// Goal × Convergence quadrant points (P191). One row per slug that has both a
+// latest convergence_history score and a latest goal_advancement score.
+export type QuadrantPointRow = {
+  slug: string
+  convergence: number
+  goal: number
+}
+
+export function getQuadrantPoints(): QuadrantPointRow[] {
+  return db.prepare(
+    `SELECT s.slug AS slug,
+            (SELECT score FROM convergence_history c
+              WHERE c.slug = s.slug ORDER BY date DESC LIMIT 1) AS convergence,
+            (SELECT score FROM goal_advancement g
+              WHERE g.slug = s.slug ORDER BY date DESC LIMIT 1) AS goal
+       FROM (SELECT DISTINCT slug FROM convergence_history
+             UNION
+             SELECT DISTINCT slug FROM goal_advancement) s`
+  ).all().filter(
+    (r): r is QuadrantPointRow =>
+      typeof (r as QuadrantPointRow).convergence === 'number' &&
+      typeof (r as QuadrantPointRow).goal === 'number'
+  )
+}
+
 // ── Context Pressure (P123) ───────────────────────────────────────────────
 
 export interface ContextPressureBreakdown {

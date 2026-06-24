@@ -4501,3 +4501,95 @@ Add an `/alert-calendar` page backed by a new `/api/alert-calendar` route that b
 - AC3: Hover a cell shows count + breakdown by alert type
 - AC4: Header shows the busiest window and total alert count
 - AC5: Empty history handled; added to `NAV_GROUPS` under Intelligence
+
+---
+
+## P191 — Goal × Convergence Quadrant Map
+
+**Status:** `[x] done`
+**Created:** 2026-06-24
+
+### Problem
+
+Two of the strongest per-project health signals — goal advancement and convergence — live on separate pages. Operators cannot see them *together*, so they cannot tell at a glance which projects are thriving (both high), which are converging on the wrong thing (high convergence, low goal progress), which are making progress but unstable (high goal, low convergence), and which are stalled (both low). A single combined view would let an operator triage the whole fleet in one look.
+
+### Proposed Solution
+
+Add a `/quadrant` page backed by a new `/api/quadrant` route. The route joins each project's latest `convergence_history` score (x-axis) with its latest `goal_advancement` score (y-axis) and returns one point per slug that has both. The page renders a futuristic 2-D scatter plot with the plane divided into four labelled quadrants by a midline at 50 on each axis: **Thriving** (high/high), **Drifting** (high convergence, low goal), **Grinding** (low convergence, high goal), **Stalled** (low/low). Each point is a glowing dot labelled with its slug, colored by quadrant. Hovering a dot shows the exact scores. The header shows per-quadrant counts.
+
+### Acceptance Criteria
+
+- AC1: `/api/quadrant` returns one point per slug having both a latest convergence and a latest goal score, plus per-quadrant counts
+- AC2: `/quadrant` renders a scatter plot with goal (y) vs convergence (x), axes 0–100
+- AC3: Plane divided into four labelled quadrants by midlines at 50; points colored by quadrant
+- AC4: Hover a point shows slug and exact convergence/goal scores
+- AC5: Empty state handled; added to `NAV_GROUPS` under Intelligence
+
+---
+
+## P192 — Convergence Sparkline Wall
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+Convergence trend is shown fleet-aggregated (P183) or as a movers leaderboard (P185), but there is no compact, scannable view of *every* project's individual convergence trajectory side by side. Operators cannot spot which projects are trending up, flat, or collapsing without opening each one.
+
+### Proposed Solution
+
+Add a `/sparkline-wall` page backed by a new `/api/sparkline-wall` route returning, per slug, the last N days of `convergence_history` scores. Render a dense responsive grid of cards, one per project: slug label, latest score, a delta chip (vs first point in window), and an inline SVG sparkline of the series colored by overall direction (green up / red down / slate flat). Sort by steepest decline first so the projects needing attention surface at the top.
+
+### Acceptance Criteria
+
+- AC1: `/api/sparkline-wall` returns per-slug convergence series for the last N days
+- AC2: `/sparkline-wall` renders a responsive grid of per-project sparkline cards
+- AC3: Each card shows slug, latest score, delta chip, and an inline SVG sparkline colored by direction
+- AC4: Cards sorted steepest-decline first
+- AC5: Empty/single-point series handled; added to `NAV_GROUPS` under Intelligence
+
+---
+
+## P193 — Context Pressure Ridgeline
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+`context_pressure` history is recorded per project but only the latest value and a single project's history are surfaced. There is no fleet-wide view of how context pressure is distributed and trending across all projects over time, so operators cannot anticipate which projects are approaching a context-exhaustion compaction.
+
+### Proposed Solution
+
+Add a `/pressure-ridgeline` page backed by a new `/api/pressure-ridgeline` route returning, per slug, a recent time-ordered series of `context_pressure` scores. Render a ridgeline (joyplot): stacked, slightly-overlapping area sparklines, one row per project, ordered by latest pressure descending. High-pressure rows glow amber→red. Each row labels its slug and latest score. This makes fleet-wide pressure distribution and trends legible at a glance.
+
+### Acceptance Criteria
+
+- AC1: `/api/pressure-ridgeline` returns per-slug recent context-pressure series
+- AC2: `/pressure-ridgeline` renders stacked overlapping area sparklines (ridgeline), one per project
+- AC3: Rows ordered by latest pressure descending; high-pressure rows colored amber→red
+- AC4: Each row labels slug and latest score
+- AC5: Empty history handled; added to `NAV_GROUPS` under Observability
+
+---
+
+## P194 — Alert Type Flow
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+`alert_events` can be listed and bucketed by time (P190), but there is no view of *which projects generate which kinds of alerts*. Operators cannot see, for example, that one project dominates stall alerts while another dominates budget breaches — the slug↔alert-type relationship is invisible.
+
+### Proposed Solution
+
+Add an `/alert-flow` page backed by a new `/api/alert-flow` route that aggregates `alert_events` over the last 30 days into slug→alert-type counts. Render a two-column flow diagram (lightweight Sankey): left nodes are projects, right nodes are alert types, ribbons sized by count connect them, colored by alert type. Hovering a ribbon or node highlights its connections and shows the count. Header shows total alerts and the dominant project/type.
+
+### Acceptance Criteria
+
+- AC1: `/api/alert-flow` aggregates `alert_events` (last 30d) into slug→type counts
+- AC2: `/alert-flow` renders a two-column flow/Sankey diagram of projects → alert types
+- AC3: Ribbon thickness ∝ count; ribbons colored by alert type
+- AC4: Hover highlights connected nodes/ribbons and shows the count
+- AC5: Empty history handled; added to `NAV_GROUPS` under Intelligence
