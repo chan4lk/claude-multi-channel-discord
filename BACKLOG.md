@@ -5077,3 +5077,108 @@ Add `/command-bridge` — a composite dashboard that fuses the top N from the at
 - AC3: Panels are ordered by urgency (most critical domain first)
 - AC4: Auto-refreshes on an interval; empty/healthy states handled per panel
 - AC5: Added to `NAV_GROUPS` under Observability
+
+## P217 — Schedule Run History & Outcome Tracker
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+Schedules fire and only `runCount` + `lastRunAt` are tracked. No record of whether a task succeeded, what reply snippet was produced, or how long it took. An operator cannot tell if scheduled tasks are actually working or silently failing — especially since scheduled messages are injected without producing Discord replies from the bot itself.
+
+### Proposed Solution
+
+Persist schedule run outcomes to a `schedule_run` SQLite table (id, schedule_id, slug, fired_at, reply_snippet, turn_duration_ms, status). Extend the scheduler's fire path to write a row after each run (best-effort, non-blocking). Add `/api/schedule-runs` returning per-schedule history and aggregate stats (success rate, avg duration). Add `/schedule-history` page: a per-schedule accordion with a run timeline (calendar heatmap of fire dates), outcome badges (ok / empty-reply / error), and expandable reply snippets. Reuses the `/schedules` API for the schedule list.
+
+### Acceptance Criteria
+
+- AC1: `schedule_run` table created with migration; existing DB unaffected
+- AC2: Scheduler writes a row after each fire with status `ok` or `error`, reply snippet ≤ 200 chars, and duration
+- AC3: `/api/schedule-runs` returns all rows grouped by schedule_id with success_rate and avg_duration_ms
+- AC4: `/schedule-history` renders per-schedule calendar heatmap + outcome badge table; empty state when no runs
+- AC5: Added to `NAV_GROUPS` under Automation
+
+## P218 — Operator Command Log
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+Master channel commands (`!project ...`) are ephemeral Discord messages. There is no audit trail of who ran what verb, when, and whether it succeeded. An operator reviewing an incident ("why did project X stop?") has no structured log to consult.
+
+### Proposed Solution
+
+Log each parsed master command to a `command_log` SQLite table (id, ts, user_id, username, verb, args_json, outcome_snippet, error). Write the row in `master-commands.ts` after each verb handler resolves (best-effort). Add `/api/command-log` returning time-ranged entries with verb frequency counts. Add `/command-log` page: filterable table (by verb, by user, by date range), a bar chart of verb frequency over time, and an error-rate summary. No PII beyond what's already in Discord messages.
+
+### Acceptance Criteria
+
+- AC1: `command_log` table created; verb, ts, user_id, outcome_snippet stored for every parsed master command
+- AC2: Errors (thrown in handlers) recorded with error field set; successes set outcome_snippet to first 150 chars of reply
+- AC3: `/api/command-log` supports `?verb=`, `?since=`, `?until=` filters; returns entries and verb frequency map
+- AC4: `/command-log` renders sortable table + verb frequency bar chart; empty state handled
+- AC5: Added to `NAV_GROUPS` under Observability
+
+## P219 — Context Runway (Per-Project Turn Horizon)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+`/context-pressure` shows current % of context used but not "at this burn rate, how many turns until the session hits the limit?" Operators cannot proactively `!project stop` and resume a session before it stalls at the context ceiling, causing the next user message to fail or produce degraded output.
+
+### Proposed Solution
+
+From each project's active JSONL transcript, compute tokens consumed per turn (rolling 5-turn average) and extrapolate turns-remaining = `(context_limit - tokens_used) / avg_tokens_per_turn`. Add `/api/context-horizon` returning per-project `{slug, tokens_used, context_limit, avg_per_turn, turns_remaining, estimated_hours_remaining}` (using avg inter-turn interval). Add `/context-horizon` page: horizontal runway bars per project (green → yellow → red as turns_remaining shrinks), a fleet summary badge ("N projects within 5 turns of limit"), and a "Needs Reset" call-out list. Threshold for warning: < 10 turns remaining.
+
+### Acceptance Criteria
+
+- AC1: `/api/context-horizon` returns accurate tokens_used from active JSONL and a turns_remaining estimate
+- AC2: avg_per_turn uses rolling 5-turn window, not lifetime average
+- AC3: `/context-horizon` renders runway bars colored by turns_remaining (<5 red, <10 yellow, ≥10 green)
+- AC4: Fleet summary badge counts projects with turns_remaining < 10
+- AC5: "Needs Reset" panel lists projects below threshold with last-active time; added to `NAV_GROUPS` under Runtime
+
+## P220 — Memory Type Distribution Sunburst
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+Memory health (`/memory-health`) surfaces staleness but not *composition* — whether a project's memory set is dominated by `project` memories with no `user` or `feedback` coverage. An operator tuning a project's Claude behavior cannot see the memory type balance at a glance.
+
+### Proposed Solution
+
+Parse each project's memory files for the `type:` frontmatter field (user / feedback / project / reference). Add `/api/memory-distribution` returning per-project type counts and a fleet-level rollup. Render `/memory-distribution` as a two-level zoomable sunburst (d3, reusing the fleet-sunburst rendering pattern): outer ring = projects, inner ring segments = memory types colored by category. Click a project slice to drill into a filtered `/memory-health` view for that project. Fleet total shown in center. Hover tooltip shows type name + count + % of project total.
+
+### Acceptance Criteria
+
+- AC1: `/api/memory-distribution` reads all project memory files, parses `type:` from YAML frontmatter, returns per-project type breakdown and fleet rollup
+- AC2: Unknown/missing type field bucketed as `other`
+- AC3: `/memory-distribution` renders zoomable sunburst; clicking project slice navigates to filtered memory-health view
+- AC4: Hover shows type label, count, and percentage
+- AC5: Empty state (no memory files found) renders a blank sunburst with explanatory text; added to `NAV_GROUPS` under Memory
+
+## P221 — Fleet Operational Timeline (Cross-Project Activity Swimlanes)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+No view shows cross-project *operational* activity over time: when was each project's last turn, how long did it run, which projects were active simultaneously, and where are the long idle gaps. The proposal gantt covers planning; this covers execution. Operators tuning schedules or diagnosing congestion periods have no timeline to consult.
+
+### Proposed Solution
+
+From all active JSONL transcripts, extract turn start/end timestamps and tool-call counts per turn. Add `/api/fleet-timeline` returning per-project turn segments `{slug, start, end, tool_count, token_count}` over a configurable window (default 24h). Render `/fleet-timeline` as a swimlane chart (one row per project, horizontal bars = turns) using d3 or a lightweight canvas approach, bar color intensity = tool_count. Hover shows turn summary (duration, tools, tokens). A vertical "now" line + idle gap highlights (gray fill between turns > 30 min). Window selector: 6h / 24h / 7d. Depends only on existing JSONL transcript files — no new DB writes.
+
+### Acceptance Criteria
+
+- AC1: `/api/fleet-timeline` parses JSONL transcripts and returns turn segments with start/end/tool_count/token_count for the requested window
+- AC2: `/fleet-timeline` renders one swimlane per active project; bars sized proportionally to duration
+- AC3: Idle gaps > 30 min highlighted; hover shows turn summary
+- AC4: Window selector (6h/24h/7d) adjusts the query and re-renders without page reload
+- AC5: Added to `NAV_GROUPS` under Observability; graceful empty state when no transcript data found
