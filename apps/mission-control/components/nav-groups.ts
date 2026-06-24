@@ -105,6 +105,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/forecast', label: 'Velocity Forecast', icon: '⤳' },
       { href: '/memory-footprint', label: 'Memory Footprint', icon: '⊞' },
       { href: '/convergence-wall', label: 'Convergence Wall', icon: '◎' },
+      { href: '/convergence-dist', label: 'Convergence Distribution', icon: '▥' },
       { href: '/budget-pressure', label: 'Budget Pressure', icon: '▰' },
       { href: '/proposal-aging', label: 'Proposal Aging', icon: '◴' },
     ],

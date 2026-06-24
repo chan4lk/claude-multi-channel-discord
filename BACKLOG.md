@@ -4299,7 +4299,7 @@ Add a `/goal-funnel` page rendering a horizontal funnel (pure SVG): stacked prop
 
 ## P182 — Convergence Distribution Histogram
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
