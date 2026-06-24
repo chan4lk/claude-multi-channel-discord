@@ -608,6 +608,23 @@ export type AlertFlowCount = {
  * for the Alert Type Flow Sankey (P194). Blank slugs are coalesced to
  * '(unknown)' so every alert appears as a left-hand node.
  */
+export type AlertSlaRow = {
+  alert_type: string
+  ts: number
+  ack_ts: number | null
+}
+
+/**
+ * Raw (alert_type, ts, ack_ts) rows since `sinceTs` for the Alert Response Time
+ * view (P198). Time-to-ack percentiles and open-backlog stats are computed by
+ * the caller.
+ */
+export function getAlertSlaRows(sinceTs: number): AlertSlaRow[] {
+  return db.prepare(
+    `SELECT alert_type, ts, ack_ts FROM alert_events WHERE ts >= ?`
+  ).all(sinceTs) as AlertSlaRow[]
+}
+
 export function getAlertFlow(sinceTs: number, includeAcked = true): AlertFlowCount[] {
   const ackClause = includeAcked ? '' : ' AND ack_ts IS NULL'
   return db.prepare(
