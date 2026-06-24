@@ -4662,3 +4662,95 @@ Add a `/freshness` page backed by a new `/api/freshness` route that probes the k
 - AC3: `/freshness` renders a status board sorted most-stale-first with colored status dots and relative last-update time
 - AC4: Header summarizes healthy / late / silent feed counts
 - AC5: Empty/never-populated feeds render as silent (not an error); added to `NAV_GROUPS` under Observability
+
+---
+
+## P198 — Alert Response Time (Triage SLA)
+
+**Status:** `[x] done`
+**Created:** 2026-06-24
+
+### Problem
+
+P196 added an acknowledgement lifecycle to `alert_events` (`ack_ts` / `ack_by`), but nothing surfaces *how fast* alerts get triaged. Operators cannot see whether stall alerts sit unacknowledged for hours, which alert types are handled promptly, or whether response time is trending worse — there is no SLA visibility on the alert pipeline.
+
+### Proposed Solution
+
+Add a `/alert-sla` page backed by a new `/api/alert-sla` route that, over the last 30 days, computes time-to-acknowledge (`ack_ts − ts`) per alert. Aggregate by alert type: count, ack rate (% acknowledged), median and p90 time-to-ack, and current open (unacked) backlog with oldest-open age. Render a table/bar view: one row per alert type with an ack-rate gauge, median/p90 latency chips colored by threshold (green < 1h / amber < 6h / red beyond), and an open-backlog badge. Header shows fleet median time-to-ack and total open backlog.
+
+### Acceptance Criteria
+
+- AC1: `/api/alert-sla` returns per-type count, ack rate, median + p90 time-to-ack, open backlog count, oldest-open age (30d)
+- AC2: `/alert-sla` renders one row per alert type with ack-rate gauge and median/p90 latency chips
+- AC3: Latency chips colored by threshold (green < 1h / amber < 6h / red beyond)
+- AC4: Header shows fleet median time-to-ack and total open backlog
+- AC5: No-alerts and all-open (zero acknowledged) states handled; added to `NAV_GROUPS` under Intelligence
+
+---
+
+## P199 — Fleet Activity EKG
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+Activity from different sources (alerts, injects, memory diffs, digests, broadcasts) is each viewable in isolation, but there is no single view of the fleet's overall *rhythm* across all sources at once. Operators cannot tell at a glance whether the fleet is quiet, spiking on alerts, or churning memory — the cross-source tempo is invisible.
+
+### Proposed Solution
+
+Add an `/ekg` page backed by a new `/api/ekg` route that buckets the last 48 hours of activity into hourly bins per source (`alert_events`, memory_diff_log, digest_log, broadcasts, and inject-type alerts). Render a stacked multi-lane "EKG" strip: one horizontal lane per source, each an inline area/bar sparkline of hourly volume, all sharing the same time axis so spikes line up vertically. Lanes are color-coded by source; hovering a column shows the per-source counts for that hour. Header shows total events and the busiest hour.
+
+### Acceptance Criteria
+
+- AC1: `/api/ekg` returns hourly per-source counts for the last 48h across the tracked sources
+- AC2: `/ekg` renders one horizontal lane per source on a shared time axis
+- AC3: Lanes color-coded by source; hovering a column shows per-source hourly counts
+- AC4: Header shows total events and busiest hour
+- AC5: Empty/quiet windows handled; added to `NAV_GROUPS` under Observability
+
+---
+
+## P200 — Proposal Impact Trace
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+The backlog ships proposals continuously, but there is no view connecting a *shipped* proposal to its downstream effect on the project. Did convergence improve after a change merged? The proposal→outcome link is invisible, so the team cannot tell which kinds of work actually move the needle.
+
+### Proposed Solution
+
+Add an `/impact` page backed by a new `/api/impact` route that parses completed proposals from `BACKLOG.md` (done markers + created date) and, for the master project, overlays the `convergence_history` / `goal_advancement` series with markers at each proposal's ship date. Render a timeline: the convergence line with labelled flags where proposals landed, and a computed before/after delta (mean score in the 7 days before vs after each flag). A side list ranks recently shipped proposals by their measured convergence delta. Empty-data and single-point series handled gracefully.
+
+### Acceptance Criteria
+
+- AC1: `/api/impact` returns shipped proposals (id, title, ship date) joined with the convergence/goal series
+- AC2: `/impact` renders a convergence timeline with labelled markers at each proposal ship date
+- AC3: Each proposal shows a before/after convergence delta (7-day mean window)
+- AC4: A side list ranks recently shipped proposals by measured delta
+- AC5: Missing/sparse score data handled; added to `NAV_GROUPS` under Intelligence
+
+---
+
+## P201 — Memory × Convergence Correlation
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+Memory churn (`memory_diff_log`) and convergence trend (`convergence_history`) are tracked separately, but their relationship is unexplored. Does a project that actively writes memory converge faster, or does heavy memory churn signal thrashing? There is no view to test this hypothesis across the fleet.
+
+### Proposed Solution
+
+Add a `/memory-convergence-xy` page backed by a new `/api/memory-convergence-xy` route that, per project over the last 30 days, computes total memory-diff activity (sum of added+removed lines, x-axis) and convergence change (latest − earliest score in window, y-axis). Render a scatter plot: each project a dot positioned by churn vs convergence-delta, sized by total diffs, colored green (improving) / red (declining). Quadrant guides separate "productive churn" (high churn, rising) from "thrashing" (high churn, falling). Hover shows project stats. Header shows the fleet correlation sign.
+
+### Acceptance Criteria
+
+- AC1: `/api/memory-convergence-xy` returns per-project memory churn and convergence delta over 30d
+- AC2: `/memory-convergence-xy` renders a scatter of churn (x) vs convergence delta (y)
+- AC3: Dots sized by total diffs, colored by convergence direction; quadrant guides drawn
+- AC4: Hover shows per-project churn + delta; header shows fleet correlation sign
+- AC5: Projects missing either series excluded cleanly; empty state handled; added to `NAV_GROUPS` under Intelligence

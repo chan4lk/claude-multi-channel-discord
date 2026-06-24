@@ -121,6 +121,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/proposal-aging', label: 'Proposal Aging', icon: '◴' },
       { href: '/sparkline-wall', label: 'Sparkline Wall', icon: '⋀' },
       { href: '/alert-flow', label: 'Alert Type Flow', icon: '⇄' },
+      { href: '/alert-sla', label: 'Alert Response Time', icon: '⏲' },
     ],
   },
   {
