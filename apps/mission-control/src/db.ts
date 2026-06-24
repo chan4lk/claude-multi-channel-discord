@@ -241,12 +241,32 @@ CREATE TABLE IF NOT EXISTS brief_snapshot (
   findings   TEXT NOT NULL DEFAULT '[]',
   updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
+
+CREATE TABLE IF NOT EXISTS attention_event (
+  date       TEXT NOT NULL,
+  slug       TEXT NOT NULL,
+  signal     TEXT NOT NULL,
+  severity   TEXT NOT NULL,
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  PRIMARY KEY (date, slug, signal)
+);
+CREATE INDEX IF NOT EXISTS idx_attention_event_date ON attention_event(date);
+CREATE INDEX IF NOT EXISTS idx_attention_event_signal ON attention_event(signal);
+
+CREATE TABLE IF NOT EXISTS digest_state (
+  id        INTEGER PRIMARY KEY CHECK (id = 1),
+  hash      TEXT NOT NULL DEFAULT '',
+  sent_at   INTEGER NOT NULL DEFAULT (unixepoch())
+);
 `);
 
 // Prune old events on startup
 const cutoff = Math.floor(Date.now() / 1000) - retentionDays * 86400;
 db.prepare("DELETE FROM events WHERE created_at < ?").run(cutoff);
 db.prepare("DELETE FROM alert_events WHERE ts < ?").run(cutoff);
+// P209 — prune attention_event beyond the brief trend window (90d guard).
+const attentionCutoff = new Date(Date.now() - 90 * 86400_000).toISOString().slice(0, 10);
+db.prepare("DELETE FROM attention_event WHERE date < ?").run(attentionCutoff);
 
 // P149 — fleet_snapshots soft-delete migration + 30-day auto-purge
 try { db.exec("ALTER TABLE fleet_snapshots ADD COLUMN deleted_at INTEGER"); } catch { /* column already present */ }
@@ -983,6 +1003,56 @@ export function getBriefTrend(days = 30): BriefSnapshotRow[] {
     `SELECT date, critical, warn, info, findings FROM brief_snapshot
       WHERE date >= ? ORDER BY date ASC`
   ).all(since) as BriefSnapshotRow[]
+}
+
+/**
+ * Idempotent per-(date, slug, signal) record of an attention finding (P209).
+ * Repeated writes the same day overwrite the severity, so the row always
+ * reflects the latest computation for that project/signal/day.
+ */
+export function upsertAttentionEvent(
+  date: string,
+  slug: string,
+  signal: string,
+  severity: string
+): void {
+  db.prepare(
+    `INSERT INTO attention_event (date, slug, signal, severity, updated_at)
+     VALUES (?, ?, ?, ?, unixepoch())
+     ON CONFLICT(date, slug, signal) DO UPDATE SET
+       severity = excluded.severity,
+       updated_at = excluded.updated_at`
+  ).run(date, slug, signal, severity)
+}
+
+export type AttentionEventRow = {
+  date: string
+  slug: string
+  signal: string
+  severity: string
+}
+
+/** Raw attention events over the last `days`, oldest→newest. */
+export function getAttentionEvents(days = 30): AttentionEventRow[] {
+  const since = new Date(Date.now() - days * 86400_000).toISOString().slice(0, 10)
+  return db.prepare(
+    `SELECT date, slug, signal, severity FROM attention_event
+      WHERE date >= ? ORDER BY date ASC, signal ASC, slug ASC`
+  ).all(since) as AttentionEventRow[]
+}
+
+/** Last-sent digest hash for the P210 de-dupe guard ('' if never sent). */
+export function getLastDigestHash(): string {
+  const row = db.prepare(`SELECT hash FROM digest_state WHERE id = 1`).get() as { hash: string } | undefined
+  return row?.hash ?? ''
+}
+
+/** Record the hash of the most recently sent digest (P210). */
+export function setLastDigestHash(hash: string): void {
+  db.prepare(
+    `INSERT INTO digest_state (id, hash, sent_at) VALUES (1, ?, unixepoch())
+     ON CONFLICT(id) DO UPDATE SET hash = excluded.hash, sent_at = excluded.sent_at`
+  ).run(hash)
 }
 
 export type FleetConvergenceTrendRow = {
