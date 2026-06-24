@@ -1,4 +1,7 @@
 .next/
 mc.db
+mc.db-shm
+mc.db-wal
+mc.db-journal
 test-results/
 tsconfig.tsbuildinfo
