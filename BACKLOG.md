@@ -4437,7 +4437,7 @@ Add a `/snapshot-scrubber` page with a horizontal time slider bound to `fleet_sn
 
 ## P188 — Goal Advancement Stream
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
@@ -4460,7 +4460,7 @@ Add a `/goal-stream` page backed by a new `/api/goal-stream` route returning rec
 
 ## P189 — Memory Theme Constellation
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem

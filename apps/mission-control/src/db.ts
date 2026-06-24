@@ -817,6 +817,28 @@ export function getGoalAdvancementScore(slug: string): number | null {
   return row?.score ?? null
 }
 
+// Fleet-wide goal-advancement feed (P188). Each row carries the prior day's
+// score for the same slug (via LAG) so the consumer can derive a from→to
+// status transition. Newest first.
+export type GoalStreamRow = {
+  slug: string
+  date: string
+  score: number
+  prevScore: number | null
+}
+
+export function getGoalAdvancementStream(limit = 200): GoalStreamRow[] {
+  return db.prepare(
+    `SELECT slug, date, score, prev_score AS prevScore FROM (
+       SELECT slug, date, score,
+         LAG(score) OVER (PARTITION BY slug ORDER BY date) AS prev_score
+       FROM goal_advancement
+     )
+     ORDER BY date DESC, slug ASC
+     LIMIT ?`
+  ).all(limit) as GoalStreamRow[]
+}
+
 // ── Context Pressure (P123) ───────────────────────────────────────────────
 
 export interface ContextPressureBreakdown {

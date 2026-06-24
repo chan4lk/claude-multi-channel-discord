@@ -26,6 +26,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/graph', label: 'Project Graph', icon: '⬡' },
       { href: '/timeline', label: 'Timeline', icon: '◫' },
       { href: '/memory-graph', label: 'Memory Graph', icon: '✦' },
+      { href: '/memory-constellation', label: 'Memory Constellation', icon: '✶' },
       { href: '/knowledge', label: 'Knowledge', icon: '◈' },
       { href: '/flamegraph', label: 'Turn Flame Graph', icon: '▬' },
       { href: '/replay', label: 'Session Replay', icon: '⏮' },
@@ -71,6 +72,7 @@ export const NAV_GROUPS: NavGroup[] = [
     color: '#A78BFA',
     items: [
       { href: '/goals', label: 'Goals', icon: '◎' },
+      { href: '/goal-stream', label: 'Goal Stream', icon: '⇶' },
       { href: '/metrics', label: 'Metrics', icon: '◱' },
       { href: '/cost', label: 'Fleet Cost', icon: '$' },
       { href: '/burn-rate', label: 'Burn Rate', icon: '⥮' },
