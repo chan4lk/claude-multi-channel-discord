@@ -50,6 +50,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/age-distribution', label: 'Age Distribution', icon: '▥' },
       { href: '/platform-matrix', label: 'Platform × State', icon: '▦' },
       { href: '/snapshot-scrubber', label: 'Snapshot Scrubber', icon: '⏯' },
+      { href: '/pressure-ridgeline', label: 'Pressure Ridgeline', icon: '⋰' },
     ],
   },
   {
@@ -116,6 +117,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/alert-calendar', label: 'Alert Calendar', icon: '▦' },
       { href: '/budget-pressure', label: 'Budget Pressure', icon: '▰' },
       { href: '/proposal-aging', label: 'Proposal Aging', icon: '◴' },
+      { href: '/sparkline-wall', label: 'Sparkline Wall', icon: '⋀' },
     ],
   },
   {
