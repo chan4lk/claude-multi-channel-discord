@@ -4754,3 +4754,95 @@ Add a `/memory-convergence-xy` page backed by a new `/api/memory-convergence-xy`
 - AC3: Dots sized by total diffs, colored by convergence direction; quadrant guides drawn
 - AC4: Hover shows per-project churn + delta; header shows fleet correlation sign
 - AC5: Projects missing either series excluded cleanly; empty state handled; added to `NAV_GROUPS` under Intelligence
+
+---
+
+## P202 — Fleet Convergence Forecast
+
+**Status:** `[x] done`
+**Created:** 2026-06-24
+
+### Problem
+
+`convergence_history` shows where each project *has been*, but the operator has no forward-looking signal: which projects are on track to reach a healthy convergence (≥90) soon, which are flat and need a nudge, and which are sliding backwards. Spotting a stall today means eyeballing a dozen sparklines. There is no single view that projects each project's trajectory and ranks them by time-to-target.
+
+### Proposed Solution
+
+Add a `/convergence-forecast` page backed by a new `/api/convergence-forecast` route. For each project with ≥3 convergence points in a 30-day window, fit a least-squares linear trend, derive slope/day and current score, and forecast the number of days to reach the 90 target (null when slope ≤ 0 or already ≥90). Classify each as `reached` / `rising` / `stalled` / `declining`. Render a leaderboard of project rows sorted by soonest ETA: each row shows the historical convergence sparkline with a dashed forecast extension drawn to the target line, current score, a slope arrow, and the ETA (e.g. "~6d", "stalled", "✓ reached"). Header shows how many projects are forecast to reach target within the window. Pure client compute on top of `getConvergenceSparklines` — no new DB function.
+
+### Acceptance Criteria
+
+- AC1: `/api/convergence-forecast` returns, per project (≥3 points/30d), current score, slope/day, etaDays, and status
+- AC2: `/convergence-forecast` renders a leaderboard sorted by soonest ETA (reached last, declining flagged)
+- AC3: Each row draws the historical sparkline plus a dashed forecast segment to the 90 target line
+- AC4: Header shows count of projects forecast to reach target within the window; slope arrow + ETA per row
+- AC5: Projects with <3 points excluded; flat/declining slopes yield null ETA; empty state handled; added to `NAV_GROUPS` under Intelligence
+
+---
+
+## P203 — Proposal Burnup Chart
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+The Backlog Burndown (P156) shows remaining work trending toward zero, but it hides *scope growth*: when new proposals are added as fast as old ones ship, a flat burndown looks like no progress when in fact the team is both shipping and expanding scope. A burnup separates the two lines — cumulative shipped vs cumulative total — so scope changes are visible.
+
+### Proposed Solution
+
+Add a `/burnup` page backed by `/api/burnup` that parses `BACKLOG.md` for every proposal's created date and done date (done date approximated from the BACKLOG.md git commit that flipped its status, reusing the velocity route's git-log helper). Build a daily series over the project's lifetime with two cumulative lines: total proposals created and total proposals completed. Render a layered area/line chart where the gap between the lines is the open backlog; an expanding gap signals scope outpacing delivery. Header shows current scope, shipped count, and the 14-day scope-growth vs ship-rate.
+
+### Acceptance Criteria
+
+- AC1: `/api/burnup` returns a daily cumulative series of created vs completed proposal counts
+- AC2: `/burnup` renders both cumulative lines with the open-backlog gap shaded between them
+- AC3: Header shows total scope, total shipped, and 14-day created-rate vs ship-rate
+- AC4: Done dates derived from BACKLOG.md git history; proposals with no completion counted as open
+- AC5: Empty/sparse history handled; added to `NAV_GROUPS` under Intelligence
+
+---
+
+## P204 — Fleet Vitals Marquee
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+The home dashboard surfaces many tiles, but there is no continuously-scrolling, glanceable summary band that an operator can leave on a wall display — a single strip that cycles the most important live fleet numbers (active projects, mean convergence, alerts open, token burn, stalled count) without interaction.
+
+### Proposed Solution
+
+Add a `/marquee` page backed by `/api/marquee` that aggregates a compact set of headline fleet metrics from existing helpers (instance count, mean convergence, open alerts, recent token burn, stalled-project count, proposals shipped this week). Render a full-bleed, auto-scrolling horizontal ticker of large cyber-styled metric cards that loops seamlessly, each card color-coded by health and updating on the standard freshness poll. Designed for an always-on display; respects `prefers-reduced-motion` by falling back to a static wrap.
+
+### Acceptance Criteria
+
+- AC1: `/api/marquee` returns the headline metric set aggregated from existing DB helpers
+- AC2: `/marquee` renders an auto-scrolling, seamlessly-looping ticker of metric cards
+- AC3: Cards are color-coded by health thresholds and refresh on the freshness poll
+- AC4: `prefers-reduced-motion` falls back to a static, non-animated layout
+- AC5: Empty/zero-data handled; added to `NAV_GROUPS` under Observability
+
+---
+
+## P205 — Convergence vs Memory Quadrant Brief
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+Several views expose convergence, memory churn, and alerts separately, but the operator still has to synthesize "which projects need attention and why" by hand. There is no auto-generated, plain-language brief that names the at-risk projects and the reason.
+
+### Proposed Solution
+
+Add a `/brief` page backed by `/api/brief` that joins per-project convergence direction, memory churn, open alerts, and stall signals into a ranked list of short natural-language findings (e.g. "alpha: declining convergence with high memory churn — likely thrashing", "beta: stalled 4d, no memory writes — may be idle"). Each finding carries a severity and a deep-link to the most relevant existing view. Render as a prioritized briefing card stack with severity color rails. Purely derived from existing helpers; deterministic rule-based phrasing (no LLM call).
+
+### Acceptance Criteria
+
+- AC1: `/api/brief` returns ranked findings (slug, severity, message, deep-link href) from joined signals
+- AC2: `/brief` renders a severity-sorted briefing stack with color rails and per-finding deep-links
+- AC3: Findings use deterministic rule-based phrasing covering thrashing, stall, idle, and healthy cases
+- AC4: Severity drives sort order and color; healthy fleet shows an explicit "all nominal" state
+- AC5: Empty fleet handled; added to `NAV_GROUPS` under Intelligence
