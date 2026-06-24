@@ -4386,3 +4386,118 @@ Add a `/convergence-movers` page backed by `/api/convergence-movers`, which read
 - AC3: Each row shows prev→curr scores and a delta indicator
 - AC4: Projects lacking a prior-day entry are grouped as "new", not ranked
 - AC5: Header shows net fleet delta; empty state handled; added to `NAV_GROUPS` under Intelligence
+
+---
+
+## P186 — Convergence × Context Risk Matrix
+
+**Status:** `[x] done`
+**Created:** 2026-06-24
+
+### Problem
+
+Two independent signals decide whether a project is in trouble: how close it is to its goal (`convergenceScore`) and how close it is to running out of context window (`contextUsagePct`). They are shown on separate pages, so the operator cannot see the one combination that matters most — projects that are **both** far from done **and** nearly out of context, which will stall hardest. There is no view that crosses these two axes.
+
+### Proposed Solution
+
+Add a `/convergence-risk` page: a pure-SVG scatter with x = `contextUsagePct` (0–100) and y = `convergenceScore` (0–1). Draw quadrant guides at x=70% and y=0.5, tinting the high-context / low-convergence quadrant red as the "at-risk" zone. Each project is a dot colored by its existing state; hover shows slug, both metrics, and state. Header counts projects in the at-risk quadrant. Only projects reporting both metrics are plotted; reuses `/api/fleet`.
+
+### Acceptance Criteria
+
+- AC1: `/convergence-risk` plots a scatter of x=`contextUsagePct` vs y=`convergenceScore`
+- AC2: Quadrant guides at x=70% / y=0.5; high-context low-convergence quadrant tinted red
+- AC3: Dots colored by project state; hover shows slug + both metrics + state
+- AC4: Header counts projects in the at-risk quadrant
+- AC5: Only projects reporting both metrics plotted; empty state; reuses `/api/fleet`; added to `NAV_GROUPS` under Intelligence
+
+---
+
+## P187 — Fleet Snapshot Scrubber
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+The `fleet_snapshots` table records the fleet's idle/active/stalled/autonomous composition over time, but the only consumers are the snapshot detail API routes — there is no UI to *replay* how the fleet evolved. Operators reconstructing "when did things start going sideways?" have no scrubbable point-in-time view of historical fleet state.
+
+### Proposed Solution
+
+Add a `/snapshot-scrubber` page with a horizontal time slider bound to `fleet_snapshots`. Dragging the slider selects a snapshot; the page renders that snapshot's four state counts as neon stat tiles plus a sparkline of total active+autonomous across all snapshots with a marker at the selected point. Play/pause auto-advances through snapshots at ~1/sec. Reuses the existing snapshots API (extended to list snapshots if needed).
+
+### Acceptance Criteria
+
+- AC1: `/snapshot-scrubber` loads available `fleet_snapshots` and renders a time slider
+- AC2: Dragging the slider updates the displayed idle/active/stalled/autonomous counts
+- AC3: A sparkline of active+autonomous over all snapshots shows a marker at the selection
+- AC4: Play/pause auto-advances through snapshots
+- AC5: Empty history handled; added to `NAV_GROUPS` under Observability
+
+---
+
+## P188 — Goal Advancement Stream
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+The `goal_advancement` table logs each time a project's goal status changes, but that history is only consumed inside the digest and goal-radar aggregates. There is no chronological, fleet-wide feed of goal transitions, so operators cannot see at a glance "what goals moved, and when" across the whole fleet.
+
+### Proposed Solution
+
+Add a `/goal-stream` page backed by a new `/api/goal-stream` route returning recent `goal_advancement` rows across all slugs, newest first. Render a vertical timeline: each entry shows slug, the status transition (from → to) with arrow and status-colored chips, and a relative timestamp. Group entries by day with sticky day headers. Reuses goal-status color conventions from the existing goal views.
+
+### Acceptance Criteria
+
+- AC1: `/api/goal-stream` returns recent `goal_advancement` rows across all slugs, newest first
+- AC2: `/goal-stream` renders a vertical timeline of goal transitions
+- AC3: Each entry shows slug, from→to status with colored chips, and relative time
+- AC4: Entries grouped by day with sticky day headers
+- AC5: Empty state; added to `NAV_GROUPS` under Intelligence
+
+---
+
+## P189 — Memory Theme Constellation
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+Memory visibility today is per-project (footprint, decay, stream) or pairwise (similarity). Nothing shows the *shared conceptual structure* of the fleet's collective memory — which topics recur across many projects versus which are isolated. Operators cannot see the fleet's knowledge themes as a whole.
+
+### Proposed Solution
+
+Add a `/memory-constellation` page: a force-directed graph where nodes are frequent memory keywords/tags extracted from all projects' `MEMORY.md`, sized by occurrence count, and edges connect keywords that co-occur within the same project. Node color encodes how many distinct projects reference the keyword (isolated → shared). Backed by a new `/api/memory-constellation` route doing the keyword extraction and co-occurrence counting server-side. Hover a node to list the projects referencing it.
+
+### Acceptance Criteria
+
+- AC1: `/api/memory-constellation` extracts frequent keywords across all `MEMORY.md` and returns nodes + co-occurrence edges
+- AC2: `/memory-constellation` renders a force-directed graph; node size ∝ occurrence
+- AC3: Node color encodes distinct-project count (isolated → shared)
+- AC4: Hover a node lists referencing projects
+- AC5: Empty/sparse memory handled; added to `NAV_GROUPS` under Observability
+
+---
+
+## P190 — Alert Calendar Heatmap
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+`alert_events` records when fleet alerts fire (stalls, budget breaches, circuit trips), but there is no view of *when* trouble clusters. Recurring trouble windows — e.g. every weekday afternoon — are invisible, so operators cannot correlate incidents with time-of-day or day-of-week patterns.
+
+### Proposed Solution
+
+Add an `/alert-calendar` page backed by a new `/api/alert-calendar` route that buckets `alert_events` into a day-of-week × hour-of-day grid (7×24). Render a heatmap where cell intensity ∝ alert count, on a transparent→red ramp. Hovering a cell shows the count and a breakdown by alert type. Header shows the busiest window and total alerts in range (last 30 days).
+
+### Acceptance Criteria
+
+- AC1: `/api/alert-calendar` buckets `alert_events` into a 7×24 day×hour grid over the last 30 days
+- AC2: `/alert-calendar` renders the grid as a heatmap; intensity ∝ count on a transparent→red ramp
+- AC3: Hover a cell shows count + breakdown by alert type
+- AC4: Header shows the busiest window and total alert count
+- AC5: Empty history handled; added to `NAV_GROUPS` under Intelligence
