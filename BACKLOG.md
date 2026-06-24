@@ -5185,7 +5185,7 @@ From all active JSONL transcripts, extract turn start/end timestamps and tool-ca
 
 ## P222 — Live Turn Activity Feed (Real-time JSONL Tail)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
@@ -5206,7 +5206,7 @@ Add `/api/live-turns` that reads the last N bytes of each project's active JSONL
 
 ## P223 — Token Budget Burn Comparison (Multi-Project Cost Race)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
