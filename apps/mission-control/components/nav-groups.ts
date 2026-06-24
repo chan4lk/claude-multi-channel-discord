@@ -60,6 +60,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/attention-clock', label: 'Attention Radial Clock', icon: '◷' },
       { href: '/command-bridge', label: 'Fleet Command Bridge', icon: '⌖' },
       { href: '/live-turns', label: 'Live Turn Activity Feed', icon: '◉' },
+      { href: '/circuit-timeline', label: 'Circuit Breaker Timeline', icon: '⊘' },
     ],
   },
   {
@@ -145,6 +146,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/token-race', label: 'Token Budget Burn Comparison', icon: '⇌' },
       { href: '/session-health-calendar', label: 'Session Health Calendar', icon: '▦' },
       { href: '/idle-recovery', label: 'Idle Recovery Tracker', icon: '◉' },
+      { href: '/tool-frequency', label: 'Tool Call Frequency', icon: '⊞' },
     ],
   },
   {
