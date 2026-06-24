@@ -244,6 +244,10 @@ try { db.exec("ALTER TABLE fleet_snapshots ADD COLUMN deleted_at INTEGER"); } ca
 const snapshotCutoff = Math.floor(Date.now() / 1000) - 30 * 86400;
 db.prepare("DELETE FROM fleet_snapshots WHERE ts < ?").run(snapshotCutoff);
 
+// P196 — alert triage state: acknowledgement columns (additive migration)
+try { db.exec("ALTER TABLE alert_events ADD COLUMN ack_ts INTEGER"); } catch { /* column already present */ }
+try { db.exec("ALTER TABLE alert_events ADD COLUMN ack_by TEXT NOT NULL DEFAULT ''"); } catch { /* column already present */ }
+
 export function insertEvent(e: McEvent): void {
   db.prepare(
     `INSERT INTO events (instance_id, host, user, ts, type, payload)
@@ -509,6 +513,8 @@ export type AlertEventRow = {
   alert_type: string
   description: string
   payload: string
+  ack_ts: number | null
+  ack_by: string
 }
 
 export function insertAlertEvent(
@@ -522,16 +528,41 @@ export function insertAlertEvent(
   ).run(slug, alertType, description, JSON.stringify(payload))
 }
 
+export function getAlertEvent(id: number): AlertEventRow | null {
+  return db.prepare(`SELECT * FROM alert_events WHERE id = ?`).get(id) as AlertEventRow | null
+}
+
+/**
+ * Acknowledge an alert (P196). Stamps ack_ts + ack_by only if currently open;
+ * returns true when a row transitioned from open → acknowledged.
+ */
+export function acknowledgeAlert(id: number, actor: string): boolean {
+  const r = db.prepare(
+    `UPDATE alert_events SET ack_ts = unixepoch(), ack_by = ? WHERE id = ? AND ack_ts IS NULL`
+  ).run(actor, id)
+  return r.changes > 0
+}
+
+/** Re-open an acknowledged alert (P196). Returns true if a row changed. */
+export function unacknowledgeAlert(id: number): boolean {
+  const r = db.prepare(
+    `UPDATE alert_events SET ack_ts = NULL, ack_by = '' WHERE id = ? AND ack_ts IS NOT NULL`
+  ).run(id)
+  return r.changes > 0
+}
+
 export function getAlertEvents(opts: {
   slug?: string
   alert_type?: string
   cursor?: number
   limit?: number
+  includeAcked?: boolean // default true; false → only open (unacknowledged) alerts
 }): AlertEventRow[] {
   const conditions: string[] = []
   const params: unknown[] = []
   if (opts.slug) { conditions.push('slug = ?'); params.push(opts.slug) }
   if (opts.alert_type) { conditions.push('alert_type = ?'); params.push(opts.alert_type) }
+  if (opts.includeAcked === false) { conditions.push('ack_ts IS NULL') }
   if (opts.cursor != null) { conditions.push('id < ?'); params.push(opts.cursor) }
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
   const limit = Math.min(opts.limit ?? 100, 500)
@@ -553,14 +584,15 @@ export type AlertCalendarCell = {
  * disaggregated by type so the UI can show a per-cell breakdown; callers sum
  * across types for the cell intensity.
  */
-export function getAlertCalendar(sinceTs: number): AlertCalendarCell[] {
+export function getAlertCalendar(sinceTs: number, includeAcked = true): AlertCalendarCell[] {
+  const ackClause = includeAcked ? '' : ' AND ack_ts IS NULL'
   return db.prepare(
     `SELECT CAST(strftime('%w', ts, 'unixepoch', 'localtime') AS INTEGER) AS dow,
             CAST(strftime('%H', ts, 'unixepoch', 'localtime') AS INTEGER) AS hour,
             alert_type,
             COUNT(*) AS count
        FROM alert_events
-      WHERE ts >= ?
+      WHERE ts >= ?${ackClause}
       GROUP BY dow, hour, alert_type`
   ).all(sinceTs) as AlertCalendarCell[]
 }
@@ -576,13 +608,14 @@ export type AlertFlowCount = {
  * for the Alert Type Flow Sankey (P194). Blank slugs are coalesced to
  * '(unknown)' so every alert appears as a left-hand node.
  */
-export function getAlertFlow(sinceTs: number): AlertFlowCount[] {
+export function getAlertFlow(sinceTs: number, includeAcked = true): AlertFlowCount[] {
+  const ackClause = includeAcked ? '' : ' AND ack_ts IS NULL'
   return db.prepare(
     `SELECT CASE WHEN slug = '' THEN '(unknown)' ELSE slug END AS slug,
             alert_type,
             COUNT(*) AS count
        FROM alert_events
-      WHERE ts >= ?
+      WHERE ts >= ?${ackClause}
       GROUP BY slug, alert_type
       ORDER BY count DESC`
   ).all(sinceTs) as AlertFlowCount[]

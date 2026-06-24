@@ -19,7 +19,8 @@ const DAYS_BACK = 30
 
 export async function GET(): Promise<Response> {
   const sinceTs = Math.floor(Date.now() / 1000) - DAYS_BACK * 86400
-  const cells = getAlertCalendar(sinceTs)
+  // Exclude acknowledged alerts so the heatmap counts only open signal (P196).
+  const cells = getAlertCalendar(sinceTs, false)
 
   const grid: AlertCalendarCell[][] = Array.from({ length: 7 }, () =>
     Array.from({ length: 24 }, () => ({ count: 0, byType: {} as Record<string, number> }))
