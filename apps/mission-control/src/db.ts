@@ -686,6 +686,62 @@ export function getGoalAdvancementSince(slug: string, sinceDate: string): GoalAd
   ).all(slug, sinceDate) as GoalAdvancementRow[]
 }
 
+export interface MemoryConvergenceXYRow {
+  slug: string
+  churn: number // sum(added + removed) over the window
+  diffCount: number // number of memory_diff_log rows in the window
+  convStart: number | null // earliest convergence score in the window
+  convEnd: number | null // latest convergence score in the window
+  convPoints: number // number of distinct convergence points in the window
+}
+
+/**
+ * Per-project memory churn vs convergence delta over a window (P201). For each
+ * slug, churn is the summed added+removed lines from `memory_diff_log`
+ * (`ts >= sinceTs`, unix seconds); convergence start/end are the earliest and
+ * latest `convergence_history` scores within `sinceDate` (YYYY-MM-DD). The
+ * caller joins the two and excludes projects missing either series. Slugs
+ * present in only one table are returned with nulls/zeros so the route can
+ * filter cleanly.
+ */
+export function getMemoryConvergenceXY(sinceTs: number, sinceDate: string): MemoryConvergenceXYRow[] {
+  const churn = db.prepare(
+    `SELECT slug, SUM(added + removed) AS churn, COUNT(*) AS diffCount
+       FROM memory_diff_log WHERE ts >= ? GROUP BY slug`
+  ).all(sinceTs) as { slug: string; churn: number; diffCount: number }[]
+
+  const conv = db.prepare(
+    `SELECT slug, score FROM convergence_history WHERE date >= ? ORDER BY slug ASC, date ASC`
+  ).all(sinceDate) as { slug: string; score: number }[]
+
+  const convBy = new Map<string, { start: number; end: number; points: number }>()
+  for (const r of conv) {
+    const e = convBy.get(r.slug)
+    if (!e) convBy.set(r.slug, { start: r.score, end: r.score, points: 1 })
+    else {
+      e.end = r.score // rows ordered date ASC, so the last seen is the latest
+      e.points++
+    }
+  }
+
+  const churnBy = new Map(churn.map((c) => [c.slug, c]))
+  const slugs = new Set<string>([...churnBy.keys(), ...convBy.keys()])
+  const out: MemoryConvergenceXYRow[] = []
+  for (const slug of slugs) {
+    const c = churnBy.get(slug)
+    const cv = convBy.get(slug)
+    out.push({
+      slug,
+      churn: c?.churn ?? 0,
+      diffCount: c?.diffCount ?? 0,
+      convStart: cv?.start ?? null,
+      convEnd: cv?.end ?? null,
+      convPoints: cv?.points ?? 0,
+    })
+  }
+  return out
+}
+
 export function getAlertFlow(sinceTs: number, includeAcked = true): AlertFlowCount[] {
   const ackClause = includeAcked ? '' : ' AND ack_ts IS NULL'
   return db.prepare(

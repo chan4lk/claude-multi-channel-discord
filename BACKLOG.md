@@ -4736,7 +4736,7 @@ Add an `/impact` page backed by a new `/api/impact` route that parses completed 
 
 ## P201 — Memory × Convergence Correlation
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
