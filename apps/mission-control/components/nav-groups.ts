@@ -130,6 +130,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/memory-convergence-xy', label: 'Memory × Convergence', icon: '⊕' },
       { href: '/brief', label: 'Fleet Brief', icon: '◳' },
       { href: '/signal-timeline', label: 'Attention Signal Timeline', icon: '▦' },
+      { href: '/signal-graph', label: 'Signal Co-occurrence Graph', icon: '⬡' },
     ],
   },
   {

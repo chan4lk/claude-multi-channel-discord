@@ -4954,7 +4954,7 @@ Add a digest endpoint `/api/brief/digest` that renders the current critical+warn
 
 ## P211 — Signal Co-occurrence Force Graph
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
