@@ -4253,7 +4253,7 @@ Add a `/platform-matrix` page rendering a matrix heatmap: rows = platform (disco
 
 ## P180 — Fleet Command Center
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
@@ -4277,7 +4277,7 @@ Add a `/command-center` page with a compact multi-panel grid: (1) **Top attentio
 
 ## P181 — Goal Status Funnel
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-23
 
 ### Problem
