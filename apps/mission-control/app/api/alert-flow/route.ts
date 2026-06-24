@@ -28,7 +28,8 @@ export interface AlertFlowResponse {
 
 export async function GET(): Promise<Response> {
   const sinceTs = Math.floor(Date.now() / 1000) - DAYS_BACK * 86400
-  const rows = getAlertFlow(sinceTs)
+  // Exclude acknowledged alerts so the flow reflects only active/handled-noise-free signal (P196).
+  const rows = getAlertFlow(sinceTs, false)
 
   const projectTotals = new Map<string, number>()
   const typeTotals = new Map<string, number>()

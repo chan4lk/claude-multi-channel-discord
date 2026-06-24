@@ -4621,7 +4621,7 @@ Add a `/webhook-health` page backed by a new `/api/webhook-health` route that ag
 
 ## P196 — Alert Triage State
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
