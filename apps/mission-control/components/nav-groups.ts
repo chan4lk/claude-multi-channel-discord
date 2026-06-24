@@ -114,6 +114,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/convergence-wall', label: 'Convergence Wall', icon: '◎' },
       { href: '/convergence-dist', label: 'Convergence Distribution', icon: '▥' },
       { href: '/convergence-trend', label: 'Convergence Trend', icon: '↗' },
+      { href: '/convergence-forecast', label: 'Convergence Forecast', icon: '⤳' },
       { href: '/convergence-movers', label: 'Convergence Movers', icon: '⇅' },
       { href: '/convergence-risk', label: 'Convergence × Context Risk', icon: '⊠' },
       { href: '/quadrant', label: 'Quadrant Map', icon: '⊞' },
