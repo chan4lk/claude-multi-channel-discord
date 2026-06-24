@@ -707,6 +707,62 @@ export function getConvergenceScore(slug: string): number | null {
   return row?.score ?? null
 }
 
+export type FleetConvergenceTrendRow = {
+  date: string
+  meanScore: number
+  topBinCount: number
+  projectCount: number
+}
+
+/**
+ * Fleet-wide convergence aggregated by day for the most recent `days` dates
+ * (P183). One row per date present in `convergence_history`: mean score across
+ * all slugs and the count of slugs in the top bin (score ≥ 90). Returned
+ * oldest→newest for direct charting.
+ */
+export function getFleetConvergenceTrend(days = 14): FleetConvergenceTrendRow[] {
+  const rows = db.prepare(
+    `SELECT date,
+            AVG(score)                        AS meanScore,
+            SUM(CASE WHEN score >= 90 THEN 1 ELSE 0 END) AS topBinCount,
+            COUNT(*)                          AS projectCount
+       FROM convergence_history
+      GROUP BY date
+      ORDER BY date DESC
+      LIMIT ?`
+  ).all(days) as FleetConvergenceTrendRow[]
+  return rows.reverse()
+}
+
+export type ConvergenceMoverRow = {
+  slug: string
+  prev: number | null
+  curr: number
+  delta: number | null
+}
+
+/**
+ * Per-slug day-over-day convergence movement (P185). For each slug, the latest
+ * `convergence_history` score is `curr`; the prior distinct-date score is
+ * `prev`. `delta = curr - prev`, or null when the slug has only one entry.
+ */
+export function getConvergenceMovers(): ConvergenceMoverRow[] {
+  const rows = db.prepare(
+    `SELECT slug, date, score FROM convergence_history ORDER BY slug, date DESC`
+  ).all() as { slug: string; date: string; score: number }[]
+  const out: ConvergenceMoverRow[] = []
+  let i = 0
+  while (i < rows.length) {
+    const slug = rows[i].slug
+    const curr = rows[i].score
+    const prev = i + 1 < rows.length && rows[i + 1].slug === slug ? rows[i + 1].score : null
+    out.push({ slug, prev, curr, delta: prev == null ? null : curr - prev })
+    // advance to next slug
+    while (i < rows.length && rows[i].slug === slug) i++
+  }
+  return out
+}
+
 // ── Goal Advancement (P122) ───────────────────────────────────────────────
 
 export type GoalAdvancementRow = {

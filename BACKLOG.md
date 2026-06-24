@@ -4322,7 +4322,7 @@ Add a `/convergence-dist` page rendering a pure-SVG histogram of `convergenceSco
 
 ## P183 — Fleet Convergence Trend Line
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
@@ -4368,7 +4368,7 @@ Add a pin affordance to the navigation. Each item in `NavDropdown` gets a star t
 
 ## P185 — Convergence Movers Leaderboard
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
