@@ -138,6 +138,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/memory-bridge', label: 'Memory ⇄ Proposal Bridge', icon: '⇄' },
       { href: '/schedule-history', label: 'Schedule History', icon: '⏱' },
       { href: '/command-log', label: 'Operator Command Log', icon: '≡' },
+      { href: '/context-horizon', label: 'Context Runway', icon: '◷' },
+      { href: '/memory-distribution', label: 'Memory Type Distribution', icon: '◍' },
     ],
   },
   {
