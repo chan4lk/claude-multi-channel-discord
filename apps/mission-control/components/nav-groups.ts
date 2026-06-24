@@ -112,6 +112,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/convergence-trend', label: 'Convergence Trend', icon: '↗' },
       { href: '/convergence-movers', label: 'Convergence Movers', icon: '⇅' },
       { href: '/convergence-risk', label: 'Convergence × Context Risk', icon: '⊠' },
+      { href: '/quadrant', label: 'Quadrant Map', icon: '⊞' },
       { href: '/alert-calendar', label: 'Alert Calendar', icon: '▦' },
       { href: '/budget-pressure', label: 'Budget Pressure', icon: '▰' },
       { href: '/proposal-aging', label: 'Proposal Aging', icon: '◴' },
