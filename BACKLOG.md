@@ -4575,7 +4575,7 @@ Add a `/pressure-ridgeline` page backed by a new `/api/pressure-ridgeline` route
 
 ## P194 — Alert Type Flow
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem

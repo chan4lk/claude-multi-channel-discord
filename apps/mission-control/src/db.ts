@@ -565,6 +565,29 @@ export function getAlertCalendar(sinceTs: number): AlertCalendarCell[] {
   ).all(sinceTs) as AlertCalendarCell[]
 }
 
+export type AlertFlowCount = {
+  slug: string
+  alert_type: string
+  count: number
+}
+
+/**
+ * Alert counts grouped by (slug, alert_type) since `sinceTs` (unix seconds),
+ * for the Alert Type Flow Sankey (P194). Blank slugs are coalesced to
+ * '(unknown)' so every alert appears as a left-hand node.
+ */
+export function getAlertFlow(sinceTs: number): AlertFlowCount[] {
+  return db.prepare(
+    `SELECT CASE WHEN slug = '' THEN '(unknown)' ELSE slug END AS slug,
+            alert_type,
+            COUNT(*) AS count
+       FROM alert_events
+      WHERE ts >= ?
+      GROUP BY slug, alert_type
+      ORDER BY count DESC`
+  ).all(sinceTs) as AlertFlowCount[]
+}
+
 // ── Webhooks (P115) ───────────────────────────────────────────────────────
 
 export type WebhookRow = {
