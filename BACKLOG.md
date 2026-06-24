@@ -4345,7 +4345,7 @@ Add a `/convergence-trend` page backed by a new `/api/convergence-trend` route t
 
 ## P184 — Pinned Views Bar
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
