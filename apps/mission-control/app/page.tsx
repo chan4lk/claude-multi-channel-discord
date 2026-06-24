@@ -17,6 +17,7 @@ import FreshnessBadge from '../components/FreshnessBadge'
 import AdvisorTile from '../components/AdvisorTile'
 import HolographicView from '../components/HolographicView'
 import RecentlyShippedRail from '../components/RecentlyShippedRail'
+import PinnedViewsBar from '../components/PinnedViewsBar'
 import { useFleet } from '../components/FleetContext'
 import type { FleetResponse, ProjectState } from './api/fleet/route'
 import type { WhatsAppResponse } from './api/whatsapp/route'
@@ -796,6 +797,8 @@ function DashboardClient() {
           </div>
         </div>
       </header>
+
+      <PinnedViewsBar />
 
       <motion.main
         className="px-4 sm:px-6 py-6"

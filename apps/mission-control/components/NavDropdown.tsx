@@ -4,11 +4,14 @@ import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { NAV_GROUPS } from './nav-groups'
+import { usePinnedViews, togglePin, MAX_PINS } from '../lib/pinnedViews'
 
 export default function NavDropdown() {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const pathname = usePathname()
+  const pins = usePinnedViews()
+  const [capHint, setCapHint] = useState(false)
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -67,29 +70,50 @@ export default function NavDropdown() {
                   <div className="flex flex-col gap-0.5">
                     {group.items.map((item) => {
                       const isActive = pathname === item.href
+                      const isPinned = pins.includes(item.href)
                       return (
-                        <Link
-                          key={item.href}
-                          href={item.href}
-                          onClick={() => setOpen(false)}
-                          className="flex items-center gap-1.5 px-1.5 py-1 rounded text-[0.65rem] font-mono transition-colors"
-                          style={{
-                            color: isActive ? group.color : '#64748B',
-                            background: isActive ? `${group.color}12` : 'transparent',
-                          }}
-                          onMouseEnter={(e) => {
-                            if (!isActive) (e.currentTarget as HTMLElement).style.color = '#CBD5E1'
-                          }}
-                          onMouseLeave={(e) => {
-                            if (!isActive) (e.currentTarget as HTMLElement).style.color = '#64748B'
-                          }}
-                        >
-                          <span style={{ opacity: 0.7, fontSize: '0.7rem' }}>{item.icon}</span>
-                          {item.label}
-                          {isActive && (
-                            <span className="ml-auto text-[0.5rem]" style={{ color: group.color }}>●</span>
-                          )}
-                        </Link>
+                        <div key={item.href} className="flex items-center gap-0.5 group/item">
+                          <Link
+                            href={item.href}
+                            onClick={() => setOpen(false)}
+                            className="flex-1 flex items-center gap-1.5 px-1.5 py-1 rounded text-[0.65rem] font-mono transition-colors min-w-0"
+                            style={{
+                              color: isActive ? group.color : '#64748B',
+                              background: isActive ? `${group.color}12` : 'transparent',
+                            }}
+                            onMouseEnter={(e) => {
+                              if (!isActive) (e.currentTarget as HTMLElement).style.color = '#CBD5E1'
+                            }}
+                            onMouseLeave={(e) => {
+                              if (!isActive) (e.currentTarget as HTMLElement).style.color = '#64748B'
+                            }}
+                          >
+                            <span style={{ opacity: 0.7, fontSize: '0.7rem' }}>{item.icon}</span>
+                            <span className="truncate">{item.label}</span>
+                            {isActive && (
+                              <span className="ml-auto text-[0.5rem]" style={{ color: group.color }}>●</span>
+                            )}
+                          </Link>
+                          <button
+                            onClick={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              const ok = togglePin(item.href)
+                              if (!ok) {
+                                setCapHint(true)
+                                setTimeout(() => setCapHint(false), 2500)
+                              }
+                            }}
+                            title={isPinned ? 'Unpin view' : `Pin view (max ${MAX_PINS})`}
+                            className="shrink-0 px-1 text-[0.6rem] leading-none transition-opacity"
+                            style={{
+                              color: isPinned ? '#FBBF24' : '#475569',
+                              opacity: isPinned ? 1 : undefined,
+                            }}
+                          >
+                            {isPinned ? '★' : '☆'}
+                          </button>
+                        </div>
                       )
                     })}
                   </div>
@@ -102,6 +126,9 @@ export default function NavDropdown() {
               <span>to toggle · </span>
               <kbd className="px-1 rounded border border-white/10 text-slate-600">Esc</kbd>
               <span>to close</span>
+              {capHint && (
+                <span className="ml-auto" style={{ color: '#FBBF24' }}>max {MAX_PINS} pinned</span>
+              )}
             </div>
           </div>
         </>
