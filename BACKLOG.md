@@ -4996,7 +4996,7 @@ Add `/api/attention-sankey` that runs `computeFindings()` over the live fleet an
 
 ## P213 — Unified Entity Graph (Project ⇄ Memory ⇄ Proposal)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
@@ -5017,7 +5017,7 @@ Add `/api/entity-graph` that returns a tri-partite node set (projects, memories,
 
 ## P214 — Attention Radial Clock
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem

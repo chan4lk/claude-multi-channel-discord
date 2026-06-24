@@ -56,6 +56,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/ekg', label: 'Fleet Activity EKG', icon: '♥' },
       { href: '/marquee', label: 'Fleet Vitals Marquee', icon: '⇆' },
       { href: '/attention-sankey', label: 'Attention Sankey', icon: '⇶' },
+      { href: '/entity-graph', label: 'Unified Entity Graph', icon: '⬡' },
+      { href: '/attention-clock', label: 'Attention Radial Clock', icon: '◷' },
     ],
   },
   {

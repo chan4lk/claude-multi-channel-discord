@@ -1041,6 +1041,29 @@ export function getAttentionEvents(days = 30): AttentionEventRow[] {
   ).all(since) as AttentionEventRow[]
 }
 
+export type AttentionEventHourRow = {
+  hour: number // 0-23, UTC hour the event was last recorded (P214)
+  slug: string
+  signal: string
+  severity: string
+}
+
+/**
+ * Attention events over the last `days`, bucketed by the UTC hour-of-day the
+ * row was last recorded (`updated_at`). Powers the P214 radial clock — reveals
+ * whether signals cluster overnight or during scheduled-job windows. UTC keeps
+ * the bucketing deterministic regardless of server timezone.
+ */
+export function getAttentionEventsByHour(days = 30): AttentionEventHourRow[] {
+  const since = new Date(Date.now() - days * 86400_000).toISOString().slice(0, 10)
+  return db.prepare(
+    `SELECT CAST(strftime('%H', updated_at, 'unixepoch') AS INTEGER) AS hour,
+            slug, signal, severity
+       FROM attention_event
+      WHERE date >= ? ORDER BY hour ASC, signal ASC`
+  ).all(since) as AttentionEventHourRow[]
+}
+
 /** Last-sent digest hash for the P210 de-dupe guard ('' if never sent). */
 export function getLastDigestHash(): string {
   const row = db.prepare(`SELECT hash FROM digest_state WHERE id = 1`).get() as { hash: string } | undefined
