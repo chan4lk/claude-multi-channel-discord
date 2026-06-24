@@ -4912,7 +4912,7 @@ Extract a single shared finding-generation module (`lib/attention-findings.ts`) 
 
 ## P209 — Attention Signal Timeline Heatmap
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
@@ -4933,7 +4933,7 @@ Persist each computed finding to an `attention_event` table (date, slug, signal,
 
 ## P210 — Scheduled Fleet Brief Digest to Discord
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem

@@ -6,7 +6,7 @@ import {
   type BriefFinding,
   type Severity,
 } from '../../../lib/attention-findings'
-import { upsertBriefSnapshot } from '../../../src/db'
+import { upsertBriefSnapshot, upsertAttentionEvent } from '../../../src/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -41,6 +41,14 @@ export async function GET(): Promise<Response> {
     }
     const compact = findings.filter((f) => f.slug).map((f) => ({ slug: f.slug, severity: f.severity }))
     upsertBriefSnapshot(date, counts.critical, counts.warn, counts.info, JSON.stringify(compact))
+
+    // P209: persist each actionable finding as an attention_event for the
+    // signal timeline. Source from allFindings (carries the signal source);
+    // skip nominal/ok and slugless findings.
+    for (const f of allFindings) {
+      if (f.severity === 'ok' || !f.slug) continue
+      upsertAttentionEvent(date, f.slug, f.signal, f.severity)
+    }
   } catch {
     // Snapshot persistence is best-effort; never fail the read on a write error.
   }
