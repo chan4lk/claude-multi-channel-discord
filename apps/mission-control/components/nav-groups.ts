@@ -55,6 +55,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/freshness', label: 'Feed Freshness', icon: '◷' },
       { href: '/ekg', label: 'Fleet Activity EKG', icon: '♥' },
       { href: '/marquee', label: 'Fleet Vitals Marquee', icon: '⇆' },
+      { href: '/attention-sankey', label: 'Attention Sankey', icon: '⇶' },
     ],
   },
   {

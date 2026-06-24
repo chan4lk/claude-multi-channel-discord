@@ -4972,3 +4972,108 @@ Add `/api/signal-cooccurrence` that, over a window of `attention_event` history 
 - AC3: Node size by frequency, color by dominant severity; hover lists affected projects
 - AC4: Degrades gracefully when no `attention_event` history exists (live finding set only)
 - AC5: Empty state handled; added to `NAV_GROUPS` under Observability
+
+## P212 — Fleet Attention Sankey
+
+**Status:** `[x] done`
+**Created:** 2026-06-24
+
+### Problem
+
+The unified attention engine (P208) labels every finding with `slug`, `signal`, and `severity`, but there is no view of how attention *flows* across the fleet — which projects feed which signals, and how those signals roll up by severity. The co-occurrence force graph (P211) shows signal↔signal structure but not the project→signal→severity volume breakdown an operator needs to see where the fleet's attention budget actually goes.
+
+### Proposed Solution
+
+Add `/api/attention-sankey` that runs `computeFindings()` over the live fleet and returns a three-layer flow: project → signal → severity. Render `/attention-sankey` as a d3-sankey diagram (reusing the proposal-flow rendering pattern; `d3-sankey` is already a dependency). Link width = finding count; severity column colored critical/warn/info. Hovering a link isolates the project→signal→severity path. Project node labels deep-link to the project (P207 slug-focused deep-links).
+
+### Acceptance Criteria
+
+- AC1: `/api/attention-sankey` returns `{ nodes, links }` with three node kinds (project, signal, severity) and link `value` = finding count
+- AC2: `/attention-sankey` renders a 3-layer sankey; link width scales with count; severity nodes colored by severity
+- AC3: Healthy/`ok` findings excluded so the view shows only attention-worthy flow
+- AC4: Hover isolates a single flow path; project labels deep-link to `/project/<slug>` (or the slug-focused view)
+- AC5: Empty state handled when no attention findings exist; added to `NAV_GROUPS` under Observability
+
+## P213 — Unified Entity Graph (Project ⇄ Memory ⇄ Proposal)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+Project runtime state, memory files, and specclaw proposals each have their own views, but nothing shows them together as one connected graph. The north-star "holistic project/memory/proposal visibility" requires a single canvas where an operator can see a project, the memories it owns, and the proposals it is working — and how they interrelate.
+
+### Proposed Solution
+
+Add `/api/entity-graph` that returns a tri-partite node set (projects, memories, proposals) with edges project→memory (ownership, from `/api/memories`) and project→proposal (from `/api/backlog`). Render `/entity-graph` as a force-directed graph reusing the MemoryGraph sim; node shape/color by entity kind, project nodes sized by combined memory+proposal degree. Filter chips toggle each entity layer. Clicking a node opens a detail drawer.
+
+### Acceptance Criteria
+
+- AC1: `/api/entity-graph` returns typed nodes (kind: project|memory|proposal) and edges with no orphan references
+- AC2: `/entity-graph` renders a force graph; project nodes sized by degree; color by kind
+- AC3: Layer toggle chips show/hide memory and proposal nodes independently
+- AC4: Node click opens a drawer with entity details and a deep-link
+- AC5: Empty state handled; added to `NAV_GROUPS` under Observability
+
+## P214 — Attention Radial Clock
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+The attention signal timeline (P209) is a linear heatmap; it does not reveal *time-of-day* patterns — whether stalls cluster overnight, or context pressure peaks during scheduled-job windows. Operators tuning schedules need a circadian view.
+
+### Proposed Solution
+
+Add `/api/attention-clock` that buckets `attention_event` history into 24 hour-of-day slots × signal, returning per-hour counts and dominant severity. Render `/attention-clock` as a radial/polar chart (24 spokes = hours, concentric rings = signals, arc color by severity). Hovering a wedge shows the signal, hour, count, and affected projects.
+
+### Acceptance Criteria
+
+- AC1: `/api/attention-clock` returns 24 hour buckets × signal with counts and dominant severity
+- AC2: `/attention-clock` renders a radial 24-hour chart; arc color by severity
+- AC3: Hover shows signal, hour-of-day, count, affected project count
+- AC4: Degrades to empty state when no `attention_event` history exists
+- AC5: Added to `NAV_GROUPS` under Observability
+
+## P215 — Memory ⇄ Proposal Theme Bridge
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+Memories capture "what we learned" and proposals capture "what we plan", but the connection between them is invisible. When a proposal's theme overlaps an existing memory (e.g. a recurring pattern already recorded), the operator should see it — to avoid re-learning, and to ground proposals in prior knowledge.
+
+### Proposed Solution
+
+Add `/api/memory-proposal-bridge` that computes token-overlap (or shared theme tags) between memory descriptions and proposal titles/problem statements across the fleet, returning weighted memory↔proposal links above a threshold. Render `/memory-bridge` as a bipartite graph (memories left, proposals right) with edge weight = overlap strength. Hovering a link shows the matched terms.
+
+### Acceptance Criteria
+
+- AC1: `/api/memory-proposal-bridge` returns memory nodes, proposal nodes, and weighted overlap edges above a min threshold
+- AC2: `/memory-bridge` renders a bipartite graph; edge thickness = overlap strength
+- AC3: Hover shows the matched terms/themes driving the link
+- AC4: Threshold tunable via query param; empty state when no overlaps found
+- AC5: Added to `NAV_GROUPS` under Intelligence
+
+## P216 — Fleet Command Bridge (Situational Overview)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+An operator returning to the dashboard must visit many views to reconstruct fleet state: who needs attention, what's stalled, which proposals are pending, which memories are stale. There is no single "command bridge" that fuses the top signals from each domain into one at-a-glance overview.
+
+### Proposed Solution
+
+Add `/command-bridge` — a composite dashboard that fuses the top N from the attention engine (advisor cards), pending proposal count + oldest age, stalled/circuit-open projects, and stalest memories into a single grid of compact status panels. Each panel reuses an existing API (`/api/advisor`, `/api/backlog`, `/api/fleet`, `/api/memory-health`) and deep-links to its full view. Auto-refreshes; panels reorder so the most urgent domain floats to the top.
+
+### Acceptance Criteria
+
+- AC1: `/command-bridge` renders ≥4 domain panels (attention, proposals, runtime/stalls, memory) from existing APIs
+- AC2: Each panel shows a headline metric + top 1-3 items and deep-links to its full view
+- AC3: Panels are ordered by urgency (most critical domain first)
+- AC4: Auto-refreshes on an interval; empty/healthy states handled per panel
+- AC5: Added to `NAV_GROUPS` under Observability
