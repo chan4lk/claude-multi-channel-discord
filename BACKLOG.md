@@ -5227,7 +5227,7 @@ Reuse JSONL transcript data (already parsed by `/api/cost`). For each project, b
 
 ## P224 — Session Health Heatmap (Per-Project Turn Quality Calendar)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
@@ -5248,7 +5248,7 @@ Reuse the `turn_quality` table (already populated). Add `/api/session-health-cal
 
 ## P225 — Idle Recovery Tracker (First-Turn Reactivation Quality)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
