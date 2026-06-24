@@ -143,6 +143,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/memory-distribution', label: 'Memory Type Distribution', icon: '◍' },
       { href: '/fleet-timeline', label: 'Fleet Operational Timeline', icon: '◫' },
       { href: '/token-race', label: 'Token Budget Burn Comparison', icon: '⇌' },
+      { href: '/session-health-calendar', label: 'Session Health Calendar', icon: '▦' },
+      { href: '/idle-recovery', label: 'Idle Recovery Tracker', icon: '◉' },
     ],
   },
   {
