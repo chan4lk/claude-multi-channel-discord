@@ -4782,7 +4782,7 @@ Add a `/convergence-forecast` page backed by a new `/api/convergence-forecast` r
 
 ## P203 — Proposal Burnup Chart
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
@@ -4805,7 +4805,7 @@ Add a `/burnup` page backed by `/api/burnup` that parses `BACKLOG.md` for every 
 
 ## P204 — Fleet Vitals Marquee
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
