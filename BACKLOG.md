@@ -4828,7 +4828,7 @@ Add a `/marquee` page backed by `/api/marquee` that aggregates a compact set of 
 
 ## P205 — Convergence vs Memory Quadrant Brief
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
@@ -4846,3 +4846,66 @@ Add a `/brief` page backed by `/api/brief` that joins per-project convergence di
 - AC3: Findings use deterministic rule-based phrasing covering thrashing, stall, idle, and healthy cases
 - AC4: Severity drives sort order and color; healthy fleet shows an explicit "all nominal" state
 - AC5: Empty fleet handled; added to `NAV_GROUPS` under Intelligence
+
+## P206 — Fleet Brief History & Trend
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+The Fleet Brief (P205) and Fleet Advisor are both point-in-time: each render recomputes findings live and discards them. There is no record of how many issues the fleet carried yesterday vs today, so the operator cannot tell whether attention load is trending up or down, nor whether a recurring finding (e.g. one project that thrashes every day) is chronic. Every other intelligence view (convergence, burnup, velocity) has a time dimension; the brief does not.
+
+### Proposed Solution
+
+Persist a daily snapshot of brief findings. Add a `brief_snapshot` table (date, critical/warn/info counts, and the finding set as JSON) written once per day by the existing snapshot/scheduler path that already runs convergence rollups. Add `/api/brief-trend` returning the per-day severity counts over a window, and surface a compact severity-stacked sparkline in the `/brief` header plus a "Δ vs yesterday" badge per recurring slug. No new compute — reuse the P205 finding generator and store its output.
+
+### Acceptance Criteria
+
+- AC1: `brief_snapshot` table created with idempotent daily upsert keyed on date
+- AC2: `/api/brief-trend` returns per-day critical/warn/info counts over a configurable window
+- AC3: `/brief` header shows a severity-stacked sparkline of the trend
+- AC4: A slug appearing in the brief on consecutive days is flagged as recurring/chronic
+- AC5: Snapshot write reuses the P205 finding generator (no duplicate rule logic); empty fleet writes a zero row
+
+## P207 — Slug-Focused Deep-Links from Brief & Advisor
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+A per-project drill-down page already exists at `/focus/[slug]`, but the Fleet Brief findings and Fleet Advisor cards deep-link to fleet-wide views (`/convergence-trend`, `/feed`, `/idle-fleet`). Clicking a finding about project `alpha` dumps the operator onto a view of *all* projects, who must then re-find `alpha` by hand. The most relevant destination for a single-project finding is that project's own focus page.
+
+### Proposed Solution
+
+Route per-project findings (those carrying a non-empty `slug`) to `/focus/<slug>` as the primary deep-link, keeping the fleet-wide view as a secondary "see in context" link. Where a fleet-wide view is genuinely more relevant (e.g. open-alert backlog → `/alert-flow`), retain it. Confirm `/focus/[slug]` surfaces the signals a finding references (convergence, churn, alerts) and extend it if a referenced signal is missing so the deep-link never lands on an empty section.
+
+### Acceptance Criteria
+
+- AC1: Brief findings with a slug deep-link to `/focus/<slug>` as the primary destination
+- AC2: Advisor cards with a slug do the same, consistently with the brief
+- AC3: Findings with no natural per-project home (fleet-wide) keep their fleet-view link
+- AC4: `/focus/[slug]` renders the convergence, memory-churn, and alert signals referenced by findings
+- AC5: No dead or empty-section deep-links — verified against the current finding rule set
+
+## P208 — Unify Fleet Advisor & Fleet Brief Attention Engine
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+The Fleet Advisor panel (P-era advisor) and the new Fleet Brief (P205) are two separate rule engines that both answer "which projects need attention and why," with overlapping but divergent logic (advisor covers circuit/context/budget; brief covers thrashing/stall/idle/alerts). The operator now has two surfaces that can disagree, and a future signal must be added to both. This is UX friction and a maintenance hazard.
+
+### Proposed Solution
+
+Extract a single shared finding-generation module (`lib/attention-findings.ts`) that emits a typed finding set from the joined signals, consumed by both `/api/advisor` and `/api/brief`. The advisor panel keeps its actionable-card framing (inject/distill/command); the brief keeps its narrative briefing framing — but both draw from one rule set so coverage and phrasing stay consistent. Deduplicate the per-project transcript/convergence/churn/alert reads behind the shared module.
+
+### Acceptance Criteria
+
+- AC1: `lib/attention-findings.ts` exports a single rule engine returning typed findings with severity, slug, message, signal source
+- AC2: `/api/advisor` and `/api/brief` both consume it; no duplicated rule logic remains
+- AC3: Signal reads (transcript mtime, convergence, churn, alerts) are shared, not re-implemented per route
+- AC4: Existing advisor actions (inject/distill/command) and brief deep-links both preserved
+- AC5: Adding a new rule requires editing exactly one file; covered by a unit test asserting both routes see it

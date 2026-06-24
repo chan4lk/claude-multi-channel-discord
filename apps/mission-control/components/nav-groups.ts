@@ -128,6 +128,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/alert-sla', label: 'Alert Response Time', icon: '⏲' },
       { href: '/impact', label: 'Proposal Impact Trace', icon: '⊶' },
       { href: '/memory-convergence-xy', label: 'Memory × Convergence', icon: '⊕' },
+      { href: '/brief', label: 'Fleet Brief', icon: '◳' },
     ],
   },
   {
