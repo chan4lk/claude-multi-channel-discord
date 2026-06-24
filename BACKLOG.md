@@ -5080,7 +5080,7 @@ Add `/command-bridge` — a composite dashboard that fuses the top N from the at
 
 ## P217 — Schedule Run History & Outcome Tracker
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
@@ -5101,7 +5101,7 @@ Persist schedule run outcomes to a `schedule_run` SQLite table (id, schedule_id,
 
 ## P218 — Operator Command Log
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
