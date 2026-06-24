@@ -5038,7 +5038,7 @@ Add `/api/attention-clock` that buckets `attention_event` history into 24 hour-o
 
 ## P215 — Memory ⇄ Proposal Theme Bridge
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
@@ -5059,7 +5059,7 @@ Add `/api/memory-proposal-bridge` that computes token-overlap (or shared theme t
 
 ## P216 — Fleet Command Bridge (Situational Overview)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem

@@ -58,6 +58,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/attention-sankey', label: 'Attention Sankey', icon: '⇶' },
       { href: '/entity-graph', label: 'Unified Entity Graph', icon: '⬡' },
       { href: '/attention-clock', label: 'Attention Radial Clock', icon: '◷' },
+      { href: '/command-bridge', label: 'Fleet Command Bridge', icon: '⌖' },
     ],
   },
   {
@@ -134,6 +135,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/brief', label: 'Fleet Brief', icon: '◳' },
       { href: '/signal-timeline', label: 'Attention Signal Timeline', icon: '▦' },
       { href: '/signal-graph', label: 'Signal Co-occurrence Graph', icon: '⬡' },
+      { href: '/memory-bridge', label: 'Memory ⇄ Proposal Bridge', icon: '⇄' },
     ],
   },
   {
