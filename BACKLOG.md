@@ -4593,3 +4593,72 @@ Add an `/alert-flow` page backed by a new `/api/alert-flow` route that aggregate
 - AC3: Ribbon thickness ∝ count; ribbons colored by alert type
 - AC4: Hover highlights connected nodes/ribbons and shows the count
 - AC5: Empty history handled; added to `NAV_GROUPS` under Intelligence
+
+---
+
+## P195 — Webhook Delivery Health
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+The outbound alerting pipeline writes every webhook POST result to `webhook_deliveries` (status, response_code, error), but this data is only surfaced per-webhook via the `/api/webhooks/[id]/deliveries` drill-in. There is no fleet-wide view of delivery reliability, so operators cannot tell at a glance whether alerts are actually reaching their destinations — a silently failing webhook means missed alerts with no visible signal.
+
+### Proposed Solution
+
+Add a `/webhook-health` page backed by a new `/api/webhook-health` route that aggregates `webhook_deliveries` across all webhooks over the last 7 days: per-webhook success rate, total deliveries, recent failure count, last-failure timestamp, and an HTTP response-code distribution. Render a card grid (one card per webhook) showing name, a success-rate gauge (green ≥99% / amber ≥90% / red below), spark of daily volume, and the most recent error string. A header shows overall delivery success rate and count of webhooks currently degraded.
+
+### Acceptance Criteria
+
+- AC1: `/api/webhook-health` aggregates `webhook_deliveries` (last 7d) per webhook: success rate, totals, recent failures, last-failure ts, response-code distribution
+- AC2: `/webhook-health` renders a per-webhook card grid with a success-rate gauge color-coded by threshold
+- AC3: Each card shows recent volume spark and most-recent error string
+- AC4: Header shows overall success rate and degraded-webhook count
+- AC5: No-webhooks and no-deliveries states handled; added to `NAV_GROUPS` under Observability
+
+---
+
+## P196 — Alert Triage State
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+`alert_events` has no lifecycle state — every alert is permanently "open." Operators cannot acknowledge or resolve an alert, so the Alert Calendar (P190), Alert Flow (P194), and Alerts list keep counting handled alerts as if they were still active. Recurring known-noise alerts drown out new, actionable ones and there is no way to track what has been dealt with.
+
+### Proposed Solution
+
+Add an `ack_ts` (nullable unix seconds) and `ack_by` (text) column to `alert_events` via an additive migration. Expose `acknowledgeAlert(id, actor)` / `unacknowledgeAlert(id)` db helpers and a `POST /api/alerts/[id]/ack` route (gated by the existing admin auth). Add an "Ack" / "Unack" button to each row in the Alerts list, with an acknowledged row dimmed and stamped with who/when. Add an `?open=true` filter so the list defaults to unacknowledged alerts. Aggregation routes that count "active" alerts gain an `includeAcked=false` default so dashboards stop counting handled noise.
+
+### Acceptance Criteria
+
+- AC1: Additive migration adds nullable `ack_ts` + `ack_by` to `alert_events`; existing rows unaffected
+- AC2: `POST /api/alerts/[id]/ack` (and unack) updates state, gated by admin auth, writes an `audit_log` entry
+- AC3: Alerts list shows Ack/Unack control; acknowledged rows dim and show actor + timestamp
+- AC4: Alerts list supports an open-only filter that hides acknowledged alerts by default
+- AC5: Alert count aggregates can exclude acknowledged alerts; no regression for callers that pass nothing
+
+---
+
+## P197 — Feed Freshness Wall
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+Every dashboard page polls its own API feed and shows a per-page `FreshnessBadge`, but there is no single place to see which feeds across the whole app are stale or erroring. With 110+ views, an operator only discovers a broken or stalled data feed by happening to open the page that uses it — there is no fleet-wide data-plane health view.
+
+### Proposed Solution
+
+Add a `/freshness` page backed by a new `/api/freshness` route that probes the key data-producing tables (`fleet_snapshots`, `convergence_history`, `goal_advancement`, `context_pressure`, `turn_quality`, `alert_events`, `memory_diff_log`, `digest_log`) and returns, per feed, the most-recent row timestamp and row count in the last 24h. Render a status board: one row per feed with a colored dot (green = updated within its expected cadence, amber = late, red = silent/empty), the last-update relative time, and 24h volume. Feeds are sorted most-stale first so dead pipelines surface at the top. A header shows count of healthy / late / silent feeds.
+
+### Acceptance Criteria
+
+- AC1: `/api/freshness` returns per-feed last-row timestamp and 24h row count for the key data tables
+- AC2: Each feed has an expected-cadence threshold; status computed as healthy / late / silent
+- AC3: `/freshness` renders a status board sorted most-stale-first with colored status dots and relative last-update time
+- AC4: Header summarizes healthy / late / silent feed counts
+- AC5: Empty/never-populated feeds render as silent (not an error); added to `NAV_GROUPS` under Observability
