@@ -118,6 +118,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/budget-pressure', label: 'Budget Pressure', icon: '▰' },
       { href: '/proposal-aging', label: 'Proposal Aging', icon: '◴' },
       { href: '/sparkline-wall', label: 'Sparkline Wall', icon: '⋀' },
+      { href: '/alert-flow', label: 'Alert Type Flow', icon: '⇄' },
     ],
   },
   {
