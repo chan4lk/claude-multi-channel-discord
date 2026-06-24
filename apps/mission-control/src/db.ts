@@ -663,6 +663,17 @@ export function getWebhookDeliveries(webhookId: number, limit = 20): WebhookDeli
   ).all(webhookId, limit) as WebhookDeliveryRow[]
 }
 
+/**
+ * All webhook deliveries since `sinceTs` (unix seconds), oldest-first, for the
+ * Webhook Delivery Health view (P195). Aggregation (success rate, response-code
+ * distribution, daily volume) is done by the caller.
+ */
+export function getWebhookDeliveriesSince(sinceTs: number): WebhookDeliveryRow[] {
+  return db.prepare(
+    `SELECT * FROM webhook_deliveries WHERE ts >= ? ORDER BY ts ASC`
+  ).all(sinceTs) as WebhookDeliveryRow[]
+}
+
 // ── Turn Annotations (P114) ───────────────────────────────────────────────
 
 export type TurnAnnotationTag = 'note' | 'warning' | 'bug'
@@ -1059,6 +1070,37 @@ export function getMemoryDiffCacheAge(slug: string): number | null {
     `SELECT MAX(cached_at) as last FROM memory_diff_log WHERE slug = ?`
   ).get(slug) as { last: number | null } | undefined
   return row?.last ?? null
+}
+
+export type FeedFreshness = {
+  feed: string
+  lastTs: number | null // unix seconds of newest row, null if empty
+  count24h: number // rows in the last 24h
+}
+
+/**
+ * Per-feed data-plane freshness for the Feed Freshness Wall (P197). Each key
+ * data-producing table is probed for its newest-row timestamp and 24h row
+ * count. Time columns differ per table (unix `ts`, date-text `date`, ISO-hour
+ * `hour`), so each query normalises to unix seconds. SQL is fully hardcoded —
+ * no caller-supplied table names.
+ */
+export function getFeedFreshness(): FeedFreshness[] {
+  const q = (feed: string, sql: string): FeedFreshness => {
+    const row = db.prepare(sql).get() as { lastTs: number | null; count24h: number } | undefined
+    return { feed, lastTs: row?.lastTs ?? null, count24h: row?.count24h ?? 0 }
+  }
+  const cut = `unixepoch() - 86400`
+  return [
+    q('fleet_snapshots', `SELECT MAX(ts) AS lastTs, SUM(ts >= ${cut}) AS count24h FROM fleet_snapshots`),
+    q('context_pressure', `SELECT MAX(ts) AS lastTs, SUM(ts >= ${cut}) AS count24h FROM context_pressure`),
+    q('alert_events', `SELECT MAX(ts) AS lastTs, SUM(ts >= ${cut}) AS count24h FROM alert_events`),
+    q('memory_diff_log', `SELECT MAX(ts) AS lastTs, SUM(ts >= ${cut}) AS count24h FROM memory_diff_log`),
+    q('digest_log', `SELECT MAX(ts) AS lastTs, SUM(ts >= ${cut}) AS count24h FROM digest_log`),
+    q('convergence_history', `SELECT CAST(strftime('%s', MAX(date)) AS INTEGER) AS lastTs, SUM(date >= date('now','-1 day')) AS count24h FROM convergence_history`),
+    q('goal_advancement', `SELECT CAST(strftime('%s', MAX(date)) AS INTEGER) AS lastTs, SUM(date >= date('now','-1 day')) AS count24h FROM goal_advancement`),
+    q('turn_quality', `SELECT CAST(strftime('%s', replace(MAX(hour),'T',' ')||':00:00') AS INTEGER) AS lastTs, SUM(replace(hour,'T',' ')||':00:00' >= datetime('now','-1 day')) AS count24h FROM turn_quality`),
+  ]
 }
 
 export interface ConstellationCoord {

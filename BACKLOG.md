@@ -4598,7 +4598,7 @@ Add an `/alert-flow` page backed by a new `/api/alert-flow` route that aggregate
 
 ## P195 — Webhook Delivery Health
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
@@ -4644,7 +4644,7 @@ Add an `ack_ts` (nullable unix seconds) and `ack_by` (text) column to `alert_eve
 
 ## P197 — Feed Freshness Wall
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
