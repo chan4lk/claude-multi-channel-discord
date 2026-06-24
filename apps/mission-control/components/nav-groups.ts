@@ -54,6 +54,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/webhook-health', label: 'Webhook Health', icon: '⊶' },
       { href: '/freshness', label: 'Feed Freshness', icon: '◷' },
       { href: '/ekg', label: 'Fleet Activity EKG', icon: '♥' },
+      { href: '/marquee', label: 'Fleet Vitals Marquee', icon: '⇆' },
     ],
   },
   {
@@ -108,6 +109,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/proposal-flow', label: 'Proposal Flow', icon: '⟿' },
       { href: '/momentum-index', label: 'Momentum Index', icon: '◔' },
       { href: '/burndown', label: 'Backlog Burndown', icon: '◣' },
+      { href: '/burnup', label: 'Proposal Burnup', icon: '◥' },
       { href: '/themes', label: 'Proposal Themes', icon: '⊞' },
       { href: '/forecast', label: 'Velocity Forecast', icon: '⤳' },
       { href: '/memory-footprint', label: 'Memory Footprint', icon: '⊞' },
