@@ -5182,3 +5182,87 @@ From all active JSONL transcripts, extract turn start/end timestamps and tool-ca
 - AC3: Idle gaps > 30 min highlighted; hover shows turn summary
 - AC4: Window selector (6h/24h/7d) adjusts the query and re-renders without page reload
 - AC5: Added to `NAV_GROUPS` under Observability; graceful empty state when no transcript data found
+
+## P222 — Live Turn Activity Feed (Real-time JSONL Tail)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+The fleet timeline (`/fleet-timeline`) shows historical swimlanes, but there is no live view of what is happening right now across all projects — which project is currently responding, how many tool calls it has made in the current turn, and when did it last produce output. Operators monitoring an active session must manually check individual project channels.
+
+### Proposed Solution
+
+Add `/api/live-turns` that reads the last N bytes of each project's active JSONL file, extracts the most recent assistant turn in progress (or the last complete turn), and returns per-project `{slug, state: 'active'|'idle', lastToolName, toolCountThisTurn, lastOutputAt, currentTurnStart}`. Poll every 5 seconds. Render `/live-turns` as a stacked live feed: projects sorted by `lastOutputAt` desc, each row shows slug + activity indicator (pulsing dot if active), current turn duration, last tool name, and tool count. Auto-refreshes via `useFreshness` at 5s. No DB writes.
+
+### Acceptance Criteria
+
+- AC1: `/api/live-turns` reads last 4KB of each project's active JSONL, returns per-project turn state
+- AC2: Projects with assistant output in the last 60s classified as `active`; others `idle`
+- AC3: `/live-turns` renders pulsing dot for active projects; rows sorted by recency
+- AC4: Shows: current turn duration, last tool name, tool count this turn, time since last output
+- AC5: Refreshes every 5s; empty state when no active transcripts; added to nav under Observability
+
+## P223 — Token Budget Burn Comparison (Multi-Project Cost Race)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+The cost page (`/cost`) shows per-project totals. The burn-rate page shows velocity. But there is no view that shows all projects on the same axis — a "race chart" of cumulative token spend over time — so an operator can see which project is consuming budget fastest relative to others and whether spending is accelerating or plateauing.
+
+### Proposed Solution
+
+Reuse JSONL transcript data (already parsed by `/api/cost`). For each project, build a daily cumulative token spend series (output_tokens per day from assistant turns). Add `/api/token-race` returning per-project daily cumulative series over a configurable window (default 30d). Render `/token-race` as a multi-line chart: x = days, y = cumulative output tokens, one line per project, colored by slug hash. Lines animate from left on load. Hover shows per-project cumulative at that day. A "today" vertical marker. Legend sorted by total spend desc. Toggle between absolute and normalized (pct of max) view.
+
+### Acceptance Criteria
+
+- AC1: `/api/token-race` returns daily cumulative output-token series per project from JSONL over configurable window
+- AC2: `/token-race` renders multi-line chart with one colored line per project; x=day, y=cumulative tokens
+- AC3: Hover shows all projects' values at hovered day (cross-hair or tooltip)
+- AC4: Absolute/normalized toggle; legend sorted by total desc
+- AC5: Added to nav under Intelligence; graceful empty state
+
+## P224 — Session Health Heatmap (Per-Project Turn Quality Calendar)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+Turn quality scores (`/turn-quality`) exist per turn but are shown as a table. There is no calendar view of whether a given project had good or bad days — whether quality is trending down week over week, or whether weekends produce worse turns (e.g. scheduled tasks with no human oversight).
+
+### Proposed Solution
+
+Reuse the `turn_quality` table (already populated). Add `/api/session-health-calendar` that aggregates per-project daily average turn quality over a configurable window (default 90d). Render `/session-health-calendar` as a GitHub-style per-project quality calendar: each project gets its own row of day squares (green=good/80+, yellow=medium/50-79, red=bad/<50, gray=no turns). Clicking a day square navigates to `/turn-quality?slug=X&date=Y`. Fleet aggregate row at top. Window: 30/60/90d selector.
+
+### Acceptance Criteria
+
+- AC1: `/api/session-health-calendar` returns per-project daily avg turn quality from `turn_quality` table
+- AC2: `/session-health-calendar` renders per-project calendar rows (day squares colored green/yellow/red/gray)
+- AC3: Fleet aggregate row at top showing worst-day and best-day markers
+- AC4: Click day square navigates to `/turn-quality?slug=X&date=Y`
+- AC5: 30/60/90d window selector; added to nav under Intelligence
+
+## P225 — Idle Recovery Tracker (First-Turn Reactivation Quality)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-24
+
+### Problem
+
+Projects that were idle for hours or days often produce poor first turns after reactivation — context is stale, the session may have been resumed, and the model may hallucinate past state. There is no view that specifically tracks reactivation events (idle → active transitions) and whether the first turn back was a quality recovery or a confusion event.
+
+### Proposed Solution
+
+From transcript JSONL + `turn_quality` scores, detect reactivation events: idle gap ≥ 2h preceding a user turn. For each reactivation, record `{slug, gap_hours, first_turn_quality, first_turn_tool_count, resumed}`. Add `/api/idle-recovery` returning reactivation events over a 90d window. Render `/idle-recovery` as a scatter plot: x = idle gap hours (log scale), y = first-turn quality score, color = whether session was resumed (vs fresh). Tooltip shows slug + gap + quality. A horizontal line at quality=50 separates recovery/confusion. Trend line: does longer idle → worse quality?
+
+### Acceptance Criteria
+
+- AC1: `/api/idle-recovery` detects reactivation events (idle gap ≥ 2h) from JSONL, joins with `turn_quality`
+- AC2: Returns events with gap_hours, first_turn_quality, tool_count, resumed flag
+- AC3: `/idle-recovery` renders scatter plot x=log(gap_hours) y=quality, colored by resumed
+- AC4: Hover tooltip; quality=50 reference line; optional trend line
+- AC5: Added to nav under Intelligence; graceful empty state with explanation
