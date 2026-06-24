@@ -4414,7 +4414,7 @@ Add a `/convergence-risk` page: a pure-SVG scatter with x = `contextUsagePct` (0
 
 ## P187 — Fleet Snapshot Scrubber
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
@@ -4483,7 +4483,7 @@ Add a `/memory-constellation` page: a force-directed graph where nodes are frequ
 
 ## P190 — Alert Calendar Heatmap
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem

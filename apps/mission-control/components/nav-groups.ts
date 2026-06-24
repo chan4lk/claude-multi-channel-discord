@@ -48,6 +48,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/context-eta', label: 'Context Fill ETA', icon: '◷' },
       { href: '/age-distribution', label: 'Age Distribution', icon: '▥' },
       { href: '/platform-matrix', label: 'Platform × State', icon: '▦' },
+      { href: '/snapshot-scrubber', label: 'Snapshot Scrubber', icon: '⏯' },
     ],
   },
   {
@@ -109,6 +110,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/convergence-trend', label: 'Convergence Trend', icon: '↗' },
       { href: '/convergence-movers', label: 'Convergence Movers', icon: '⇅' },
       { href: '/convergence-risk', label: 'Convergence × Context Risk', icon: '⊠' },
+      { href: '/alert-calendar', label: 'Alert Calendar', icon: '▦' },
       { href: '/budget-pressure', label: 'Budget Pressure', icon: '▰' },
       { href: '/proposal-aging', label: 'Proposal Aging', icon: '◴' },
     ],
