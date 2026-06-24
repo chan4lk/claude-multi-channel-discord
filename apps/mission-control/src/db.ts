@@ -540,6 +540,31 @@ export function getAlertEvents(opts: {
   ).all(...params, limit) as AlertEventRow[]
 }
 
+export type AlertCalendarCell = {
+  dow: number // 0=Sunday … 6=Saturday
+  hour: number // 0–23
+  alert_type: string
+  count: number
+}
+
+/**
+ * Alert counts bucketed by day-of-week × hour-of-day × alert_type since
+ * `sinceTs` (unix seconds), for the Alert Calendar Heatmap (P190). Returned
+ * disaggregated by type so the UI can show a per-cell breakdown; callers sum
+ * across types for the cell intensity.
+ */
+export function getAlertCalendar(sinceTs: number): AlertCalendarCell[] {
+  return db.prepare(
+    `SELECT CAST(strftime('%w', ts, 'unixepoch', 'localtime') AS INTEGER) AS dow,
+            CAST(strftime('%H', ts, 'unixepoch', 'localtime') AS INTEGER) AS hour,
+            alert_type,
+            COUNT(*) AS count
+       FROM alert_events
+      WHERE ts >= ?
+      GROUP BY dow, hour, alert_type`
+  ).all(sinceTs) as AlertCalendarCell[]
+}
+
 // ── Webhooks (P115) ───────────────────────────────────────────────────────
 
 export type WebhookRow = {
