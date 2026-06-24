@@ -59,6 +59,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/entity-graph', label: 'Unified Entity Graph', icon: '⬡' },
       { href: '/attention-clock', label: 'Attention Radial Clock', icon: '◷' },
       { href: '/command-bridge', label: 'Fleet Command Bridge', icon: '⌖' },
+      { href: '/live-turns', label: 'Live Turn Activity Feed', icon: '◉' },
     ],
   },
   {
@@ -141,6 +142,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/context-horizon', label: 'Context Runway', icon: '◷' },
       { href: '/memory-distribution', label: 'Memory Type Distribution', icon: '◍' },
       { href: '/fleet-timeline', label: 'Fleet Operational Timeline', icon: '◫' },
+      { href: '/token-race', label: 'Token Budget Burn Comparison', icon: '⇌' },
     ],
   },
   {
