@@ -140,6 +140,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/command-log', label: 'Operator Command Log', icon: '≡' },
       { href: '/context-horizon', label: 'Context Runway', icon: '◷' },
       { href: '/memory-distribution', label: 'Memory Type Distribution', icon: '◍' },
+      { href: '/fleet-timeline', label: 'Fleet Operational Timeline', icon: '◫' },
     ],
   },
   {
