@@ -625,6 +625,67 @@ export function getAlertSlaRows(sinceTs: number): AlertSlaRow[] {
   ).all(sinceTs) as AlertSlaRow[]
 }
 
+/**
+ * Per-source activity timestamps (unix seconds) since `sinceTs` for the Fleet
+ * Activity EKG (P199). Five tracked sources: alerts (non-inject alert_events),
+ * injects (alert_type='inject'), memory diffs, digests, and broadcasts.
+ * `broadcasts.ts` is ISO text — normalised to unix seconds; soft-deleted rows
+ * are excluded. Hourly bucketing is done by the caller.
+ */
+export type EkgTimestamps = {
+  alerts: number[]
+  injects: number[]
+  memory: number[]
+  digests: number[]
+  broadcasts: number[]
+}
+
+export function getEkgTimestamps(sinceTs: number): EkgTimestamps {
+  const col = (sql: string, ...params: unknown[]): number[] =>
+    (db.prepare(sql).all(...params) as { ts: number }[]).map((r) => r.ts)
+  return {
+    alerts: col(`SELECT ts FROM alert_events WHERE ts >= ? AND alert_type != 'inject'`, sinceTs),
+    injects: col(`SELECT ts FROM alert_events WHERE ts >= ? AND alert_type = 'inject'`, sinceTs),
+    memory: col(`SELECT ts FROM memory_diff_log WHERE ts >= ?`, sinceTs),
+    digests: col(`SELECT ts FROM digest_log WHERE ts >= ?`, sinceTs),
+    broadcasts: col(
+      `SELECT CAST(strftime('%s', ts) AS INTEGER) AS ts FROM broadcasts
+        WHERE deleted_at IS NULL AND CAST(strftime('%s', ts) AS INTEGER) >= ?`,
+      sinceTs,
+    ),
+  }
+}
+
+/**
+ * Slug with the most `convergence_history` rows — the most-tracked project,
+ * used as the "master" series for the Proposal Impact Trace (P200). Null when
+ * no convergence data exists.
+ */
+export function getTopConvergenceSlug(): string | null {
+  const row = db.prepare(
+    `SELECT slug FROM convergence_history GROUP BY slug ORDER BY COUNT(*) DESC LIMIT 1`
+  ).get() as { slug: string } | undefined
+  return row?.slug ?? null
+}
+
+/**
+ * Date-windowed convergence series for one slug, oldest→newest, since
+ * `sinceDate` (YYYY-MM-DD). Used by the Proposal Impact Trace (P200) to overlay
+ * shipped-proposal markers on the convergence trend.
+ */
+export function getConvergenceSince(slug: string, sinceDate: string): ConvergenceRow[] {
+  return db.prepare(
+    `SELECT * FROM convergence_history WHERE slug = ? AND date >= ? ORDER BY date ASC`
+  ).all(slug, sinceDate) as ConvergenceRow[]
+}
+
+/** Date-windowed goal-advancement series for one slug, oldest→newest (P200). */
+export function getGoalAdvancementSince(slug: string, sinceDate: string): GoalAdvancementRow[] {
+  return db.prepare(
+    `SELECT * FROM goal_advancement WHERE slug = ? AND date >= ? ORDER BY date ASC`
+  ).all(slug, sinceDate) as GoalAdvancementRow[]
+}
+
 export function getAlertFlow(sinceTs: number, includeAcked = true): AlertFlowCount[] {
   const ackClause = includeAcked ? '' : ' AND ack_ts IS NULL'
   return db.prepare(
