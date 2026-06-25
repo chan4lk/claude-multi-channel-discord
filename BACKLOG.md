@@ -6020,7 +6020,7 @@ Add `/api/budget-forecast` that reads per-project token usage from the last 14 d
 
 ## P258 — Project Twin Analysis (Behavioral Similarity Clustering)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done` — PR #258
 **Created:** 2026-06-25
 
 ### Problem
@@ -6044,7 +6044,7 @@ Add `/api/project-twins` that computes a feature vector per project: [turns_per_
 
 ## P259 — Activity Digest on Demand (What Happened While Away)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done` — PR #258
 **Created:** 2026-06-25
 
 ### Problem
