@@ -6164,7 +6164,7 @@ Add a `/star-map` page rendering an SVG scatter plot with X-axis = convergenceSc
 
 ## P264 — Memory Density Heatmap (Project × Hour-of-Day Write Frequency)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
 
 ### Problem
@@ -6183,3 +6183,123 @@ Add a `/memory-density` page with a grid heatmap: rows = projects, columns = hou
 - AC4: Hover: tooltip showing project slug, hour label (e.g. "14:00–15:00"), write count
 - AC5: Color scale legend (0 → max) shown below grid; "Last 7 days" label in header
 - AC6: Added to nav under Intelligence; handles projects with no memory git history (row shown grayed); max 30 projects displayed (sort by total desc)
+
+---
+
+## P265 — Memory Write Velocity Sparklines
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+The Memory Density Heatmap (P264) shows hour-of-day write patterns but not trend over time. Operators cannot see if a project's memory activity is accelerating, plateauing, or declining across days.
+
+### Proposed Solution
+
+Add a `/memory-velocity` page with one sparkline per project (pure SVG). X-axis = last 14 days (one point per day), Y-axis = memory commit count for that day. Lines colored by trend direction (green = increasing last 3d, red = decreasing, cyan = stable). A `/api/memory-velocity` endpoint reads `git log --format=%aI -- memory/` per project, buckets by calendar day, returns `{ slug, dailyCounts: { date: string; count: number }[] }[]`. Fleet aggregate line overlaid. Header shows the project with highest recent velocity.
+
+### Acceptance Criteria
+
+- AC1: `/api/memory-velocity` returns `{ slug, dailyCounts: { date; count }[] }[]` for last 14 days
+- AC2: One SVG sparkline per project, sorted by total desc; max 20 shown
+- AC3: Line color encodes trend (green/red/cyan) based on last 3 days vs prior 3 days
+- AC4: Fleet aggregate sparkline shown at top in white
+- AC5: Header shows project with highest 3-day velocity
+- AC6: Added to nav under Intelligence; handles zero-history projects (flat line shown grayed)
+
+---
+
+## P266 — Per-Project Memory File Age Strip
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+Memory files accumulate but their age is invisible. An operator cannot quickly see which projects have stale memory files that haven't been updated in weeks vs recently refreshed ones.
+
+### Proposed Solution
+
+Add a `/memory-age-strip` page. For each project, display a horizontal strip of colored dots — one dot per memory `.md` file. Dot color encodes file age (green < 7d, amber 7-30d, red > 30d). Dot size encodes word count. Strips stacked vertically, sorted by stale-file count desc. A `/api/memory-age` endpoint reads `fs.statSync` mtime for each memory file per project and returns `{ slug, files: { name, ageDays, wordCount }[] }[]`. Hovering a dot shows file name, age, word count.
+
+### Acceptance Criteria
+
+- AC1: `/api/memory-age` returns `{ slug, files: { name, ageDays, wordCount }[] }[]`
+- AC2: One horizontal dot strip per project; dot color = age band (green/amber/red)
+- AC3: Dot radius proportional to word count (min 4px, max 12px)
+- AC4: Strips sorted by stale (>30d) file count desc
+- AC5: Hover tooltip: file name, age in days, word count
+- AC6: Added to nav under Intelligence; legend shows age bands
+
+---
+
+## P267 — Session Turn Heatmap (Project × Day-of-Week)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+Message Heatmap (P84) shows operator messages by day×hour. But there is no equivalent view of Claude turn activity (assistant responses) by project and day-of-week, which would reveal each project's natural work rhythm.
+
+### Proposed Solution
+
+Add a `/turn-heatmap` page mirroring the message-heatmap pattern but sourced from JSONL transcripts. A `/api/turn-heatmap` endpoint scans each project's transcript `.jsonl` files, counts lines where `message.role === 'assistant'` grouped by day-of-week × hour-of-day, and returns `{ slug, grid: number[7][24] }[]` (7 days × 24 hours). Page renders one heatmap per project with a project selector dropdown; fleet aggregate shown by default.
+
+### Acceptance Criteria
+
+- AC1: `/api/turn-heatmap` returns `{ slug, grid: number[7][24], total }[]` for last 30 days
+- AC2: Page matches message-heatmap UX: day×hour grid, cyan gradient, peak highlight, color scale
+- AC3: Project selector dropdown switches between fleet aggregate and per-project view
+- AC4: Fleet aggregate computed by summing all project grids
+- AC5: Per-project stats shown: total turns, peak day+hour
+- AC6: Added to nav under Intelligence
+
+---
+
+## P268 — Memory Coverage Gap Detector
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+Some projects are active (many turns, commits) but have no memory files. Others have memory files but none of the four canonical types (user, feedback, project, reference). These coverage gaps indicate incomplete agent setup but are invisible in current views.
+
+### Proposed Solution
+
+Add a `/memory-gaps` page listing projects with memory coverage gaps. A `/api/memory-gaps` endpoint scans each project directory: checks for `memory/` dir existence, counts files by type prefix (user_*, feedback_*, project_*, reference_*), and cross-references with transcript recency (active = transcript modified < 7d). Returns `{ slug, hasMemoryDir, typeCounts: Record<string, number>, isActive, missingTypes: string[] }[]`. Page renders a sortable table with gap badges (missing-dir / missing-type indicators) and a filter for active-only projects.
+
+### Acceptance Criteria
+
+- AC1: `/api/memory-gaps` returns coverage data per project including `missingTypes[]`
+- AC2: Table shows slug, active status, has-memory-dir, type coverage (user/feedback/project/reference checkmarks)
+- AC3: Missing-type cells show red ✗; present types show green ✓
+- AC4: Filter toggle: "Active projects only" (transcript < 7d old)
+- AC5: Sort by gap count desc by default; click column header to resort
+- AC6: Added to nav under Intelligence; empty state when all projects fully covered
+
+---
+
+## P269 — Fleet Memory Growth Timeline
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+Memory accumulates over time but there is no view of fleet-level memory growth history. Operators cannot see when major memory expansion events happened (e.g. bulk new projects onboarded, memory migration runs) or how total memory file count trends.
+
+### Proposed Solution
+
+Add a `/memory-growth` page with a stacked area chart (pure SVG). X-axis = last 30 days (daily buckets), Y-axis = cumulative memory file count across all projects. Each project is a stacked area band, colored by a fixed project palette. A `/api/memory-growth` endpoint reads git log per project memory dir, buckets new file creations by day (files that appear in git for the first time on that day), and returns `{ dates: string[], series: { slug, dailyNew: number[] }[] }`. Hovering the chart shows a vertical crosshair and per-project tooltip.
+
+### Acceptance Criteria
+
+- AC1: `/api/memory-growth` returns `{ dates, series: { slug, dailyNew }[] }` for last 30 days
+- AC2: SVG stacked area chart, one band per project, X = days, Y = cumulative total
+- AC3: Hover crosshair: shows date, per-project file count, fleet total
+- AC4: Legend below chart lists project slugs with color swatches
+- AC5: Fleet total line overlaid in white above stacked areas
+- AC6: Added to nav under Intelligence; handles zero-growth periods (flat line)
