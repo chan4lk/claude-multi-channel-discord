@@ -63,6 +63,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/circuit-timeline', label: 'Circuit Breaker Timeline', icon: '⊘' },
       { href: '/turn-duration', label: 'Turn Duration Histogram', icon: '⏱' },
       { href: '/circuit-mttr', label: 'Circuit Breaker MTTR', icon: '⟳' },
+      { href: '/message-heatmap', label: 'Message Volume Heatmap', icon: '▦' },
     ],
   },
   {

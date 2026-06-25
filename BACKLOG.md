@@ -5473,3 +5473,95 @@ Extend `/api/backlog-coverage` (or add `/api/backlog-forecast`) to compute: roll
 - AC3: Estimated done date shown in sticky header with velocity used
 - AC4: Toggle linear vs optimistic (p75) projection
 - AC5: Added to nav under Intelligence; "stalled" state when velocity is zero
+
+---
+
+## P235 — Inbound Message Heatmap (Operator Engagement by Hour & Day)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+Operators have no view of when each project receives the most messages. A heatmap of inbound message volume by hour-of-day × day-of-week would reveal peak engagement windows, quiet periods, and whether certain projects are only active on weekdays or at specific hours. This helps tune scheduler timing and staffing.
+
+### Proposed Solution
+
+Parse JSONL transcripts for genuine user messages (role=user, content[0].type≠tool_result). Extract hour-of-day (0–23) and day-of-week (0=Mon…6=Sun) from each message timestamp. Add `/api/message-heatmap?slug=X&window=30` returning a 7×24 grid (day × hour → count) per project. Render `/message-heatmap` as a GitHub-contribution-style grid: rows=days-of-week, cols=hours, cell color intensity=message count. Project selector; fleet aggregate mode sums across all projects. Tooltip shows exact count and local time on hover.
+
+### Acceptance Criteria
+
+- AC1: `/api/message-heatmap` parses JSONL genuine user messages, returns 7×24 grid per slug + fleet aggregate
+- AC2: `/message-heatmap` renders 7×24 heatmap grid (rows=Mon–Sun, cols=0–23h) with intensity = message count
+- AC3: Project selector switches between per-slug and fleet-aggregate view
+- AC4: Cell hover tooltip shows count + time label (e.g. "Wed 14:00–15:00: 12 messages")
+- AC5: Added to nav under Observability; graceful empty state when no transcripts found
+
+---
+
+## P236 — Tool Error Rate Monitor (Per-Tool Failure Frequency)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+The JSONL transcript records `tool_result` blocks that include error content when a tool fails (content with `is_error: true` or error-type content). There is no view of which tools fail most often, whether error rates are improving, or which projects have the most tool failures. Operators debugging reliability issues have no signal-to-noise on tool stability.
+
+### Proposed Solution
+
+Parse JSONL `tool_result` blocks for each project: detect errors via `is_error: true` or content blocks with `type: "error"`. Compute per-tool stats: call count, error count, error rate (%), most recent error timestamp, most common error message prefix. Add `/api/tool-error-rate?slug=X&window=30`. Render `/tool-error-rate` as a table sorted by error rate desc: tool name, calls, errors, error%, trend sparkline (error/day last 14d), last error time, most common error snippet. Project selector; mcp__mcd__ suppressed by default.
+
+### Acceptance Criteria
+
+- AC1: `/api/tool-error-rate` parses JSONL tool_result for is_error/error-type blocks, returns per-tool stats
+- AC2: `/tool-error-rate` renders sortable table: tool, calls, errors, rate%, sparkline, last error, common error
+- AC3: Error rate cell color-coded: green(0%), amber(<10%), red(≥10%)
+- AC4: Project selector; mcp__mcd__ hidden by default with toggle
+- AC5: Added to nav under Observability; graceful empty state when no tool errors found
+
+---
+
+## P237 — Project State Transition Sankey (Activity Flow Visualization)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+Projects cycle through states (idle → active → stuck → circuit-open → reset) but there is no aggregate view of how often these transitions happen across the fleet, which states projects spend the most time in, or whether certain transitions (stuck → circuit-open) are becoming more frequent. A Sankey or flow chart would reveal the dominant paths through project lifecycle.
+
+### Proposed Solution
+
+Read `circuit-events.jsonl` (open/close events) and combine with fleet API state snapshots to reconstruct state transition sequences. Estimate idle↔active transitions from JSONL message timestamps (gap > 30min = idle). Build a transition matrix: from-state × to-state → count. Add `/api/state-transitions` returning the matrix + per-state time totals. Render `/state-transitions` as an SVG Sankey diagram: nodes=states (idle, active, stuck, circuit-open), edges=transitions, edge width=count. Color nodes by state severity. Tooltip on edge shows transition count and avg duration in source state.
+
+### Acceptance Criteria
+
+- AC1: `/api/state-transitions` builds transition matrix from circuit-events.jsonl + JSONL message gap analysis
+- AC2: `/state-transitions` renders SVG Sankey: nodes=states, edges=transitions, width=count
+- AC3: Tooltip on edge shows count and avg duration in source state
+- AC4: Per-state total time shown as node label (e.g. "Active: 74% of time")
+- AC5: Added to nav under Observability; graceful empty when no state data found
+
+---
+
+## P238 — Watchdog Kill Log (Stuck-Agent Kill History)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+The stuck-watchdog kills Claude processes that exceed `stuckThresholdMinutes` without progress. These kills are logged to stderr but not persisted anywhere queryable. Operators have no history of when kills happened, which projects are killed most often, or what the process was doing when killed (last tool call). Without this data, diagnosing recurring stuck issues requires reading tmux logs manually.
+
+### Proposed Solution
+
+Instrument `ClaudeProjectProcess` to append a line to `watchdog-kills.jsonl` (in the project dir) whenever the watchdog kills a process: `{ts, slug, runtimeMs, lastToolCall?, transcriptLines, reason}`. Add `/api/watchdog-kills` reading these files across all projects, returning events sorted by ts desc with pagination. Render `/watchdog-kills` as a table: timestamp, slug, runtime before kill, last tool called, reason. Summary header: total kills, kills/week, most-killed project. Added to nav under Observability.
+
+### Acceptance Criteria
+
+- AC1: `ClaudeProjectProcess` appends to `watchdog-kills.jsonl` on every watchdog-triggered kill with ts/slug/runtimeMs/lastToolCall/reason
+- AC2: `/api/watchdog-kills` reads all project `watchdog-kills.jsonl` files, returns sorted events with pagination
+- AC3: `/watchdog-kills` renders table: timestamp, slug, runtime, last tool, reason; summary header with total/week/worst project
+- AC4: Slug filter; pagination; clicking slug links to `/circuit-timeline?slug=X`
+- AC5: Added to nav under Observability; graceful empty state; bot restart not required (JSONL appended at runtime)
