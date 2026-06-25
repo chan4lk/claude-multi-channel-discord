@@ -5621,7 +5621,7 @@ Instrument `Scheduler.tick()` to append `{ts, scheduleId, slug, interval, messag
 
 ## P241 — Cross-Project Goal Alignment Matrix
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
 
 ### Problem
@@ -5644,7 +5644,7 @@ Read all project goal files. Use keyword overlap to compute similarity between e
 
 ## P242 — Context Pressure Alert Banner (Real-Time Threshold Warnings)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
 
 ### Problem
@@ -5667,7 +5667,7 @@ Add `/api/context-alerts` that calls `/api/token-usage` internally, filters for 
 
 ## P243 — Watchdog Kill → Circuit Trip Correlation
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
 
 ### Problem
@@ -5690,7 +5690,7 @@ Add `/api/kill-circuit-correlation?slug=X` that reads both `watchdog-kills.jsonl
 
 ## P244 — Scheduled Job Definition Inspector (Active Schedules Dashboard)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
 
 ### Problem
