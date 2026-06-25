@@ -149,6 +149,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/tool-frequency', label: 'Tool Call Frequency', icon: '⊞' },
       { href: '/backlog-coverage', label: 'Proposal Coverage Heatmap', icon: '▦' },
       { href: '/agent-tree', label: 'Agent Spawn Tree', icon: '⑂' },
+      { href: '/memory-staleness', label: 'Memory Staleness Radar', icon: '◎' },
     ],
   },
   {
