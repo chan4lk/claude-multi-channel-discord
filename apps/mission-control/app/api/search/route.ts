@@ -1,7 +1,6 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
-import Database from 'better-sqlite3'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,131 +18,126 @@ export interface SearchResponse {
   results: SearchResult[]
   query: string
   counts: { memory: number; transcript: number }
+  totalHits: number
+  truncated: boolean
 }
 
-function encodeProjectCwd(realPath: string): string {
-  return realPath.replace(/[^a-zA-Z0-9]/g, '-')
-}
-
-function extractSnippet(text: string, term: string, radius = 80): string {
+function extractSnippet(text: string, term: string, radius = 100): string {
   const idx = text.toLowerCase().indexOf(term.toLowerCase())
-  if (idx === -1) return text.slice(0, 160)
+  if (idx === -1) return text.slice(0, 200)
   const start = Math.max(0, idx - radius)
   const end = Math.min(text.length, idx + term.length + radius)
   const snippet = text.slice(start, end)
   return (start > 0 ? '…' : '') + snippet + (end < text.length ? '…' : '')
 }
 
-function searchMemories(q: string, mcdDir: string): SearchResult[] {
-  const dbPath = path.join(mcdDir, 'memory.db')
-  if (!fs.existsSync(dbPath)) return []
-
-  let db: Database.Database | null = null
-  try {
-    db = new Database(dbPath, { readonly: true, fileMustExist: true })
-    const rows = db.prepare(
-      `SELECT id, channel_slug, type, content, last_accessed_at
-       FROM memories
-       WHERE content LIKE '%' || ? || '%'
-       ORDER BY last_accessed_at DESC
-       LIMIT 50`
-    ).all(q) as Array<{
-      id: string
-      channel_slug: string
-      type: string
-      content: string
-      last_accessed_at: string
-    }>
-
-    return rows.map((row) => ({
-      source: 'memory' as const,
-      slug: row.channel_slug,
-      snippet: extractSnippet(row.content, q),
-      highlight: q,
-      timestamp: row.last_accessed_at,
-      memoryId: row.id,
-      memoryType: row.type,
-    }))
-  } catch {
-    return []
-  } finally {
-    db?.close()
-  }
+function inferMemoryType(fileName: string): string {
+  const lower = path.basename(fileName).toLowerCase()
+  if (lower.startsWith('user')) return 'user'
+  if (lower.startsWith('feedback')) return 'feedback'
+  if (lower.startsWith('project')) return 'project'
+  if (lower.startsWith('reference')) return 'reference'
+  return 'unknown'
 }
 
-function findLatestJsonl(slug: string, mcdDir: string): string | null {
-  const projectPath = path.join(mcdDir, 'projects', slug)
-  let realPath = projectPath
-  try {
-    realPath = fs.realpathSync(projectPath)
-  } catch {
-    return null
-  }
-
-  const encoded = encodeProjectCwd(realPath)
-  const transcriptDir = path.join(os.homedir(), '.claude', 'projects', encoded)
-
-  let jsonlFiles: string[] = []
-  try {
-    jsonlFiles = fs.readdirSync(transcriptDir).filter((f) => f.endsWith('.jsonl'))
-  } catch {
-    return null
-  }
-  if (jsonlFiles.length === 0) return null
-
-  let latestFile = ''
-  let latestMtime = 0
-  for (const file of jsonlFiles) {
-    try {
-      const mtime = fs.statSync(path.join(transcriptDir, file)).mtimeMs
-      if (mtime > latestMtime) {
-        latestMtime = mtime
-        latestFile = path.join(transcriptDir, file)
-      }
-    } catch {}
-  }
-  return latestFile || null
-}
-
-function searchTranscript(slug: string, q: string, mcdDir: string): SearchResult[] {
-  const latestFile = findLatestJsonl(slug, mcdDir)
-  if (!latestFile) return []
-
-  let content = ''
-  try {
-    content = fs.readFileSync(latestFile, 'utf-8')
-  } catch {
-    return []
-  }
-
-  const lines = content.trim().split('\n').filter(Boolean)
-  // Read last 500 lines
-  const recentLines = lines.slice(-500)
-
+function searchMemoryFiles(q: string, mcdDir: string, limit: number): SearchResult[] {
   const results: SearchResult[] = []
   const qLower = q.toLowerCase()
 
-  for (const line of recentLines) {
-    if (results.length >= 5) break
-    try {
-      const record = JSON.parse(line)
-      if (record.type !== 'assistant' || !Array.isArray(record.message?.content)) continue
+  let slugs: string[] = []
+  try {
+    const projectsDir = path.join(mcdDir, 'projects')
+    slugs = fs.readdirSync(projectsDir)
+      .filter(d => !d.startsWith('.') && fs.statSync(path.join(projectsDir, d)).isDirectory())
+  } catch { return results }
 
-      for (const block of record.message.content) {
-        if (block.type !== 'text' || typeof block.text !== 'string') continue
-        if (!block.text.toLowerCase().includes(qLower)) continue
+  for (const slug of slugs) {
+    if (results.length >= limit) break
+    const memDir = path.join(mcdDir, 'projects', slug, 'memory')
+    let files: string[] = []
+    try { files = fs.readdirSync(memDir).filter(f => f.endsWith('.md')) } catch { continue }
 
-        const timestamp = record.timestamp ?? record.created_at ?? undefined
-        results.push({
-          source: 'transcript',
-          slug,
-          snippet: extractSnippet(block.text, q),
-          highlight: q,
-          timestamp,
-        })
-        if (results.length >= 5) break
+    for (const file of files) {
+      if (results.length >= limit) break
+      let content = ''
+      try { content = fs.readFileSync(path.join(memDir, file), 'utf-8') } catch { continue }
+      if (!content.toLowerCase().includes(qLower)) continue
+
+      results.push({
+        source: 'memory',
+        slug,
+        snippet: extractSnippet(content, q),
+        highlight: q,
+        memoryId: file,
+        memoryType: inferMemoryType(file),
+      })
+    }
+  }
+
+  return results
+}
+
+function findAllJsonlFiles(slug: string, mcdDir: string): string[] {
+  const projectPath = path.join(mcdDir, 'projects', slug)
+  let realPath = projectPath
+  try { realPath = fs.realpathSync(projectPath) } catch { return [] }
+  const encoded = realPath.replace(/[^a-zA-Z0-9]/g, '-')
+  const transcriptDir = path.join(os.homedir(), '.claude', 'projects', encoded)
+  try {
+    return fs.readdirSync(transcriptDir)
+      .filter(f => f.endsWith('.jsonl'))
+      .map(f => path.join(transcriptDir, f))
+  } catch { return [] }
+}
+
+function searchTranscripts(q: string, mcdDir: string, limit: number): SearchResult[] {
+  const results: SearchResult[] = []
+  const qLower = q.toLowerCase()
+
+  let channels: { projects?: Record<string, { slug?: string }> } | null = null
+  try {
+    channels = JSON.parse(fs.readFileSync(path.join(mcdDir, 'channels.json'), 'utf-8'))
+  } catch { return results }
+
+  const slugs = Object.values(channels?.projects ?? {})
+    .map(p => p.slug)
+    .filter((s): s is string => Boolean(s))
+
+  for (const slug of slugs) {
+    if (results.length >= limit) break
+    const files = findAllJsonlFiles(slug, mcdDir)
+
+    for (const file of files) {
+      if (results.length >= limit) break
+      let lines: string[]
+      try { lines = fs.readFileSync(file, 'utf-8').split('\n').filter(Boolean) } catch { continue }
+
+      for (const raw of lines) {
+        if (results.length >= limit) break
+        let rec: { type?: string; timestamp?: string; message?: { role?: string; content?: Array<{ type?: string; text?: string }> } }
+        try { rec = JSON.parse(raw) } catch { continue }
+
+        const role = rec.message?.role
+        const content = rec.message?.content ?? []
+        if (!role || content.length === 0) continue
+
+        // Search both user messages and assistant text blocks
+        for (const block of content) {
+          if (block.type !== 'text' || typeof block.text !== 'string') continue
+          if (!block.text.toLowerCase().includes(qLower)) continue
+          if (results.length >= limit) break
+
+          results.push({
+            source: 'transcript',
+            slug,
+            snippet: extractSnippet(block.text, q),
+            highlight: q,
+            timestamp: rec.timestamp,
+          })
+          break
+        }
       }
-    } catch {}
+    }
   }
 
   return results
@@ -152,45 +146,42 @@ function searchTranscript(slug: string, q: string, mcdDir: string): SearchResult
 export async function GET(req: Request): Promise<Response> {
   const url = new URL(req.url)
   const q = (url.searchParams.get('q') ?? '').trim()
+  const scope = url.searchParams.get('scope') ?? 'all'
+  const limit = Math.max(1, Math.min(100, parseInt(url.searchParams.get('limit') ?? '50', 10)))
 
   if (q.length < 2) {
     return Response.json({
       results: [],
       query: q,
       counts: { memory: 0, transcript: 0 },
+      totalHits: 0,
+      truncated: false,
     } satisfies SearchResponse)
   }
 
   const mcdDir = process.env.MCD_CHANNELS_DIR
     ?? path.join(process.env.HOME ?? os.homedir(), '.claude', 'channels', 'discord-multi')
 
-  // Memory search
-  const memoryResults = searchMemories(q, mcdDir)
+  const memoryResults: SearchResult[] = scope !== 'messages'
+    ? searchMemoryFiles(q, mcdDir, limit)
+    : []
 
-  // Transcript search — read channels.json for slugs
-  const transcriptResults: SearchResult[] = []
-  try {
-    const channelsRaw = fs.readFileSync(path.join(mcdDir, 'channels.json'), 'utf-8')
-    const channels = JSON.parse(channelsRaw) as { projects?: Record<string, { slug?: string }> }
-    const slugs = Object.values(channels.projects ?? {})
-      .map((p) => p.slug)
-      .filter((s): s is string => Boolean(s))
+  const transcriptResults: SearchResult[] = scope !== 'memory'
+    ? searchTranscripts(q, mcdDir, limit - memoryResults.length)
+    : []
 
-    for (const slug of slugs) {
-      if (transcriptResults.length >= 50) break
-      const hits = searchTranscript(slug, q, mcdDir)
-      transcriptResults.push(...hits)
-    }
-  } catch {}
-
-  const results = [...memoryResults, ...transcriptResults]
+  const allResults = [...memoryResults, ...transcriptResults]
+  const totalHits = allResults.length
+  const truncated = totalHits >= limit
 
   return Response.json({
-    results,
+    results: allResults.slice(0, limit),
     query: q,
     counts: {
       memory: memoryResults.length,
       transcript: transcriptResults.length,
     },
+    totalHits,
+    truncated,
   } satisfies SearchResponse)
 }

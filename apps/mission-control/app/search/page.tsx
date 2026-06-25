@@ -87,15 +87,16 @@ function SearchInner() {
   const [inputVal, setInputVal] = useState(initialQ)
   const [data, setData] = useState<SearchResponse | null>(null)
   const [loading, setLoading] = useState(false)
+  const [scope, setScope] = useState<'all' | 'messages' | 'memory'>('all')
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const doSearch = useCallback((term: string) => {
+  const doSearch = useCallback((term: string, sc: string) => {
     if (term.length < 2) {
       setData(null)
       return
     }
     setLoading(true)
-    fetch(`/api/search?q=${encodeURIComponent(term)}`)
+    fetch(`/api/search?q=${encodeURIComponent(term)}&scope=${sc}`)
       .then((r) => r.json())
       .then((d: SearchResponse) => {
         setData(d)
@@ -104,12 +105,12 @@ function SearchInner() {
       .catch(() => setLoading(false))
   }, [])
 
-  // Run search when URL ?q= changes
+  // Run search when URL ?q= or scope changes
   useEffect(() => {
     const q = searchParams.get('q') ?? ''
     setInputVal(q)
-    doSearch(q)
-  }, [searchParams, doSearch])
+    doSearch(q, scope)
+  }, [searchParams, doSearch, scope])
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -145,7 +146,7 @@ function SearchInner() {
       </header>
 
       {/* Search form */}
-      <div className="px-6 py-6 max-w-3xl mx-auto w-full">
+      <div className="px-6 py-6 max-w-3xl mx-auto w-full space-y-3">
         <form onSubmit={handleSubmit} className="flex gap-2">
           <input
             ref={inputRef}
@@ -170,6 +171,28 @@ function SearchInner() {
             Search
           </button>
         </form>
+        {/* Scope filter chips */}
+        <div className="flex gap-2">
+          {(['all', 'messages', 'memory'] as const).map(s => (
+            <button
+              key={s}
+              onClick={() => setScope(s)}
+              className="text-[0.55rem] font-mono uppercase tracking-wider px-2.5 py-1 rounded border transition-colors"
+              style={{
+                background: scope === s ? 'rgba(0,245,255,0.12)' : 'transparent',
+                borderColor: scope === s ? 'rgba(0,245,255,0.5)' : 'rgba(255,255,255,0.1)',
+                color: scope === s ? '#00F5FF' : '#64748B',
+              }}
+            >
+              {s}
+            </button>
+          ))}
+          {data?.truncated && (
+            <span className="text-[0.55rem] font-mono text-slate-600 ml-auto self-center">
+              showing top {data.results.length} of {data.totalHits}+ hits
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Results */}

@@ -172,6 +172,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/memory-timeline', label: 'Session Memory Timeline', icon: '◫' },
       { href: '/session-gaps', label: 'Session Gap Analysis', icon: '⊘' },
       { href: '/memory-knowledge-graph', label: 'Cross-Project Memory Knowledge Graph', icon: '⬡' },
+      { href: '/lifecycle-funnel', label: 'Project Lifecycle Funnel', icon: '⧗' },
     ],
   },
   {
