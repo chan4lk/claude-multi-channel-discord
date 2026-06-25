@@ -5565,3 +5565,72 @@ Instrument `ClaudeProjectProcess` to append a line to `watchdog-kills.jsonl` (in
 - AC3: `/watchdog-kills` renders table: timestamp, slug, runtime, last tool, reason; summary header with total/week/worst project
 - AC4: Slug filter; pagination; clicking slug links to `/circuit-timeline?slug=X`
 - AC5: Added to nav under Observability; graceful empty state; bot restart not required (JSONL appended at runtime)
+
+---
+
+## P242 — Context Pressure Alert Banner (Real-Time Threshold Warnings)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+The Token Usage Trend page (P239) shows context pressure % per project, but operators must actively visit the page to see it. There is no proactive alert when a project's session approaches the context limit (e.g. ≥80%). Without a notification surface, a project can silently hit the 200k token wall, triggering a context-overflow distillation run, with no warning to the operator.
+
+### Proposed Solution
+
+Add `/api/context-alerts` that calls `/api/token-usage` internally, filters for projects with `contextPressurePct ≥ threshold` (default 80%), and returns alert objects `{slug, pressurePct, burnRatePerHour, eta}` where `eta = (remainingTokens / burnRatePerHour) * 3600` seconds. Render a `ContextAlertBanner` component (fixed bottom-right, z-50) that polls `/api/context-alerts` every 60s and displays a dismissible amber/red banner listing at-risk projects. Banner integrates into `ClientShell` so it appears on every page. Clicking a slug opens the Project Spotlight drawer.
+
+### Acceptance Criteria
+
+- AC1: `/api/context-alerts` returns projects with contextPressurePct ≥ configurable threshold (default 80%)
+- AC2: Each alert includes: slug, pressurePct, burnRatePerHour, estimated seconds until limit (eta)
+- AC3: `ContextAlertBanner` appears fixed bottom-right, polls every 60s, dismissible per-slug for 10 min
+- AC4: Banner color: amber (80-90%), red (>90%); shows slug + pressure% + "~Xm until limit"
+- AC5: Integrated into ClientShell so visible on all pages; no-op when no projects at risk
+
+---
+
+## P243 — Watchdog Kill → Circuit Trip Correlation
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+The Watchdog Kill Log (P238) and Circuit Breaker Timeline (P227) are separate views. Operators cannot tell whether a watchdog kill was followed by a circuit-open event, or whether repeated watchdog kills are the root cause of circuit trips for a specific project. The causal chain (stuck → kill → circuit-open → cool-down → reset) is invisible across the two views.
+
+### Proposed Solution
+
+Add `/api/kill-circuit-correlation?slug=X` that reads both `watchdog-kills.jsonl` and `circuit-events.jsonl` for a project. For each watchdog kill, check if a circuit-open event occurred within 5 minutes after. Return a correlated timeline: `{killTs, slug, lastToolCall, circuitOpenTs?, circuitOpenMs?}`. Render `/kill-circuit-correlation` as a timeline view: each watchdog kill is a row, with a horizontal arrow showing whether a circuit-open followed (and how quickly). Summary: % of kills that triggered circuit trips, avg kill-to-trip latency. Project selector.
+
+### Acceptance Criteria
+
+- AC1: `/api/kill-circuit-correlation` reads watchdog-kills.jsonl + circuit-events.jsonl, correlates within 5min window
+- AC2: Returns `{killTs, slug, lastToolCall, circuitOpenTs?, circuitOpenMs?}` per kill event
+- AC3: `/kill-circuit-correlation` renders row-per-kill timeline with circuit-open arrow annotation
+- AC4: Summary: total kills, kills-that-tripped (count + %), avg kill-to-trip latency
+- AC5: Project selector; graceful empty state; added to nav under Observability
+
+---
+
+## P244 — Scheduled Job Definition Inspector (Active Schedules Dashboard)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+The Scheduler History page (P240) shows *past* fires but not *current* schedule definitions. Operators cannot see at a glance: which schedules are active, what they will fire next, when they last ran, or whether they are paused. The `!project schedule list` master command shows this for one project at a time; there is no fleet-wide schedule inventory.
+
+### Proposed Solution
+
+Add `/api/schedules` that reads `schedules.json` from `MCD_CHANNELS_DIR`, joins with `channels.json` to resolve slugs, and returns all schedule entries enriched with: `{id, slug, chatId, enabled, interval, at, prompt(first 100 chars), lastRunAt, runCount, maxRuns, nextFireMs}`. Compute `nextFireMs` using the existing `nextFireMs()` helper. Render `/schedules` as a table: schedule id, project slug, interval/at, status badge (active/paused/exhausted), last run, next fire countdown, run count, message preview. Clicking a row navigates to Scheduler History filtered to that schedule.
+
+### Acceptance Criteria
+
+- AC1: `/api/schedules` reads schedules.json, joins slugs, computes nextFireMs for each entry
+- AC2: `/schedules` renders table: id, slug, interval/at, status badge, last run, next fire, run count, message
+- AC3: Status badge: active (green), paused (amber), exhausted (gray, maxRuns reached)
+- AC4: Next fire shown as countdown (e.g. "in 23m") + absolute timestamp on hover
+- AC5: Clicking row links to `/scheduler-history?schedule_id=X`; added to nav under Operations
