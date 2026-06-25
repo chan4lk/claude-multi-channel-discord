@@ -5565,3 +5565,72 @@ Instrument `ClaudeProjectProcess` to append a line to `watchdog-kills.jsonl` (in
 - AC3: `/watchdog-kills` renders table: timestamp, slug, runtime, last tool, reason; summary header with total/week/worst project
 - AC4: Slug filter; pagination; clicking slug links to `/circuit-timeline?slug=X`
 - AC5: Added to nav under Observability; graceful empty state; bot restart not required (JSONL appended at runtime)
+
+---
+
+## P239 — Per-Project Token Usage Trend (Context Burn Rate Over Time)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+Operators cannot see how fast individual projects are consuming context window tokens over time. A project burning through context rapidly will hit limits (triggering circuit-breaker) before operators notice. There is no trend line, no per-project burn rate comparison, and no leading indicator of which channels are approaching their context ceiling.
+
+### Proposed Solution
+
+Parse JSONL transcript lines for `usage` fields (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`) emitted per turn. Compute per-project rolling metrics: total tokens per turn, cumulative tokens per session, burn rate (tokens/hour last 6h). Add `/api/token-usage?slug=X&window=7d` returning per-turn usage series + summary. Render `/token-usage` as a multi-line chart: one line per project (top-10 by burn rate), X=time, Y=cumulative tokens in session. Color-coded by context pressure (green <50%, amber 50-80%, red >80%). Project selector; sparkline summary cards at top.
+
+### Acceptance Criteria
+
+- AC1: `/api/token-usage` parses JSONL `usage` blocks per turn, returns per-project series + burn rate
+- AC2: `/token-usage` renders multi-line chart: top-10 projects by burn rate, cumulative tokens over time
+- AC3: Color coding by context pressure: green(<50%), amber(50-80%), red(>80%)
+- AC4: Summary cards: highest burn rate, avg tokens/turn, most total tokens
+- AC5: Project selector; added to nav under Observability; graceful empty state
+
+---
+
+## P240 — Scheduler Job History Log (Cron Execution Audit)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+The scheduler fires daily HH:MM jobs but there is no record of when each job ran, whether the inject succeeded, or what the bot said in response. Operators debugging missed jobs or unexpected side-effects have no audit trail. They cannot tell if a job was skipped due to process state, or what message was delivered.
+
+### Proposed Solution
+
+Instrument `Scheduler.tick()` to append a line to `scheduler-history.jsonl` in `MCD_CHANNELS_DIR` on every fired job: `{ts, scheduleId, slug, interval, message, injected: boolean, error?: string}`. Add `/api/scheduler-history` reading this file, returning events sorted by ts desc with pagination + per-schedule stats (fire count, last fired, error count). Render `/scheduler-history` as a table: timestamp, schedule id, slug, interval, message snippet, status (injected/error). Per-schedule summary accordion.
+
+### Acceptance Criteria
+
+- AC1: `Scheduler.tick()` appends to `scheduler-history.jsonl` on every fired job with ts/scheduleId/slug/interval/injected/error
+- AC2: `/api/scheduler-history` reads the file, returns events sorted ts desc with pagination + per-schedule stats
+- AC3: `/scheduler-history` renders table: timestamp, schedule, slug, message snippet, status badge (ok/error)
+- AC4: Per-schedule accordion showing fire count, last fired, error count, error message
+- AC5: Added to nav under Operations; graceful empty state; no restart needed
+
+---
+
+## P241 — Cross-Project Goal Alignment Matrix
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+Each project has a goal file, but there is no view showing how goals relate across the fleet. Operators cannot tell if two projects are working toward the same objective, if there are contradictory goals, or which projects have stale/missing goals. A matrix view would surface alignment, redundancy, and gaps at a glance.
+
+### Proposed Solution
+
+Read all project goal files (`projects/<slug>/GOAL.md` or `.goal`). Use keyword extraction (frequency + TF-IDF-style overlap) to compute a similarity score between every pair of projects. Add `/api/goal-alignment` returning the matrix (slug × slug → similarity 0-1) + outlier projects (no goal, very-low similarity to all). Render `/goal-alignment` as a heatmap grid: rows and columns = projects, cell color = similarity (dark=low, bright=high), diagonal suppressed. Tooltip shows both goals' first line. Click cell to open Spotlight drawer for either project.
+
+### Acceptance Criteria
+
+- AC1: `/api/goal-alignment` reads all goal files, computes pairwise keyword overlap similarity (0-1), returns matrix + outliers
+- AC2: `/goal-alignment` renders heatmap grid: slug labels on both axes, cell intensity = similarity, diagonal blank
+- AC3: Tooltip on cell shows first line of each project's goal
+- AC4: Outlier panel: projects with no goal or similarity < 0.05 to all others
+- AC5: Added to nav under Intelligence; graceful empty state; refreshes every 60s
