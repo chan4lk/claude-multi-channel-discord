@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { Suspense, useEffect, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import type { SessionHealthCalendarResponse, SessionHealthCalendarCell } from '../api/session-health-calendar/route'
@@ -42,7 +42,7 @@ interface TooltipState {
 
 type WindowDays = 30 | 60 | 90
 
-export default function SessionHealthCalendarPage() {
+function SessionHealthCalendarInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [windowDays, setWindowDays] = useState<WindowDays>(() => {
@@ -418,5 +418,13 @@ export default function SessionHealthCalendarPage() {
         </div>
       )}
     </div>
+  )
+}
+
+export default function SessionHealthCalendarPage() {
+  return (
+    <Suspense>
+      <SessionHealthCalendarInner />
+    </Suspense>
   )
 }
