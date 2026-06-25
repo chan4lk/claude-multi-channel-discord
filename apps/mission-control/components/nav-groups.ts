@@ -67,6 +67,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/message-heatmap', label: 'Message Volume Heatmap', icon: '▦' },
       { href: '/tool-error-rate', label: 'Tool Error Rate', icon: '⊗' },
       { href: '/state-transitions', label: 'State Transition Flow', icon: '⇢' },
+      { href: '/watchdog-kills', label: 'Watchdog Kill Log', icon: '☠' },
     ],
   },
   {

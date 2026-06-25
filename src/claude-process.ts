@@ -22,7 +22,7 @@
  * WSL until a future fallback path lands.
  */
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, openSync, readFileSync, readSync, closeSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdtempSync, openSync, readFileSync, readSync, closeSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -321,6 +321,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
   private _alive = false
   private _lastActivity = Date.now()
   private _pendingDeliverAt: number | null = null
+  private spawnedAtMs: number | null = null
   private resumedSession = false
   private projectCwd: string | null = null
   private sessionIdPersisted = false
@@ -535,6 +536,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
 
     this._alive = true
     this._lastActivity = Date.now()
+    this.spawnedAtMs = Date.now()
     this.startAliveCheck()
     this.startTranscriptWatcher()
   }
@@ -1118,7 +1120,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
     return Math.min(MAX_ADAPTIVE_THRESHOLD_MS, Math.max(baseMs, Math.ceil(maxTurn * ADAPTIVE_MULTIPLIER)))
   }
 
-  async kill(reason: 'idle-evict' | 'pool-full' | 'shutdown' | 'requested'): Promise<void> {
+  async kill(reason: 'idle-evict' | 'pool-full' | 'shutdown' | 'requested' | 'watchdog'): Promise<void> {
     if (!this._alive || !this.tmuxSessionName) return
     const session = this.tmuxSessionName
     this.log(`kill (${reason}) — tmux kill-session -t ${session}`)
@@ -1128,12 +1130,47 @@ export class ClaudeProjectProcess implements ProjectProcess {
     }
     this.markDead(0, null)
 
+    // Persist watchdog kill event so /watchdog-kills can surface history.
+    if (reason === 'watchdog') {
+      this.appendWatchdogKill()
+    }
+
     // Fire background distillation if configured (P38). Non-blocking.
     if (this.opts.distillOnStop && this.projectCwd) {
       const cwd = this.projectCwd
       const claudeBin = this.opts.claudeBin ?? 'claude'
       const onComplete = this.opts.onDistillationComplete
       runDistillation({ slug: this.slug, cwd, claudeBin, log: this.log, onComplete }).catch(() => {})
+    }
+  }
+
+  private appendWatchdogKill(): void {
+    try {
+      const mcdDir = process.env.MCD_CHANNELS_DIR
+      if (!mcdDir) return
+      const lastToolCall = (() => {
+        // Pick the most recently started tool that hasn't completed
+        let latest: { toolName: string; startMs: number } | null = null
+        for (const v of this.transcriptPendingTools.values()) {
+          if (!latest || v.startMs > latest.startMs) latest = v
+        }
+        // Fall back to most recently seen tool_use in pending map (startMs-sorted)
+        if (!latest && this.transcriptPendingTools.size > 0) {
+          latest = [...this.transcriptPendingTools.values()].sort((a, b) => b.startMs - a.startMs)[0]!
+        }
+        return latest?.toolName ?? null
+      })()
+      const entry = JSON.stringify({
+        ts: new Date().toISOString(),
+        slug: this.slug,
+        runtimeMs: this.spawnedAtMs !== null ? Date.now() - this.spawnedAtMs : null,
+        lastToolCall,
+        reason: 'watchdog',
+      }) + '\n'
+      const logPath = join(mcdDir, 'projects', this.slug, 'watchdog-kills.jsonl')
+      appendFileSync(logPath, entry)
+    } catch {
+      // Non-fatal — never let kill log failure block the kill itself
     }
   }
 

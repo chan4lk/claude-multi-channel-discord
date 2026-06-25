@@ -362,7 +362,7 @@ export class ProjectPool {
             continue
           }
           this.fireEvent({ kind: 'stuck', chatId, slug: proc.slug, sinceLastReplyMs: sincePending, effectiveThresholdMs: effectiveThreshold })
-          void proc.kill('requested')
+          void proc.kill('watchdog')
           continue
         }
       }
