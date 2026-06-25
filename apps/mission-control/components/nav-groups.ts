@@ -91,6 +91,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/inbox', label: 'Operator Inbox', icon: '⊡' },
       { href: '/command-history', label: 'Operator Message History', icon: '◈' },
       { href: '/budget-calendar', label: 'Budget Burn Calendar', icon: '▦' },
+      { href: '/activity-digest', label: 'Activity Digest', icon: '◈' },
     ],
   },
   {
@@ -175,6 +176,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/lifecycle-funnel', label: 'Project Lifecycle Funnel', icon: '⧗' },
       { href: '/response-latency', label: 'Response Latency Distribution', icon: '⏱' },
       { href: '/budget-forecast', label: 'Token Budget Exhaustion Forecast', icon: '⤳' },
+      { href: '/project-twins', label: 'Project Twin Analysis', icon: '⇌' },
     ],
   },
   {
