@@ -5547,8 +5547,9 @@ Read `circuit-events.jsonl` (open/close events) and combine with fleet API state
 
 ## P238 — Watchdog Kill Log (Stuck-Agent Kill History)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
+**PR:** https://github.com/chan4lk/claude-multi-channel-discord/pull/238
 
 ### Problem
 
