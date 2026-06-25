@@ -79,6 +79,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/commands', label: 'Fleet Commands', icon: '⌨' },
       { href: '/idle-fleet', label: 'Idle Fleet', icon: '◫' },
       { href: '/queue-board', label: 'Queue & Breakers', icon: '⇥' },
+      { href: '/scheduler-history', label: 'Scheduler History', icon: '⏲' },
     ],
   },
   {
