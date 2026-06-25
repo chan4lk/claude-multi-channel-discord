@@ -88,6 +88,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/queue-board', label: 'Queue & Breakers', icon: '⇥' },
       { href: '/scheduler-history', label: 'Scheduler History', icon: '⏲' },
       { href: '/schedules', label: 'Active Schedules', icon: '⏲' },
+      { href: '/inbox', label: 'Operator Inbox', icon: '⊡' },
     ],
   },
   {
@@ -166,6 +167,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/tool-cooccurrence', label: 'Tool Co-occurrence Matrix', icon: '⊠' },
       { href: '/backlog-forecast', label: 'Backlog Completion Forecast', icon: '⤳' },
       { href: '/goal-alignment', label: 'Goal Alignment Matrix', icon: '⊹' },
+      { href: '/memory-timeline', label: 'Session Memory Timeline', icon: '◫' },
     ],
   },
   {
