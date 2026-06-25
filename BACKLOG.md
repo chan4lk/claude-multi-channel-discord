@@ -5570,8 +5570,9 @@ Instrument `ClaudeProjectProcess` to append a line to `watchdog-kills.jsonl` (in
 
 ## P239 — Per-Project Token Usage Trend (Context Burn Rate Over Time)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
+**PR:** https://github.com/chan4lk/claude-multi-channel-discord/pull/240
 
 ### Problem
 
