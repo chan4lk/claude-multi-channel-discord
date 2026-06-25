@@ -5363,7 +5363,7 @@ Parse JSONL for turns containing `Agent` tool_use blocks. Recursively extract su
 
 ## P230 — Memory Staleness Radar (Per-Project Memory Age & Coverage)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
@@ -5381,3 +5381,95 @@ For each project, scan `memory/*.md` files: read `mtime` and frontmatter type. C
 - AC3: Hover highlights project polygon and shows all 5 axis values in tooltip
 - AC4: Legend sorted by staleness score (weighted composite of all axes) desc
 - AC5: Added to nav under Intelligence; graceful empty state when no memory files found
+
+---
+
+## P231 — Turn Duration Histogram (Wall-Clock Timing Per Project)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+The JSONL transcript records `tool_use` and `tool_result` blocks with timestamps, but there is no view of how long individual Claude turns take wall-clock. Operators cannot tell whether a project consistently runs fast 30-second turns or slow 10-minute turns, making it hard to tune the stuck-watchdog threshold or spot performance regressions after a model change.
+
+### Proposed Solution
+
+Parse JSONL transcripts for each project: compute per-turn duration as `first_tool_use.ts → last_tool_result.ts` (or `human_message.ts → next_human_message.ts` as fallback). Add `/api/turn-duration?slug=X&window=30` returning a histogram (bucket by minute) and summary stats (p50, p90, p99, max). Render `/turn-duration` as a stacked histogram (all projects in one view, color-coded by slug); project selector to focus on one. Stats panel shows p50/p90/max per project. Dotted line at current `stuckThresholdMinutes` per project so operator can see how many turns would have been killed.
+
+### Acceptance Criteria
+
+- AC1: `/api/turn-duration` computes per-turn wall-clock durations from JSONL timestamps, returns histogram + percentiles
+- AC2: `/turn-duration` renders stacked histogram with color per project slug
+- AC3: Project selector focuses on one slug; stats panel shows p50/p90/max
+- AC4: Dotted line overlay at each project's `stuckThresholdMinutes`; turns exceeding it highlighted in red
+- AC5: Added to nav under Observability; graceful empty state when no turns with timing data
+
+---
+
+## P232 — Tool Co-occurrence Matrix (Which Tools Appear Together)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+P226 shows how often each tool is called individually, but not whether certain tools always appear together in the same turn. A co-occurrence matrix would reveal patterns like "Agent always precedes WebSearch" or "Read + Edit are always paired," helping operators understand workflow patterns and catch unexpected tool combinations.
+
+### Proposed Solution
+
+Parse JSONL `tool_use` blocks, grouping calls by turn (delimited by `human` role messages). For each pair of tools that appear in the same turn, increment a co-occurrence count. Add `/api/tool-cooccurrence?slug=X&window=30` returning a symmetric N×N matrix (tool × tool → count). Render `/tool-cooccurrence` as an SVG heatmap grid: rows and columns are tools sorted by total frequency, cell color = co-occurrence count, diagonal = solo count. Click a cell to see turns where that pair appears. Project selector; `mcp__mcd__*` suppressed by default with toggle.
+
+### Acceptance Criteria
+
+- AC1: `/api/tool-cooccurrence` groups JSONL tool_use by turn and returns symmetric co-occurrence matrix
+- AC2: `/tool-cooccurrence` renders SVG grid; rows/cols sorted by total frequency; cell intensity = count
+- AC3: Click a cell lists turns containing that tool pair in a side drawer
+- AC4: Project selector; mcp__mcd__ tools hidden by default; toggle reveals them
+- AC5: Added to nav under Intelligence; graceful empty state when fewer than 2 distinct tools found
+
+---
+
+## P233 — Circuit Breaker MTTR Dashboard (Recovery Time Analytics)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+P227 shows a timeline of circuit open/close events but provides no aggregate analysis. Operators need to know: which projects trip most frequently, what is the mean time to recovery (MTTR) once the circuit opens, and whether MTTR is improving or worsening over time. Without aggregates, operators must manually count events in the timeline.
+
+### Proposed Solution
+
+Read all `circuit-events.jsonl` files (already written by project-pool). Compute per-project: total opens, total closes, MTTR (avg duration-open from `durationMs` field), longest open window, opens per week, last event. Add `/api/circuit-mttr` returning these stats. Render `/circuit-mttr` as a sortable table (slug, opens, closes, MTTR, longest, opens/week) with a sparkline column showing opens-per-day last 30 days. Color MTTR green/amber/red by threshold. Click row drills into P227 circuit timeline filtered to that slug.
+
+### Acceptance Criteria
+
+- AC1: `/api/circuit-mttr` aggregates circuit-events.jsonl per project: total opens/closes, avg MTTR, longest open, opens-per-week
+- AC2: `/circuit-mttr` renders sortable table with per-project rows + sparkline column (opens/day last 30d)
+- AC3: MTTR cell color-coded green (<2min) / amber (<10min) / red (≥10min)
+- AC4: Clicking a row opens `/circuit-timeline?slug=<slug>` for drill-down
+- AC5: Added to nav under Observability; handles missing circuit-events.jsonl gracefully (project row omitted)
+
+---
+
+## P234 — Backlog Completion Forecast (Velocity → Done Date)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+P228 shows historical proposal completion velocity but gives no answer to "at this rate, when does the backlog clear?" Operators planning releases or setting milestones have no data-driven estimate of how many weeks of work remain.
+
+### Proposed Solution
+
+Extend `/api/backlog-coverage` (or add `/api/backlog-forecast`) to compute: rolling 4-week completion velocity (proposals/week), remaining pending count, and estimated weeks to completion = pending / velocity. If velocity is zero, report "stalled." Render `/backlog-forecast` as a burndown projection: X-axis = future weeks (up to 52), Y-axis = remaining pending count, actual line (historical), projected line (linear extrapolation from current velocity), confidence band (±1 stddev of weekly velocity). Show "estimated done" date in header. Toggle between linear and optimistic (p75 velocity) projections.
+
+### Acceptance Criteria
+
+- AC1: `/api/backlog-forecast` returns historical weekly completion series, rolling velocity, remaining count, estimated-done date
+- AC2: `/backlog-forecast` renders burndown chart: solid actual line + dashed projected line + shaded confidence band
+- AC3: Estimated done date shown in sticky header with velocity used
+- AC4: Toggle linear vs optimistic (p75) projection
+- AC5: Added to nav under Intelligence; "stalled" state when velocity is zero
