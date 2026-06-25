@@ -69,6 +69,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/state-transitions', label: 'State Transition Flow', icon: '⇢' },
       { href: '/watchdog-kills', label: 'Watchdog Kill Log', icon: '☠' },
       { href: '/token-usage', label: 'Token Usage Trend', icon: '◑' },
+      { href: '/thought-stream', label: 'Agent Thought Stream', icon: '◎' },
     ],
   },
   {
