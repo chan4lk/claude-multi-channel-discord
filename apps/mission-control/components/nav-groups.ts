@@ -177,6 +177,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/response-latency', label: 'Response Latency Distribution', icon: '⏱' },
       { href: '/budget-forecast', label: 'Token Budget Exhaustion Forecast', icon: '⤳' },
       { href: '/project-twins', label: 'Project Twin Analysis', icon: '⇌' },
+      { href: '/fleet-mosaic', label: 'Fleet Mosaic', icon: '▦' },
+      { href: '/lifecycle-clock', label: 'Project Lifecycle Clock', icon: '⏲' },
     ],
   },
   {

@@ -6063,3 +6063,123 @@ Add `/api/activity-digest?hours=8` that aggregates from the last N hours: new me
 - AC4: Per-project cards sorted by messageCount desc; cards show mini-bar charts for turns + tool calls
 - AC5: Alert badges on cards for watchdog kills, circuit trips, or health score drop >20
 - AC6: Hour range selector: 2/8/24/72h; added to nav under Operations; handles no-activity window gracefully
+
+---
+
+## P260 — Fleet Mosaic (Project State × Context × Memory Treemap)
+
+**Status:** `[x] done` — PR #260
+**Created:** 2026-06-25
+
+### Problem
+
+The dashboard fleet grid shows each project as an equal-sized card, hiding the relative scale of projects in terms of context consumption, memory footprint, and convergence. Operators cannot immediately see which projects are "big" versus "light" consumers of resources — all cards look the same.
+
+### Proposed Solution
+
+Add a `/fleet-mosaic` page rendering a squarified treemap of all active projects. Each tile's area is proportional to `contextUsagePct` (or a minimum tile size for idle projects). Tile color encodes project state (active=green, idle=cyan, stalled=red, autonomous=purple). Each tile shows slug, convergence score, context %, and a memory indicator dot (filled = has memory). Tiles are interactive: hovering reveals a tooltip with full project details; clicking navigates to that project's feed. No new API needed — uses `/api/fleet` data directly.
+
+### Acceptance Criteria
+
+- AC1: `/fleet-mosaic` renders squarified treemap with tile area ∝ `contextUsagePct || 5` (min tile for zero-context projects)
+- AC2: Tile color encodes state; legend shows state→color mapping
+- AC3: Each tile shows slug (truncated), context %, convergence score if present, and memory dot if `memoryStatus.sizeBytes > 0`
+- AC4: Hover tooltip shows full project details (state, ageMins, stuckThresholdMinutes, budgetStatus, circuitOpen)
+- AC5: Clicking a tile navigates to `/feed?slug=<slug>`
+- AC6: Added to nav under Intelligence; handles 0-project fleet (empty state message)
+
+---
+
+## P261 — Project Lifecycle Clock (Radial Age Visualization)
+
+**Status:** `[x] done` — PR #260
+**Created:** 2026-06-25
+
+### Problem
+
+Project age is shown in the fleet grid as a text number. There is no visual sense of how projects are distributed across their lifecycle — whether the fleet is young (recently spawned), mature, or mixed. A radial clock metaphor would make fleet age distribution immediately legible.
+
+### Proposed Solution
+
+Add a `/lifecycle-clock` page rendering an SVG clock face (circle). Each project is plotted as a "hand" emanating from the center: angular position = age modulo 90 days mapped to 0–360° (so 0 days = 12 o'clock, 45 days = 6 o'clock, 90 days wraps back). Hand length = `contextUsagePct / 100 * R` (so high-context projects reach further from center). Hand color = state. Concentric rings at 30/60/90 days guide the eye. Hovering a hand shows a tooltip (slug, age, state, context %). Uses `/api/fleet`.
+
+### Acceptance Criteria
+
+- AC1: SVG clock face, concentric guide rings at 30/60/90-day marks labeled
+- AC2: Each project rendered as a hand: angle = age mod 90d mapped to 360°, length = contextUsagePct (min 10% of R for visibility)
+- AC3: Hand color = state (same palette as pulse page); hand tip = filled circle
+- AC4: Hover tooltip: slug, ageMins formatted as days/hours, state, context %, convergence if available
+- AC5: Fleet summary row below clock: total projects, mean age, age range (youngest–oldest)
+- AC6: Added to nav under Intelligence; graceful empty state; no external dependency beyond `/api/fleet`
+
+---
+
+## P262 — Holographic Overview (Force Graph + Fleet Narrative + Proposal Pipeline)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+Holistic fleet state requires visiting multiple pages: the main grid for project states, `/knowledge` for memory links, `/backlog` for proposals. No single view fuses all three signals — project relationships, fleet narrative, and proposal pipeline — into an at-a-glance command-room display.
+
+### Proposed Solution
+
+Add a `/holographic` page with a three-panel layout toggled by pressing `H` or a header button. Left panel: a D3-style force-directed graph of all projects (nodes colored by state, sized by convergenceScore, edges = shared memory keywords). Right panel: scrollable fleet narrative — one line per project auto-generated from goalText, state, ageMins, and convergenceScore. Bottom bar: horizontal scroll of per-project mini-kanban chips showing pending/done proposal counts (parsed from `/api/backlog`). Pressing `H` again returns to a clean summary card. Normal (non-H) mode shows a compact 3-metric summary bar (total projects, active turns, pending proposals) with a "Go Holographic" button.
+
+### Acceptance Criteria
+
+- AC1: Default mode: compact summary bar (project count, active count, pending proposal count) + "Go Holographic" button
+- AC2: Holographic mode triggered by button or `H` key; full-viewport split (left 50% graph, right 50% narrative, bottom bar)
+- AC3: Force graph: project nodes, colored by state, sized by convergenceScore (min size 8px), edges = shared memory keywords (from `/api/memory-knowledge-graph`), repulsion-only simulation (no d3-force — pure spring math in RAF loop)
+- AC4: Fleet narrative: one `<p>` per project, text = "slug [state] • goal: goalText | age Xh | conv Y%" or best-available fields
+- AC5: Bottom bar: per-project chips showing pending/done counts from `/api/backlog`; horizontal scroll; clicking chip deep-links to `/backlog?project=slug`
+- AC6: Added to nav under Intelligence; `H` key listener cleaned up on unmount
+
+---
+
+## P263 — Fleet Star Map (2D Metric Space Scatter Plot)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+Convergence score and context fill % are two key health dimensions but are never shown together. Plotting projects on a 2D metric space (X = convergence, Y = context fill %) immediately reveals clusters: high-convergence/low-context projects are healthy; low-convergence/high-context ones need attention.
+
+### Proposed Solution
+
+Add a `/star-map` page rendering an SVG scatter plot with X-axis = convergenceScore (0–1), Y-axis = contextUsagePct (0–100). Each project is a star SVG glyph (5-pointed), sized by `ageMins` (older = slightly larger), colored by state. A CSS `@keyframes` pulse animation marks active-state projects. Quadrant lines divide the plot into "healthy" (high convergence, low context) vs "at-risk" (low convergence, high context) zones, labeled in the corners. Hovering a star shows a tooltip. A color-legend row sits below the chart.
+
+### Acceptance Criteria
+
+- AC1: SVG scatter plot, X = convergenceScore (0–1), Y = contextUsagePct (0–100), both axes labeled with ticks
+- AC2: Projects rendered as 5-pointed SVG stars; star size = `8 + ageMins/2880 * 8` (8–16px range, capped at 90 days)
+- AC3: Star color = state palette; active-state stars pulse via CSS animation
+- AC4: Quadrant dividers at x=0.5, y=50 with corner labels: "Optimal" (high conv, low ctx), "Diverging" (low conv, high ctx), "Maturing" (high conv, high ctx), "Starting" (low conv, low ctx)
+- AC5: Hover tooltip: slug, convergenceScore, contextUsagePct, state, ageMins formatted
+- AC6: Added to nav under Intelligence; projects missing convergence/context plotted at axes origin with 50% opacity; no-project empty state
+
+---
+
+## P264 — Memory Density Heatmap (Project × Hour-of-Day Write Frequency)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+Memory writes happen throughout the day but the timing is invisible. Knowing which hours each project is most active (generates memory) helps operators schedule maintenance windows and understand project rhythm. No current view shows memory write frequency by hour.
+
+### Proposed Solution
+
+Add a `/memory-density` page with a grid heatmap: rows = projects, columns = hours of day (0–23). Cell color intensity = number of memory write events in that hour (from the last 7 days), pulled from memory git log timestamps. A new `/api/memory-density` endpoint reads the memory DB git log (`git log --format=%ai -- memory.db`) for each project slug, extracts hour-of-day, and returns `{ slug, hourCounts: number[24] }[]`. Max cell = darkest color in a cyan→dark-cyan gradient. Row total and column total shown as margin bars. Hovering a cell shows exact count + project/hour labels.
+
+### Acceptance Criteria
+
+- AC1: `/api/memory-density` reads git log of memory.db per project slug, returns `{ slug, hourCounts: number[24] }[]` for last 7 days
+- AC2: Page renders rows × columns grid (projects × hours), cell color = heatmap intensity (0 = transparent, max = deep cyan)
+- AC3: Row total bar (right margin): sum of writes across all hours per project; column total bar (bottom): sum across all projects per hour
+- AC4: Hover: tooltip showing project slug, hour label (e.g. "14:00–15:00"), write count
+- AC5: Color scale legend (0 → max) shown below grid; "Last 7 days" label in header
+- AC6: Added to nav under Intelligence; handles projects with no memory git history (row shown grayed); max 30 projects displayed (sort by total desc)
