@@ -5713,7 +5713,7 @@ Add `/api/schedules` that reads `schedules.json` from `MCD_CHANNELS_DIR`, joins 
 
 ## P245 — Live Agent Thought Stream (Real-Time Assistant Reasoning Viewer)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
 
 ### Problem
