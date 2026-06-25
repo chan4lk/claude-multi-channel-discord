@@ -5501,8 +5501,9 @@ Parse JSONL transcripts for genuine user messages (role=user, content[0].type≠
 
 ## P236 — Tool Error Rate Monitor (Per-Tool Failure Frequency)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
+**PR:** https://github.com/chan4lk/claude-multi-channel-discord/pull/235
 
 ### Problem
 
@@ -5524,8 +5525,9 @@ Parse JSONL `tool_result` blocks for each project: detect errors via `is_error: 
 
 ## P237 — Project State Transition Sankey (Activity Flow Visualization)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
+**PR:** https://github.com/chan4lk/claude-multi-channel-discord/pull/235
 
 ### Problem
 
