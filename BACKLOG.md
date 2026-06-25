@@ -5432,7 +5432,7 @@ Parse JSONL `tool_use` blocks, grouping calls by turn (delimited by `human` role
 
 ## P233 — Circuit Breaker MTTR Dashboard (Recovery Time Analytics)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
 
 ### Problem
@@ -5455,7 +5455,7 @@ Read all `circuit-events.jsonl` files (already written by project-pool). Compute
 
 ## P234 — Backlog Completion Forecast (Velocity → Done Date)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
 
 ### Problem
