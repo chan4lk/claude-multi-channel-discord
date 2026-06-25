@@ -5736,7 +5736,7 @@ Poll the active session `.jsonl` transcript every 2s for `thinking` content bloc
 
 ## P246 — Fleet 3D Force Graph (Three.js Project Constellation)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
 
 ### Problem
@@ -5759,7 +5759,7 @@ Use `three-forcegraph` (Three.js-based 3D force graph) to render all projects as
 
 ## P247 — Project Health Score Card (Composite Wellness Index)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
 
 ### Problem
