@@ -39,6 +39,12 @@ export const modelSlashCommands: RESTPostAPIApplicationGuildCommandsJSONBody[] =
             description: 'Model name, e.g. opus, sonnet, haiku, or a provider model id',
             required: true,
           },
+          {
+            type: 5, // BOOLEAN
+            name: 'force',
+            description: 'Bypass the unknown-alias guard (for non-standard model ids)',
+            required: false,
+          },
         ],
       },
       {
@@ -70,6 +76,7 @@ export async function handleModelInteraction(
   if (sub === 'set') {
     const name = interaction.options.getString('name', true)
     rest = [chatId, '--set', name]
+    if (interaction.options.getBoolean('force')) rest.push('--force')
   } else if (sub === 'clear') {
     rest = [chatId, '--clear']
   } else {

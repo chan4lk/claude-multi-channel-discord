@@ -252,6 +252,27 @@ check(
   rmMaster.kind === 'reply' && rmMaster.text.includes('refusing to rm the master'),
 )
 
+// --- model alias guard ----------------------------------------------------
+const badModel = await handleMasterCommand('!project model support --set sonnat', mctx())
+check(
+  'model: rejects unknown subscription alias (typo)',
+  badModel.kind === 'reply' && badModel.text.includes('not a known subscription model'),
+)
+check(
+  'model: bad alias not persisted',
+  loadConfig().projects['999888777666555444']?.model === 'opus',
+)
+const forcedModel = await handleMasterCommand('!project model support --set sonnat --force', mctx())
+check(
+  'model: --force overrides the guard',
+  forcedModel.kind === 'reply' && loadConfig().projects['999888777666555444']?.model === 'sonnat',
+)
+const goodModel = await handleMasterCommand('!project model support --set sonnet', mctx())
+check(
+  'model: known alias accepted',
+  goodModel.kind === 'reply' && loadConfig().projects['999888777666555444']?.model === 'sonnet',
+)
+
 // --- resolveClaudeArgs ----------------------------------------------------
 {
   const cfg = ChannelsConfigSchema.parse({
