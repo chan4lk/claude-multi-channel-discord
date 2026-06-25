@@ -5972,7 +5972,7 @@ Add `/api/search?q=<query>&scope=messages|memory|all&limit=50` that scans all pr
 
 ## P256 — Command Response Latency Distribution
 
-**Status:** `[ ] pending`
+**Status:** `[x] done` — PR #255, merged 2026-06-25
 **Created:** 2026-06-25
 
 ### Problem
@@ -5996,7 +5996,7 @@ Add `/api/response-latency` that pairs each genuine user message with the first 
 
 ## P257 — Token Budget Exhaustion Forecast
 
-**Status:** `[ ] pending`
+**Status:** `[x] done` — PR #255, merged 2026-06-25
 **Created:** 2026-06-25
 
 ### Problem
