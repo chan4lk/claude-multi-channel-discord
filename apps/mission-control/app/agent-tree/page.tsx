@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import type { AgentTreeResponse, AgentNode, TurnWithAgents } from '../api/agent-tree/route'
@@ -165,7 +165,7 @@ function TurnRow({ turn, expanded, onToggle, isSelected, onSelect }: TurnRowProp
   )
 }
 
-export default function AgentTreePage() {
+function AgentTreeInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [data, setData] = useState<AgentTreeResponse | null>(null)
@@ -313,5 +313,13 @@ export default function AgentTreePage() {
         </div>
       )}
     </div>
+  )
+}
+
+export default function AgentTreePage() {
+  return (
+    <Suspense>
+      <AgentTreeInner />
+    </Suspense>
   )
 }

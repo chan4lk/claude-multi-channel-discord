@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import type { BacklogCoverageResponse, BacklogProposal, WeekBucket } from '../api/backlog-coverage/route'
@@ -45,7 +45,7 @@ interface DrawerState {
   proposals: BacklogProposal[]
 }
 
-export default function BacklogCoveragePage() {
+function BacklogCoverageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [data, setData] = useState<BacklogCoverageResponse | null>(null)
@@ -376,5 +376,13 @@ export default function BacklogCoveragePage() {
         </>
       )}
     </div>
+  )
+}
+
+export default function BacklogCoveragePage() {
+  return (
+    <Suspense>
+      <BacklogCoverageInner />
+    </Suspense>
   )
 }

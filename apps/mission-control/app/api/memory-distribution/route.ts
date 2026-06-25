@@ -4,7 +4,7 @@ import * as path from 'path'
 export const dynamic = 'force-dynamic'
 
 export type MemoryType = 'user' | 'feedback' | 'project' | 'reference' | 'other'
-export const MEMORY_TYPES: MemoryType[] = ['user', 'feedback', 'project', 'reference', 'other']
+const MEMORY_TYPES: MemoryType[] = ['user', 'feedback', 'project', 'reference', 'other']
 
 export interface ProjectMemoryDistribution {
   slug: string

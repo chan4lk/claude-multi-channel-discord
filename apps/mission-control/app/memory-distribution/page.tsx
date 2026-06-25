@@ -3,7 +3,8 @@
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import type { MemoryDistributionResponse, MemoryType } from '../api/memory-distribution/route'
-import { MEMORY_TYPES } from '../api/memory-distribution/route'
+
+const MEMORY_TYPES: MemoryType[] = ['user', 'feedback', 'project', 'reference', 'other']
 import { useFreshness } from '../../lib/useFreshness'
 import FreshnessBadge from '../../components/FreshnessBadge'
 

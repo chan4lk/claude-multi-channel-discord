@@ -144,21 +144,23 @@ function buildStateIntervals(
   }
 
   for (const e of events) {
+    // Cast to StateLabel to defeat TS control-flow narrowing across loop iterations
+    const s = state as StateLabel
     if (e.kind === 'circuit-open') {
       recordTransition('circuit-open', e.ts)
     } else if (e.kind === 'circuit-close') {
-      if (state === 'circuit-open') recordTransition('idle', e.ts)
+      if (s === 'circuit-open') recordTransition('idle', e.ts)
     } else if (e.kind === 'msg') {
-      if (state === 'circuit-open') {
+      if (s === 'circuit-open') {
         // ignore messages while circuit open
       } else if (lastMsgTs > 0 && e.ts - lastMsgTs > IDLE_GAP_MS) {
         // gap → idle between lastMsg and now
-        if (state === 'active' || state === 'stuck') {
+        if (s === 'active' || s === 'stuck') {
           recordTransition('idle', lastMsgTs + IDLE_GAP_MS)
         }
         recordTransition('active', e.ts)
       } else {
-        if (state === 'idle') recordTransition('active', e.ts)
+        if (s === 'idle') recordTransition('active', e.ts)
       }
       lastMsgTs = e.ts
     }
@@ -167,7 +169,7 @@ function buildStateIntervals(
   // Close final interval
   if (stateStart < windowEndMs) {
     // If last msg was long ago, we may have drifted to idle
-    if (state === 'active' && lastMsgTs > 0 && windowEndMs - lastMsgTs > IDLE_GAP_MS) {
+    if ((state as StateLabel) === 'active' && lastMsgTs > 0 && windowEndMs - lastMsgTs > IDLE_GAP_MS) {
       intervals.push({ state: 'active', startMs: stateStart, endMs: lastMsgTs + IDLE_GAP_MS })
       intervals.push({ state: 'idle', startMs: lastMsgTs + IDLE_GAP_MS, endMs: windowEndMs })
     } else {
