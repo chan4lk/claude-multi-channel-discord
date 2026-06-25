@@ -5708,3 +5708,118 @@ Add `/api/schedules` that reads `schedules.json` from `MCD_CHANNELS_DIR`, joins 
 - AC3: Status badge: active (green), paused (amber), exhausted (gray, maxRuns reached)
 - AC4: Next fire shown as countdown (e.g. "in 23m") + absolute timestamp on hover
 - AC5: Clicking row links to `/scheduler-history?schedule_id=X`; added to nav under Operations
+
+---
+
+## P245 — Live Agent Thought Stream (Real-Time Assistant Reasoning Viewer)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+Operators can see tool calls and replies via the Tool Call Ticker and Project Feed, but cannot observe *what Claude is currently thinking* inside a turn. Long-running turns feel opaque — the operator has no leading indicator of whether the agent is making progress, stuck in a reasoning loop, or about to produce output. There is no way to distinguish "thinking deeply" from "stuck silently."
+
+### Proposed Solution
+
+Poll the active session `.jsonl` transcript every 2s for `thinking` content blocks (type `thinking`, field `thinking`). Add `/api/thought-stream?slug=X` that returns the most recent thinking block text and its timestamp. Render `/thought-stream` as a live feed: one card per active project, showing the latest thinking excerpt (truncated to 300 chars) with a shimmer animation while the turn is in flight. Clicking a card expands the full thought. Auto-clears when a turn ends (tool_result or assistant reply follows).
+
+### Acceptance Criteria
+
+- AC1: `/api/thought-stream` reads active session JSONL, extracts latest `thinking` block per project
+- AC2: Returns `{slug, thinkingText, ts, inFlight: boolean}` — inFlight true if no assistant reply after the thinking block
+- AC3: `/thought-stream` renders live cards per active project, shimmer animation while in-flight
+- AC4: Cards auto-clear within 5s of turn completion; expandable full-text on click
+- AC5: Added to nav under Observability; graceful empty state when no active turns
+
+---
+
+## P246 — Fleet 3D Force Graph (Three.js Project Constellation)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+The existing Galaxy Map and Nexus Map use 2D SVG layouts. With 20+ projects the 2D plane becomes crowded and edges overlap. A 3D force-directed graph would reveal cluster structure (projects that share goals, tools, or memory entries) that is invisible in flat layouts, and would give the mission control dashboard a distinctive futuristic visual identity.
+
+### Proposed Solution
+
+Use `three-forcegraph` (Three.js-based 3D force graph) to render all projects as glowing nodes. Node size = turn count last 24h; node color = state (idle/active/stuck/circuit-open). Edges connect projects that share >2 memory keywords (keyword overlap from P241 goal-alignment logic). Camera auto-orbits at 0.1 deg/s; click a node opens the Project Spotlight drawer. Add `/3d-graph` route, no SSR, dynamic import. Link from Galaxy Map page header.
+
+### Acceptance Criteria
+
+- AC1: `/3d-graph` renders Three.js force graph; nodes = projects, edges = shared keyword pairs (>2 overlap)
+- AC2: Node size proportional to turn count last 24h; node color = state palette (cyan/green/amber/red)
+- AC3: Camera auto-orbits; user can drag to orbit, scroll to zoom, click node to open spotlight drawer
+- AC4: Legend panel (bottom-left): color → state mapping, edge count, node count
+- AC5: Added to nav under Observability; graceful empty (single node, no edges) state
+
+---
+
+## P247 — Project Health Score Card (Composite Wellness Index)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+Operators must open multiple pages (Circuit Breaker MTTR, Token Usage Trend, Watchdog Kill Log, Goal Alignment) to assess whether a project is healthy. There is no single composite score that answers "is this project running well?" A composite health index would let operators triage at a glance and catch degrading projects before they hit a hard limit.
+
+### Proposed Solution
+
+Add `/api/health-score` that computes per-project: circuit-trip rate (last 7d), watchdog kill rate (last 7d), context pressure pct, turn error rate (tool_result is_error ratio), goal alignment score (from P241). Normalize each dimension to 0-100; weight-average into a single `healthScore`. Render `/health-score` as a sortable table with a color-coded score column (green 80+, amber 50-79, red <50), per-dimension sparklines, and drill-down links. Export as JSON for external monitoring.
+
+### Acceptance Criteria
+
+- AC1: `/api/health-score` computes 5 dimensions per project; returns `{slug, healthScore, dims: {circuitTripRate, watchdogKillRate, contextPressure, toolErrorRate, goalAlignment}}`
+- AC2: `/health-score` renders sortable table: score badge, 5 dimension cols, project slug link
+- AC3: Score badge: green (80+), amber (50-79), red (<50); row highlight for red projects
+- AC4: Per-dimension sparkline (7-day trend) in each cell
+- AC5: Added to nav under Intelligence; auto-refresh every 60s; export-as-JSON button
+
+---
+
+## P248 — Operator Inbox (Actionable Alerts Triage Center)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+Alerts surface via the Context Alert Banner (P242), the Circuit Breaker Timeline, and the Watchdog Kill Log — but each is a separate page. When multiple projects are in distress simultaneously, the operator must visit several pages to understand the full situation. There is no unified triage inbox that aggregates all actionable alerts with one-click remediation.
+
+### Proposed Solution
+
+Add `/api/inbox` that aggregates: context alerts (P242, pct>=80%), open circuit breakers, watchdog kills in last 30min, projects with healthScore<50 (P247). Deduplicate by slug+type; sort by severity then recency. Render `/inbox` as a card list: severity badge, project slug, alert type, description, and action buttons (Restart, Dismiss 10m, Spotlight). Dismissed alerts are stored in localStorage with TTL. Badge count in nav when inbox is non-empty.
+
+### Acceptance Criteria
+
+- AC1: `/api/inbox` aggregates alerts from context-alerts, circuit-events, watchdog-kills (30min window), health-score
+- AC2: Returns `{id, slug, type, severity: 'critical'|'warning', message, ts}` array sorted by severity then ts
+- AC3: `/inbox` renders card list with severity badge, action buttons (Restart=send !project stop+start, Dismiss, Spotlight)
+- AC4: Dismissed alerts suppressed for 10min via localStorage; badge count shown in nav item
+- AC5: Added to nav under Operations as "Inbox"; auto-refresh 30s; empty state "All clear"
+
+---
+
+## P249 — Session Memory Timeline (Per-Project Memory Write History)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+The Memory Staleness Radar (P230) and Memory Health (P232) pages show the current state of memory files, but not *when* they were written or how memory evolves over a project's lifetime. Operators cannot tell if a project's memory is actively being updated, drifting stale, or was written in a burst and never touched again. A longitudinal timeline would reveal memory write cadence and flag projects with frozen memory.
+
+### Proposed Solution
+
+Add `/api/memory-timeline?slug=X` that reads all `memory/*.md` files in the project's working directory and collects `git log --follow --format="%H %aI" -- <file>` commit timestamps for each. Returns a per-file series `{file, commits: [{sha, ts}]}` sorted by most recent. Render `/memory-timeline` as a swimlane chart: one row per memory file, dots at each commit timestamp on a horizontal time axis (last 30 days). Hover shows commit SHA + message prefix. Project selector; filter by memory type (user/feedback/project/reference).
+
+### Acceptance Criteria
+
+- AC1: `/api/memory-timeline` runs git log per memory file, returns commit series per file
+- AC2: Handles projects with no memory dir or no git history gracefully (empty series)
+- AC3: `/memory-timeline` renders swimlane chart: file rows × time axis, dot per commit
+- AC4: Hover tooltip: file name, commit ts, commit SHA (6 chars), message prefix (40 chars)
+- AC5: Project selector; memory type filter; added to nav under Intelligence; graceful empty state
