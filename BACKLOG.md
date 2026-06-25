@@ -6116,7 +6116,7 @@ Add a `/lifecycle-clock` page rendering an SVG clock face (circle). Each project
 
 ## P262 — Holographic Overview (Force Graph + Fleet Narrative + Proposal Pipeline)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done` — PR #262
 **Created:** 2026-06-25
 
 ### Problem
@@ -6140,7 +6140,7 @@ Add a `/holographic` page with a three-panel layout toggled by pressing `H` or a
 
 ## P263 — Fleet Star Map (2D Metric Space Scatter Plot)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done` — PR #262
 **Created:** 2026-06-25
 
 ### Problem

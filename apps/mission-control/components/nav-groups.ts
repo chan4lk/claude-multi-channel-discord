@@ -179,6 +179,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/project-twins', label: 'Project Twin Analysis', icon: '⇌' },
       { href: '/fleet-mosaic', label: 'Fleet Mosaic', icon: '▦' },
       { href: '/lifecycle-clock', label: 'Project Lifecycle Clock', icon: '⏲' },
+      { href: '/holographic', label: 'Holographic Overview', icon: '⬡' },
+      { href: '/star-map', label: 'Fleet Star Map', icon: '✦' },
     ],
   },
   {
