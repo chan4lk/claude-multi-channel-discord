@@ -5317,7 +5317,7 @@ Instrument `ClaudeProjectProcess` to append a line to `circuit-events.jsonl` (un
 
 ## P228 — Proposal Coverage Heatmap (BACKLOG.md Progress Calendar)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
@@ -5340,7 +5340,7 @@ Parse `BACKLOG.md` from `MCD_CHANNELS_DIR/../projects/claude-mcd/BACKLOG.md` (re
 
 ## P229 — Agent Spawn Tree (Subagent Hierarchy Visualizer)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-24
 
 ### Problem
