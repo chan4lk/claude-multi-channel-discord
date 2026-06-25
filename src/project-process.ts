@@ -108,7 +108,7 @@ export interface ProjectProcess {
   /**
    * Tear down the process. Idempotent. Returns once exit handlers have fired.
    */
-  kill(reason: 'idle-evict' | 'pool-full' | 'shutdown' | 'requested'): Promise<void>
+  kill(reason: 'idle-evict' | 'pool-full' | 'shutdown' | 'requested' | 'watchdog'): Promise<void>
 }
 
 /**
@@ -218,7 +218,7 @@ export class MockProjectProcess implements ProjectProcess {
     return () => {}
   }
 
-  async kill(reason: 'idle-evict' | 'pool-full' | 'shutdown' | 'requested'): Promise<void> {
+  async kill(reason: 'idle-evict' | 'pool-full' | 'shutdown' | 'requested' | 'watchdog'): Promise<void> {
     if (!this._alive) return
     this.killReasons.push(reason)
     this._alive = false
