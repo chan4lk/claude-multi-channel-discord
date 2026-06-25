@@ -5876,7 +5876,7 @@ Add `/api/session-gaps?days=30` that scans each project's JSONL transcript for g
 
 ## P252 — Cross-Project Memory Knowledge Graph
 
-**Status:** `[ ] pending`
+**Status:** `[x] done` — PR #251, merged 2026-06-25
 **Created:** 2026-06-25
 
 ### Problem
@@ -5900,7 +5900,7 @@ Add `/api/memory-knowledge-graph` that reads `memory/*.md` for all projects, ext
 
 ## P253 — Budget Burn Calendar (Daily Token Spend Heatmap)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done` — PR #251, merged 2026-06-25
 **Created:** 2026-06-25
 
 ### Problem
@@ -5943,3 +5943,123 @@ Add `/api/lifecycle-funnel` that reads all project directories, classifies each 
 - AC4: Click stage bar → side panel lists slugs in that stage with last-activity timestamp
 - AC5: Sankey flow arrows between stages (project count × arrow thickness)
 - AC6: Added to nav under Intelligence; graceful handling of projects with no JSONL (Spawned stage)
+
+---
+
+## P255 — Fleet Full-Text Search (Cross-Project Message & Memory Search)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+With dozens of project channels, finding where something was discussed or decided requires checking each project individually. If the operator wants to know "which projects have talked about authentication?" or "find the turn where we decided to use SQLite", there is no cross-fleet search. The operator must rely on memory of which project handled what, making the fleet harder to manage as it grows.
+
+### Proposed Solution
+
+Add `/api/search?q=<query>&scope=messages|memory|all&limit=50` that scans all project JSONL transcripts and memory files for the query string (case-insensitive substring match). Returns `{results: [{type: 'message'|'memory', slug, file, ts?, snippet: string, matchOffset: number}], totalHits, truncated}`. Page `/search` is an always-visible search bar + results list: each hit shows slug badge, type tag, timestamp, and a 200-char context window with the match highlighted. Click any result jumps to the project entry in Project Feed. Filter chips for scope (messages/memory/both) and date range.
+
+### Acceptance Criteria
+
+- AC1: `/api/search` scans all JSONL and memory files, returns ranked hits (exact match > prefix > contains)
+- AC2: Results include slug, type, timestamp, and 200-char context snippet with match position
+- AC3: `/search` renders typeahead-style input (debounced 300ms) + result list with scope filter
+- AC4: Match term highlighted in snippet; slug badge colored by project state
+- AC5: Handles empty query (show recent turns summary), >50 hits (show truncated + count), no results (empty state)
+- AC6: Added to nav under Admin; works with 0 projects (graceful empty state)
+
+---
+
+## P256 — Command Response Latency Distribution
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+The Command History page (P250) shows what commands were sent but not how long projects took to respond. Some projects reply in seconds; others take minutes. Operators don't know which projects are "slow" (due to context pressure, long tool chains, or being stuck), making it hard to set expectations or identify degraded sessions before they time out.
+
+### Proposed Solution
+
+Add `/api/response-latency` that pairs each genuine user message with the first subsequent assistant reply in the JSONL, computes the delta in seconds, and returns per-project percentile stats: `{projects: [{slug, p50, p90, p99, samples, trend: 'improving'|'stable'|'degrading'}]}`. Trend computes last-7d p90 vs prior-7d p90. Page `/response-latency` renders a horizontal box-and-whisker chart: one row per project, box = p25–p75, whiskers = p10–p90, dot = p50. Color: green (<30s), amber (30–120s), red (>120s). Sort by p90 descending so slow projects rise to top.
+
+### Acceptance Criteria
+
+- AC1: `/api/response-latency` pairs user→assistant turns in JSONL, computes per-project p50/p90/p99 in seconds
+- AC2: Trend computed from last-7d vs prior-7d p90; labeled improving/stable/degrading
+- AC3: `/response-latency` renders box-and-whisker chart (one row per project) with p50 marker
+- AC4: Colors: green p50<30s, amber 30–120s, red >120s; sort by p90 desc
+- AC5: Hover tooltip: full percentile breakdown + sample count + trend arrow
+- AC6: Added to nav under Intelligence; minimum 3 samples per project to show row
+
+---
+
+## P257 — Token Budget Exhaustion Forecast
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+The Budget Calendar (P253) shows historical spend but not when a project will exhaust its monthly token budget. Operators discover budget exhaustion only after it happens — when Claude stops responding — rather than proactively. A forward-looking forecast with days-to-exhaustion per project lets operators adjust limits or pause non-critical work before hitting the wall.
+
+### Proposed Solution
+
+Add `/api/budget-forecast` that reads per-project token usage from the last 14 days, fits a linear regression over daily spend, and extrapolates to the monthly budget limit. Returns `{projects: [{slug, monthlyBudget, monthlyUsed, projectedMonthlyTotal, daysToExhaustion: number|null, burnRatePerDay, regressionR2}]}`. `daysToExhaustion` is null when budget is unlimited or the trend is declining. Page `/budget-forecast` renders a table sorted by days-to-exhaustion ascending: project slug, current used%, projected total%, days remaining (red if <7d, amber 7–14d, green 14+d). Sparkline of 14d daily spend trend per row.
+
+### Acceptance Criteria
+
+- AC1: `/api/budget-forecast` fits daily linear regression over last 14 days per project
+- AC2: Projects with no budget limit return `daysToExhaustion: null`; declining trend returns `null`
+- AC3: `/budget-forecast` table sorted by days-to-exhaustion asc (nulls last)
+- AC4: Color coding: red (<7d), amber (7–14d), green (>14d); includes regression R² as confidence indicator
+- AC5: 14-day sparkline per row showing burn trend
+- AC6: Added to nav under Intelligence; filters to projects with monthlyTokenBudget set
+
+---
+
+## P258 — Project Twin Analysis (Behavioral Similarity Clustering)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+Multiple projects often have similar behavioral profiles — same turn frequency, same tool mix, same memory size — but this similarity is invisible. Identifying "twins" helps operators consolidate redundant work, detect when a new project is duplicating an existing one, or learn from high-performing projects by comparing with similar but slower ones.
+
+### Proposed Solution
+
+Add `/api/project-twins` that computes a feature vector per project: [turns_per_day, tool_call_rate, memory_file_count, context_pressure_pct, avg_tokens_per_turn]. Normalises each feature 0–1, then computes pairwise cosine similarity. Returns `{pairs: [{slug_a, slug_b, similarity, sharedFeatures: string[]}]}` for pairs with similarity > 0.8. Page `/project-twins` renders a similarity matrix grid: projects on both axes, cells colored by similarity (0=white, 1=deep purple). Hover shows shared feature profile. Click a cell to open a split compare panel.
+
+### Acceptance Criteria
+
+- AC1: `/api/project-twins` computes 5-feature vectors, normalises, returns cosine similarity for pairs > 0.8
+- AC2: Returns `sharedFeatures` list identifying which dimensions are close (within 20% of each other)
+- AC3: `/project-twins` renders square similarity matrix; cells color-coded 0→white, 1→deep purple
+- AC4: Hover tooltip: both slugs, similarity score, shared feature list
+- AC5: Click cell → split-screen compare panel showing both projects' sparklines side-by-side
+- AC6: Added to nav under Intelligence; minimum 2 projects to render; handles missing JSONL gracefully
+
+---
+
+## P259 — Activity Digest on Demand (What Happened While Away)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+When the operator returns after hours or days away from the dashboard, there is no quick summary of what happened across the fleet. They must manually check each project's feed, inbox, session gaps, and circuit breaker pages to reconstruct recent activity. A single "what happened in the last N hours" digest page — auto-generated from existing data — would let operators get up to speed in under a minute.
+
+### Proposed Solution
+
+Add `/api/activity-digest?hours=8` that aggregates from the last N hours: new messages sent (by project), tool calls fired (top tools by project), watchdog kills, circuit trips, memory writes, and health score changes. Returns a structured summary with per-project activity counts. Page `/activity-digest` renders a timeline-style page: a "Last N hours summary" banner with total turn count, active projects, and top events. Below, one card per active project showing their mini-timeline (message count, tool count, any alerts). An "hour range" selector: 2/8/24/72h.
+
+### Acceptance Criteria
+
+- AC1: `/api/activity-digest?hours=N` aggregates JSONL events, memory git log, and circuit-events.jsonl for the window
+- AC2: Returns per-project: messageCount, toolCallCount, memoryWrites, hadWatchdogKill, hadCircuitTrip, healthDelta
+- AC3: `/activity-digest` renders summary banner (total turns, unique active projects, top-3 busiest)
+- AC4: Per-project cards sorted by messageCount desc; cards show mini-bar charts for turns + tool calls
+- AC5: Alert badges on cards for watchdog kills, circuit trips, or health score drop >20
+- AC6: Hour range selector: 2/8/24/72h; added to nav under Operations; handles no-activity window gracefully
