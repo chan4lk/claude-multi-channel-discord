@@ -61,6 +61,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/command-bridge', label: 'Fleet Command Bridge', icon: '⌖' },
       { href: '/live-turns', label: 'Live Turn Activity Feed', icon: '◉' },
       { href: '/circuit-timeline', label: 'Circuit Breaker Timeline', icon: '⊘' },
+      { href: '/turn-duration', label: 'Turn Duration Histogram', icon: '⏱' },
     ],
   },
   {
@@ -150,6 +151,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/backlog-coverage', label: 'Proposal Coverage Heatmap', icon: '▦' },
       { href: '/agent-tree', label: 'Agent Spawn Tree', icon: '⑂' },
       { href: '/memory-staleness', label: 'Memory Staleness Radar', icon: '◎' },
+      { href: '/tool-cooccurrence', label: 'Tool Co-occurrence Matrix', icon: '⊠' },
     ],
   },
   {
