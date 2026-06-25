@@ -5782,7 +5782,7 @@ Add `/api/health-score` that computes per-project: circuit-trip rate (last 7d), 
 
 ## P248 — Operator Inbox (Actionable Alerts Triage Center)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
 
 ### Problem
@@ -5805,7 +5805,7 @@ Add `/api/inbox` that aggregates: context alerts (P242, pct>=80%), open circuit 
 
 ## P249 — Session Memory Timeline (Per-Project Memory Write History)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
 
 ### Problem
