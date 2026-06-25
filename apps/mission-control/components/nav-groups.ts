@@ -181,6 +181,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/lifecycle-clock', label: 'Project Lifecycle Clock', icon: '⏲' },
       { href: '/holographic', label: 'Holographic Overview', icon: '⬡' },
       { href: '/star-map', label: 'Fleet Star Map', icon: '✦' },
+      { href: '/memory-density', label: 'Memory Density Heatmap', icon: '▦' },
     ],
   },
   {
