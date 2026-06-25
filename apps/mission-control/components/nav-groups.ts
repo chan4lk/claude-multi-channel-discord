@@ -173,6 +173,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/session-gaps', label: 'Session Gap Analysis', icon: '⊘' },
       { href: '/memory-knowledge-graph', label: 'Cross-Project Memory Knowledge Graph', icon: '⬡' },
       { href: '/lifecycle-funnel', label: 'Project Lifecycle Funnel', icon: '⧗' },
+      { href: '/response-latency', label: 'Response Latency Distribution', icon: '⏱' },
+      { href: '/budget-forecast', label: 'Token Budget Exhaustion Forecast', icon: '⤳' },
     ],
   },
   {
