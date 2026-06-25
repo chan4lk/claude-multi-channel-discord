@@ -89,6 +89,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/scheduler-history', label: 'Scheduler History', icon: '⏲' },
       { href: '/schedules', label: 'Active Schedules', icon: '⏲' },
       { href: '/inbox', label: 'Operator Inbox', icon: '⊡' },
+      { href: '/command-history', label: 'Operator Message History', icon: '◈' },
     ],
   },
   {
@@ -168,6 +169,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/backlog-forecast', label: 'Backlog Completion Forecast', icon: '⤳' },
       { href: '/goal-alignment', label: 'Goal Alignment Matrix', icon: '⊹' },
       { href: '/memory-timeline', label: 'Session Memory Timeline', icon: '◫' },
+      { href: '/session-gaps', label: 'Session Gap Analysis', icon: '⊘' },
     ],
   },
   {

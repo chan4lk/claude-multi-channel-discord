@@ -5823,3 +5823,123 @@ Add `/api/memory-timeline?slug=X` that reads all `memory/*.md` files in the proj
 - AC3: `/memory-timeline` renders swimlane chart: file rows × time axis, dot per commit
 - AC4: Hover tooltip: file name, commit ts, commit SHA (6 chars), message prefix (40 chars)
 - AC5: Project selector; memory type filter; added to nav under Intelligence; graceful empty state
+
+---
+
+## P250 — Operator Command History Dashboard
+
+**Status:** `[x] done`
+**Created:** 2026-06-25
+
+### Problem
+
+Operators have no visibility into the history of `!project` commands they've issued — which projects were started, stopped, cloned, or reconfigured, and when. After incidents or debugging sessions it's hard to reconstruct "what did I do and in what order?" A unified command audit log with filtering and timeline would dramatically improve operational clarity.
+
+### Proposed Solution
+
+Add `/api/command-history` that reads the master project's JSONL transcript and extracts all genuine user messages that start with `!project`. Returns `{ts, command, verb, slug?, args}[]` sorted by ts desc. Page `/command-history` renders a searchable table: timestamp, verb badge (colored by type: create/clone/stop/rm/set), slug, full command text. Filter by verb, slug, and date range. Clicking a row shows full command + response excerpt in an expandable panel.
+
+### Acceptance Criteria
+
+- AC1: `/api/command-history` parses master JSONL for `!project` user messages, returns structured entries
+- AC2: Extracts verb (first token after `!project`) and optional slug (second token if not a flag)
+- AC3: `/command-history` renders searchable/filterable table: ts, verb badge, slug, command
+- AC4: Filter by verb (multi-select dropdown), slug (text), date range (last 7/30/90d picker)
+- AC5: Row expand shows full command + first 200 chars of subsequent assistant response
+- AC6: Added to nav under Operations; auto-refresh 60s; empty state handled
+
+---
+
+## P251 — Session Gap Analysis (Idle Period Detector)
+
+**Status:** `[x] done`
+**Created:** 2026-06-25
+
+### Problem
+
+Projects go silent for days or weeks — no messages, no tool calls — without the operator noticing. Some silence is expected (weekend, sprint end); other gaps signal orphaned sessions, evicted processes that failed to re-spawn, or users who abandoned a workflow. Visualizing idle periods across all projects lets operators spot drifting channels before they become stale.
+
+### Proposed Solution
+
+Add `/api/session-gaps?days=30` that scans each project's JSONL transcript for genuine user messages, computes inter-message intervals, and returns `{slug, gaps: [{start, end, durationHours}], longestGapHours, lastMessageTs}[]`. Page `/session-gaps` renders a stacked swimlane chart: one row per project, colored segments for active vs idle (gap > 24h = yellow, > 72h = red). Sort by longest current gap descending so orphaned projects bubble up. Tooltip shows gap duration + neighbor message previews.
+
+### Acceptance Criteria
+
+- AC1: `/api/session-gaps` computes inter-message gaps per project from JSONL, returns gap series
+- AC2: Gaps ≥ 24h classified yellow, ≥ 72h classified red; active segments green
+- AC3: `/session-gaps` swimlane: one row per project, segments colored by gap severity, time axis last 30d
+- AC4: Sort by longest current idle gap desc; project rows link to `/projects/<slug>`
+- AC5: Hover tooltip: gap duration, last message preview, next message preview
+- AC6: Added to nav under Intelligence; auto-refresh 5min; graceful empty state
+
+---
+
+## P252 — Cross-Project Memory Knowledge Graph
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+Each project maintains its own isolated memory, but multiple projects often share domain knowledge — the same API endpoint, the same user preference, the same architectural decision. This duplication is invisible: if one project learns something important, other projects that need the same knowledge must re-discover it independently. A cross-project memory graph would surface shared entities and highlight knowledge silos.
+
+### Proposed Solution
+
+Add `/api/memory-knowledge-graph` that reads `memory/*.md` for all projects, extracts keywords (lowercased, stop-word filtered, min 4 chars), and computes cross-project overlap: nodes are projects + keywords, edges connect projects to keywords they mention (weight = mention count). Returns `{nodes: [{id, type: 'project'|'keyword', label, projectCount?}], edges: [{source, target, weight}]}`. Page `/memory-knowledge-graph` renders a 2D force graph (react-force-graph-2d): project nodes large (blue), keyword nodes small (orange, sized by cross-project count), edges thin gray. Clicking a keyword node highlights all projects that mention it.
+
+### Acceptance Criteria
+
+- AC1: `/api/memory-knowledge-graph` reads all project memories, extracts top-50 keywords per project (TF weighting), returns graph nodes+edges
+- AC2: Keyword nodes with `projectCount ≥ 2` flagged as "shared" (orange, enlarged)
+- AC3: `/memory-knowledge-graph` renders force graph; project nodes colored by state (running/idle/stopped)
+- AC4: Click keyword node → highlight connected project nodes, show keyword in tooltip with project list
+- AC5: Slider to filter minimum edge weight (keyword frequency); legend for node types
+- AC6: Added to nav under Intelligence; uses `react-force-graph-2d` (already in deps as 3d-graph uses `react-force-graph-3d`)
+
+---
+
+## P253 — Budget Burn Calendar (Daily Token Spend Heatmap)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+The Budget Pressure page (P162) shows current month burn vs limit, but has no historical view of *when* tokens are consumed. Heavy spend days often cluster around specific events (big refactors, debugging sessions, scheduled batch jobs). A calendar heatmap of daily token spend — like a GitHub contribution graph — lets operators identify spend patterns, predict budget exhaustion timing, and attribute expensive days to specific projects.
+
+### Proposed Solution
+
+Add `/api/budget-calendar?months=3` that aggregates token usage from all project JSONL transcripts grouped by calendar day. Returns `{days: [{date: 'YYYY-MM-DD', totalTokens, byProject: {slug: tokens}[]}]}`. Page `/budget-calendar` renders a GitHub-style contribution calendar: weeks as columns, days as rows, cells colored by spend intensity (0 = white, max = deep blue). Hovering a cell shows top-3 projects by spend that day + total. Below the calendar, a stacked bar chart shows the same data in bar form with project breakdown. Month selector (last 1/3/6 months).
+
+### Acceptance Criteria
+
+- AC1: `/api/budget-calendar` aggregates per-day token counts from all project JSONLs
+- AC2: Returns date-keyed entries with total + per-project breakdown, last 90 days by default
+- AC3: `/budget-calendar` renders GitHub-style heatmap calendar; intensity = total tokens that day
+- AC4: Hover tooltip: date, total tokens, top-3 projects by spend
+- AC5: Stacked bar chart below calendar with project color legend
+- AC6: Month range selector (1/3/6 months); added to nav under Operations
+
+---
+
+## P254 — Project Lifecycle Funnel (Spawn → Active → Eviction Flow)
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+The operator knows how many projects exist but not how they flow through their lifecycle states. Questions like "how many projects get spawned but never actually used?", "what's the typical time from first message to first tool call?", "how often do projects get evicted before completing their task?" have no answer today. A lifecycle funnel gives visibility into the health of the project creation → active use → retirement pipeline.
+
+### Proposed Solution
+
+Add `/api/lifecycle-funnel` that reads all project directories, classifies each project into lifecycle stages by examining: JSONL presence (spawned), first user message (contacted), first tool call (active), current state (running/idle/stopped), last message age > 7d (drifting), archived (retired). Returns `{stages: [{name, count, projects: slug[]}], medianActivationMinutes, medianFirstToolCallMinutes}`. Page `/lifecycle-funnel` renders a horizontal funnel SVG: wide bar for Spawned → narrower for Contacted → Active → Drifting → Retired. Each segment clickable to show project list. Sankey-style flow between stages.
+
+### Acceptance Criteria
+
+- AC1: `/api/lifecycle-funnel` classifies all projects into 5 lifecycle stages, returns counts + slug lists
+- AC2: Computes median time from project creation to first user message, and from first message to first tool call
+- AC3: `/lifecycle-funnel` renders horizontal funnel SVG with proportional bar widths per stage
+- AC4: Click stage bar → side panel lists slugs in that stage with last-activity timestamp
+- AC5: Sankey flow arrows between stages (project count × arrow thickness)
+- AC6: Added to nav under Intelligence; graceful handling of projects with no JSONL (Spawned stage)
