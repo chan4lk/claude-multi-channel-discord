@@ -5501,8 +5501,9 @@ Parse JSONL transcripts for genuine user messages (role=user, content[0].type≠
 
 ## P236 — Tool Error Rate Monitor (Per-Tool Failure Frequency)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
+**PR:** https://github.com/chan4lk/claude-multi-channel-discord/pull/235
 
 ### Problem
 
@@ -5524,8 +5525,9 @@ Parse JSONL `tool_result` blocks for each project: detect errors via `is_error: 
 
 ## P237 — Project State Transition Sankey (Activity Flow Visualization)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
+**PR:** https://github.com/chan4lk/claude-multi-channel-discord/pull/235
 
 ### Problem
 
@@ -5547,8 +5549,9 @@ Read `circuit-events.jsonl` (open/close events) and combine with fleet API state
 
 ## P238 — Watchdog Kill Log (Stuck-Agent Kill History)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
+**PR:** https://github.com/chan4lk/claude-multi-channel-discord/pull/238
 
 ### Problem
 
@@ -5565,3 +5568,143 @@ Instrument `ClaudeProjectProcess` to append a line to `watchdog-kills.jsonl` (in
 - AC3: `/watchdog-kills` renders table: timestamp, slug, runtime, last tool, reason; summary header with total/week/worst project
 - AC4: Slug filter; pagination; clicking slug links to `/circuit-timeline?slug=X`
 - AC5: Added to nav under Observability; graceful empty state; bot restart not required (JSONL appended at runtime)
+
+---
+
+## P239 — Per-Project Token Usage Trend (Context Burn Rate Over Time)
+
+**Status:** `[x] done`
+**Created:** 2026-06-25
+**PR:** https://github.com/chan4lk/claude-multi-channel-discord/pull/240
+
+### Problem
+
+Operators cannot see how fast individual projects are consuming context window tokens over time. A project burning through context rapidly will hit limits before operators notice. There is no trend line, no per-project burn rate comparison, and no leading indicator of which channels are approaching their context ceiling.
+
+### Proposed Solution
+
+Parse JSONL `usage` fields per turn. Compute per-project: total tokens, burn rate (tokens/hour last 6h), context pressure % (cumulative session tokens / 200k limit). Add `/api/token-usage`. Render `/token-usage` as multi-line chart with sparklines, summary cards, context pressure color coding.
+
+### Acceptance Criteria
+
+- AC1: `/api/token-usage` parses JSONL `usage` blocks per turn, returns per-project series + burn rate
+- AC2: `/token-usage` renders table: top-15 projects by burn rate, cumulative tokens, context%
+- AC3: Color coding: green(<50%), amber(50-80%), red(≥80%)
+- AC4: Summary cards: highest burn rate, avg tokens/turn, high-pressure count
+- AC5: Project selector; added to nav under Observability; graceful empty state
+
+---
+
+## P240 — Scheduler Job History Log (Cron Execution Audit)
+
+**Status:** `[x] done`
+**Created:** 2026-06-25
+**PR:** https://github.com/chan4lk/claude-multi-channel-discord/pull/242
+
+### Problem
+
+The scheduler fires daily HH:MM jobs but there is no record of when each job ran, whether the inject succeeded, or what the bot said in response. Operators debugging missed jobs or unexpected side-effects have no audit trail.
+
+### Proposed Solution
+
+Instrument `Scheduler.tick()` to append `{ts, scheduleId, slug, interval, message, injected, error}` to `scheduler-history.jsonl`. Add `/api/scheduler-history` and `/scheduler-history` page with event table + per-schedule accordion.
+
+### Acceptance Criteria
+
+- AC1: `Scheduler.tick()` appends to `scheduler-history.jsonl` on every fired job
+- AC2: `/api/scheduler-history` reads file, returns events sorted ts desc with pagination + per-schedule stats
+- AC3: `/scheduler-history` renders table: timestamp, schedule, slug, message snippet, status badge (ok/error)
+- AC4: Per-schedule accordion showing fire count, last fired, error count, error message
+- AC5: Added to nav under Operations; graceful empty state; no restart needed
+
+---
+
+## P241 — Cross-Project Goal Alignment Matrix
+
+**Status:** `[x] done`
+**Created:** 2026-06-25
+
+### Problem
+
+Each project has a goal file, but there is no view showing how goals relate across the fleet. Operators cannot tell if two projects are working toward the same objective, if there are contradictory goals, or which projects have stale/missing goals.
+
+### Proposed Solution
+
+Read all project goal files. Use keyword overlap to compute similarity between every pair. Add `/api/goal-alignment` returning a similarity matrix. Render `/goal-alignment` as a heatmap grid with tooltip showing each project's goal. Outlier panel for projects with no goal or low similarity.
+
+### Acceptance Criteria
+
+- AC1: `/api/goal-alignment` reads all goal files, computes pairwise keyword overlap similarity (0-1), returns matrix + outliers
+- AC2: `/goal-alignment` renders heatmap grid: slug labels on both axes, cell intensity = similarity
+- AC3: Tooltip on cell shows first line of each project's goal
+- AC4: Outlier panel: projects with no goal or similarity < 0.05 to all others
+- AC5: Added to nav under Intelligence; graceful empty state; refreshes every 60s
+
+---
+
+## P242 — Context Pressure Alert Banner (Real-Time Threshold Warnings)
+
+**Status:** `[x] done`
+**Created:** 2026-06-25
+
+### Problem
+
+The Token Usage Trend page (P239) shows context pressure % per project, but operators must actively visit the page to see it. There is no proactive alert when a project's session approaches the context limit (e.g. ≥80%). Without a notification surface, a project can silently hit the 200k token wall, triggering a context-overflow distillation run, with no warning to the operator.
+
+### Proposed Solution
+
+Add `/api/context-alerts` that calls `/api/token-usage` internally, filters for projects with `contextPressurePct ≥ threshold` (default 80%), and returns alert objects `{slug, pressurePct, burnRatePerHour, eta}` where `eta = (remainingTokens / burnRatePerHour) * 3600` seconds. Render a `ContextAlertBanner` component (fixed bottom-right, z-50) that polls `/api/context-alerts` every 60s and displays a dismissible amber/red banner listing at-risk projects. Banner integrates into `ClientShell` so it appears on every page. Clicking a slug opens the Project Spotlight drawer.
+
+### Acceptance Criteria
+
+- AC1: `/api/context-alerts` returns projects with contextPressurePct ≥ configurable threshold (default 80%)
+- AC2: Each alert includes: slug, pressurePct, burnRatePerHour, estimated seconds until limit (eta)
+- AC3: `ContextAlertBanner` appears fixed bottom-right, polls every 60s, dismissible per-slug for 10 min
+- AC4: Banner color: amber (80-90%), red (>90%); shows slug + pressure% + "~Xm until limit"
+- AC5: Integrated into ClientShell so visible on all pages; no-op when no projects at risk
+
+---
+
+## P243 — Watchdog Kill → Circuit Trip Correlation
+
+**Status:** `[x] done`
+**Created:** 2026-06-25
+
+### Problem
+
+The Watchdog Kill Log (P238) and Circuit Breaker Timeline (P227) are separate views. Operators cannot tell whether a watchdog kill was followed by a circuit-open event, or whether repeated watchdog kills are the root cause of circuit trips for a specific project. The causal chain (stuck → kill → circuit-open → cool-down → reset) is invisible across the two views.
+
+### Proposed Solution
+
+Add `/api/kill-circuit-correlation?slug=X` that reads both `watchdog-kills.jsonl` and `circuit-events.jsonl` for a project. For each watchdog kill, check if a circuit-open event occurred within 5 minutes after. Return a correlated timeline: `{killTs, slug, lastToolCall, circuitOpenTs?, circuitOpenMs?}`. Render `/kill-circuit-correlation` as a timeline view: each watchdog kill is a row, with a horizontal arrow showing whether a circuit-open followed (and how quickly). Summary: % of kills that triggered circuit trips, avg kill-to-trip latency. Project selector.
+
+### Acceptance Criteria
+
+- AC1: `/api/kill-circuit-correlation` reads watchdog-kills.jsonl + circuit-events.jsonl, correlates within 5min window
+- AC2: Returns `{killTs, slug, lastToolCall, circuitOpenTs?, circuitOpenMs?}` per kill event
+- AC3: `/kill-circuit-correlation` renders row-per-kill timeline with circuit-open arrow annotation
+- AC4: Summary: total kills, kills-that-tripped (count + %), avg kill-to-trip latency
+- AC5: Project selector; graceful empty state; added to nav under Observability
+
+---
+
+## P244 — Scheduled Job Definition Inspector (Active Schedules Dashboard)
+
+**Status:** `[x] done`
+**Created:** 2026-06-25
+
+### Problem
+
+The Scheduler History page (P240) shows *past* fires but not *current* schedule definitions. Operators cannot see at a glance: which schedules are active, what they will fire next, when they last ran, or whether they are paused. The `!project schedule list` master command shows this for one project at a time; there is no fleet-wide schedule inventory.
+
+### Proposed Solution
+
+Add `/api/schedules` that reads `schedules.json` from `MCD_CHANNELS_DIR`, joins with `channels.json` to resolve slugs, and returns all schedule entries enriched with: `{id, slug, chatId, enabled, interval, at, prompt(first 100 chars), lastRunAt, runCount, maxRuns, nextFireMs}`. Compute `nextFireMs` using the existing `nextFireMs()` helper. Render `/schedules` as a table: schedule id, project slug, interval/at, status badge (active/paused/exhausted), last run, next fire countdown, run count, message preview. Clicking a row navigates to Scheduler History filtered to that schedule.
+
+### Acceptance Criteria
+
+- AC1: `/api/schedules` reads schedules.json, joins slugs, computes nextFireMs for each entry
+- AC2: `/schedules` renders table: id, slug, interval/at, status badge, last run, next fire, run count, message
+- AC3: Status badge: active (green), paused (amber), exhausted (gray, maxRuns reached)
+- AC4: Next fire shown as countdown (e.g. "in 23m") + absolute timestamp on hover
+- AC5: Clicking row links to `/scheduler-history?schedule_id=X`; added to nav under Operations

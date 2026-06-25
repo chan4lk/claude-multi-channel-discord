@@ -42,6 +42,31 @@ function appendScheduleLog(chatId: string, scheduledAt: string, firedAt: string,
   }
 }
 
+function appendSchedulerHistory(
+  s: Schedule,
+  slug: string | undefined,
+  firedAt: string,
+  injected: boolean,
+  error?: string,
+): void {
+  const mcdDir = process.env.MCD_CHANNELS_DIR
+  if (!mcdDir) return
+  try {
+    const entry = JSON.stringify({
+      ts: firedAt,
+      scheduleId: s.id,
+      slug: slug ?? s.chatId,
+      interval: s.interval ?? s.at ?? null,
+      message: s.prompt.slice(0, 200),
+      injected,
+      error: error ?? null,
+    }) + '\n'
+    fs.appendFileSync(path.join(mcdDir, 'scheduler-history.jsonl'), entry)
+  } catch {
+    // Non-fatal
+  }
+}
+
 export interface SchedulerDeps {
   /**
    * Inject a synthetic message into the project pool. Should resolve
@@ -103,9 +128,11 @@ export class Scheduler {
 
       this.log(`firing schedule ${s.id} → chat ${s.chatId}`)
       const fireStart = Date.now()
+      const slug = this.deps.slugForChatId?.(s.chatId)
       try {
         await this.deps.deliver(s.chatId, this.envelopeFor(s, now))
         appendScheduleLog(s.chatId, s.at ?? s.interval ?? 'unknown', now.toISOString(), 'ok', Date.now() - fireStart)
+        appendSchedulerHistory(s, slug, now.toISOString(), true)
         this.deps.onFire?.(s.chatId, s.id, now.toISOString())
         s.lastRunAt = now.toISOString()
         s.runCount = s.runCount + 1
@@ -117,6 +144,7 @@ export class Scheduler {
       } catch (err) {
         this.log(`fire failed for ${s.id}: ${(err as Error).message}`)
         appendScheduleLog(s.chatId, s.at ?? s.interval ?? 'unknown', now.toISOString(), 'stalled', Date.now() - fireStart)
+        appendSchedulerHistory(s, slug, now.toISOString(), false, (err as Error).message)
       }
     }
 

@@ -13,6 +13,7 @@ import NotificationBell from './NotificationBell'
 import PresenceAvatars from './PresenceAvatars'
 import ViewCycler from './ViewCycler'
 import { FleetContextProvider } from './FleetContext'
+import ContextAlertBanner from './ContextAlertBanner'
 import { authClient } from '../src/auth-client'
 
 const MOBILE_NAV = [
@@ -223,6 +224,7 @@ export default function ClientShell({ children }: { children: React.ReactNode })
       <FleetAdvisorPanel />
       <Suspense><SpotlightDrawer /></Suspense>
       <ViewCycler />
+      <ContextAlertBanner />
       {showShortcuts && <KeyboardShortcutsModal onClose={() => setShowShortcuts(false)} />}
       <AnimatePresence>
         {injectState !== null && (

@@ -61,6 +61,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/command-bridge', label: 'Fleet Command Bridge', icon: '⌖' },
       { href: '/live-turns', label: 'Live Turn Activity Feed', icon: '◉' },
       { href: '/circuit-timeline', label: 'Circuit Breaker Timeline', icon: '⊘' },
+      { href: '/kill-circuit-correlation', label: 'Kill → Circuit Correlation', icon: '⊘' },
       { href: '/turn-duration', label: 'Turn Duration Histogram', icon: '⏱' },
       { href: '/circuit-mttr', label: 'Circuit Breaker MTTR', icon: '⟳' },
       { href: '/message-heatmap', label: 'Message Volume Heatmap', icon: '▦' },
@@ -79,6 +80,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/commands', label: 'Fleet Commands', icon: '⌨' },
       { href: '/idle-fleet', label: 'Idle Fleet', icon: '◫' },
       { href: '/queue-board', label: 'Queue & Breakers', icon: '⇥' },
+      { href: '/scheduler-history', label: 'Scheduler History', icon: '⏲' },
+      { href: '/schedules', label: 'Active Schedules', icon: '⏲' },
     ],
   },
   {
@@ -155,6 +158,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/memory-staleness', label: 'Memory Staleness Radar', icon: '◎' },
       { href: '/tool-cooccurrence', label: 'Tool Co-occurrence Matrix', icon: '⊠' },
       { href: '/backlog-forecast', label: 'Backlog Completion Forecast', icon: '⤳' },
+      { href: '/goal-alignment', label: 'Goal Alignment Matrix', icon: '⊹' },
     ],
   },
   {
