@@ -5501,8 +5501,9 @@ Parse JSONL transcripts for genuine user messages (role=user, content[0].type≠
 
 ## P236 — Tool Error Rate Monitor (Per-Tool Failure Frequency)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
+**PR:** https://github.com/chan4lk/claude-multi-channel-discord/pull/235
 
 ### Problem
 
@@ -5524,8 +5525,9 @@ Parse JSONL `tool_result` blocks for each project: detect errors via `is_error: 
 
 ## P237 — Project State Transition Sankey (Activity Flow Visualization)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
+**PR:** https://github.com/chan4lk/claude-multi-channel-discord/pull/235
 
 ### Problem
 
@@ -5547,8 +5549,9 @@ Read `circuit-events.jsonl` (open/close events) and combine with fleet API state
 
 ## P238 — Watchdog Kill Log (Stuck-Agent Kill History)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
+**PR:** https://github.com/chan4lk/claude-multi-channel-discord/pull/238
 
 ### Problem
 
@@ -5565,6 +5568,77 @@ Instrument `ClaudeProjectProcess` to append a line to `watchdog-kills.jsonl` (in
 - AC3: `/watchdog-kills` renders table: timestamp, slug, runtime, last tool, reason; summary header with total/week/worst project
 - AC4: Slug filter; pagination; clicking slug links to `/circuit-timeline?slug=X`
 - AC5: Added to nav under Observability; graceful empty state; bot restart not required (JSONL appended at runtime)
+
+---
+
+## P239 — Per-Project Token Usage Trend (Context Burn Rate Over Time)
+
+**Status:** `[x] done`
+**Created:** 2026-06-25
+**PR:** https://github.com/chan4lk/claude-multi-channel-discord/pull/240
+
+### Problem
+
+Operators cannot see how fast individual projects are consuming context window tokens over time. A project burning through context rapidly will hit limits before operators notice. There is no trend line, no per-project burn rate comparison, and no leading indicator of which channels are approaching their context ceiling.
+
+### Proposed Solution
+
+Parse JSONL `usage` fields per turn. Compute per-project: total tokens, burn rate (tokens/hour last 6h), context pressure % (cumulative session tokens / 200k limit). Add `/api/token-usage`. Render `/token-usage` as multi-line chart with sparklines, summary cards, context pressure color coding.
+
+### Acceptance Criteria
+
+- AC1: `/api/token-usage` parses JSONL `usage` blocks per turn, returns per-project series + burn rate
+- AC2: `/token-usage` renders table: top-15 projects by burn rate, cumulative tokens, context%
+- AC3: Color coding: green(<50%), amber(50-80%), red(≥80%)
+- AC4: Summary cards: highest burn rate, avg tokens/turn, high-pressure count
+- AC5: Project selector; added to nav under Observability; graceful empty state
+
+---
+
+## P240 — Scheduler Job History Log (Cron Execution Audit)
+
+**Status:** `[x] done`
+**Created:** 2026-06-25
+**PR:** https://github.com/chan4lk/claude-multi-channel-discord/pull/242
+
+### Problem
+
+The scheduler fires daily HH:MM jobs but there is no record of when each job ran, whether the inject succeeded, or what the bot said in response. Operators debugging missed jobs or unexpected side-effects have no audit trail.
+
+### Proposed Solution
+
+Instrument `Scheduler.tick()` to append `{ts, scheduleId, slug, interval, message, injected, error}` to `scheduler-history.jsonl`. Add `/api/scheduler-history` and `/scheduler-history` page with event table + per-schedule accordion.
+
+### Acceptance Criteria
+
+- AC1: `Scheduler.tick()` appends to `scheduler-history.jsonl` on every fired job
+- AC2: `/api/scheduler-history` reads file, returns events sorted ts desc with pagination + per-schedule stats
+- AC3: `/scheduler-history` renders table: timestamp, schedule, slug, message snippet, status badge (ok/error)
+- AC4: Per-schedule accordion showing fire count, last fired, error count, error message
+- AC5: Added to nav under Operations; graceful empty state; no restart needed
+
+---
+
+## P241 — Cross-Project Goal Alignment Matrix
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-25
+
+### Problem
+
+Each project has a goal file, but there is no view showing how goals relate across the fleet. Operators cannot tell if two projects are working toward the same objective, if there are contradictory goals, or which projects have stale/missing goals.
+
+### Proposed Solution
+
+Read all project goal files. Use keyword overlap to compute similarity between every pair. Add `/api/goal-alignment` returning a similarity matrix. Render `/goal-alignment` as a heatmap grid with tooltip showing each project's goal. Outlier panel for projects with no goal or low similarity.
+
+### Acceptance Criteria
+
+- AC1: `/api/goal-alignment` reads all goal files, computes pairwise keyword overlap similarity (0-1), returns matrix + outliers
+- AC2: `/goal-alignment` renders heatmap grid: slug labels on both axes, cell intensity = similarity
+- AC3: Tooltip on cell shows first line of each project's goal
+- AC4: Outlier panel: projects with no goal or similarity < 0.05 to all others
+- AC5: Added to nav under Intelligence; graceful empty state; refreshes every 60s
 
 ---
 
