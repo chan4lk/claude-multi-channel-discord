@@ -5478,7 +5478,7 @@ Extend `/api/backlog-coverage` (or add `/api/backlog-forecast`) to compute: roll
 
 ## P235 — Inbound Message Heatmap (Operator Engagement by Hour & Day)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
 
 ### Problem
