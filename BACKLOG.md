@@ -5386,7 +5386,7 @@ For each project, scan `memory/*.md` files: read `mtime` and frontmatter type. C
 
 ## P231 — Turn Duration Histogram (Wall-Clock Timing Per Project)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
 
 ### Problem
@@ -5409,7 +5409,7 @@ Parse JSONL transcripts for each project: compute per-turn duration as `first_to
 
 ## P232 — Tool Co-occurrence Matrix (Which Tools Appear Together)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
 
 ### Problem
