@@ -5924,7 +5924,7 @@ Add `/api/budget-calendar?months=3` that aggregates token usage from all project
 
 ## P254 — Project Lifecycle Funnel (Spawn → Active → Eviction Flow)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done` — PR #253, merged 2026-06-25
 **Created:** 2026-06-25
 
 ### Problem
@@ -5948,7 +5948,7 @@ Add `/api/lifecycle-funnel` that reads all project directories, classifies each 
 
 ## P255 — Fleet Full-Text Search (Cross-Project Message & Memory Search)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done` — PR #253, merged 2026-06-25
 **Created:** 2026-06-25
 
 ### Problem
