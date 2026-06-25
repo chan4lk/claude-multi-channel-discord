@@ -214,7 +214,7 @@ function helpText(prefix: string): string {
     `${prefix} schedule list [<chat_id-or-slug>]      — show all schedules (or just one project's)`,
     `${prefix} schedule pause/resume/rm <id>          — toggle or delete a schedule`,
     `${prefix} provider <chat_id-or-slug> [--set ALIAS | --clear]    — switch a project to a different provider (or back to Claude subscription)`,
-    `${prefix} model    <chat_id-or-slug> [--set NAME | --clear]    — set or clear the project's --model arg`,
+    `${prefix} model    <chat_id-or-slug> [--set NAME [--force] | --clear]    — set or clear the project's --model arg`,
     `${prefix} progress <chat_id-or-slug> [--set off|edit|post | --clear]    — show/set live tool-call progress mode`,
     `${prefix} teams-setup <APP_ID> <APP_SECRET>                      — write Teams bot credentials to .env (run without args for instructions)`,
     `${prefix} memory stats                     — show memory counts by type and channel`,
@@ -1252,6 +1252,20 @@ export async function handleModel(rest: string[], ctx: MasterContext): Promise<s
   if (!setName && !clear) {
     const m = entry.project.model ?? config.defaults.model
     return `**${entry.project.slug}**: model = \`${m}\`${entry.project.model ? '' : ' (inherited from defaults)'}`
+  }
+
+  // Alias guard: a bad subscription model (e.g. a typo'd "sonnat") spawns
+  // fine but claude errors at first turn — "selected model may not exist" —
+  // silently bricking the channel. Catch obvious typos at set time. Only
+  // applies to subscription projects: provider-routed projects accept
+  // arbitrary model ids the endpoint aliases internally. `--force` overrides.
+  if (setName) {
+    const usesProvider = (entry.project.provider ?? config.defaults.provider) !== undefined
+    const KNOWN = ['opus', 'sonnet', 'haiku']
+    const ok = usesProvider || KNOWN.includes(setName.toLowerCase()) || setName.startsWith('claude-')
+    if (!ok && flags.force !== true) {
+      return `⚠️ \`${setName}\` is not a known subscription model (${KNOWN.join(', ')}, or a \`claude-*\` id). A bad alias bricks the channel — claude errors at first turn. Re-run with \`--force\` if intended.`
+    }
   }
 
   const updated = { ...entry.project }
