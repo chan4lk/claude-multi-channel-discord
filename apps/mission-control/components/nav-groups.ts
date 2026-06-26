@@ -38,6 +38,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/dependency-graph', label: 'Dependency Graph', icon: '⇢' },
       { href: '/lifecycle-heatmap', label: 'Lifecycle Heatmap', icon: '▦' },
       { href: '/topology', label: 'Fleet Topology', icon: '⬡' },
+      { href: '/topology-diff', label: 'Fleet Topology Diff', icon: '⇄' },
       { href: '/narrative', label: 'Narrative Timeline', icon: '◫' },
       { href: '/context-pressure', label: 'Context Pressure', icon: '◑' },
       { href: '/turn-quality', label: 'Turn Quality', icon: '▦' },
@@ -204,6 +205,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/proposal-kanban', label: 'Proposal Pipeline Kanban', icon: '⊟' },
       { href: '/proposal-lifecycle', label: 'Proposal Lifecycle Dashboard', icon: '⇉' },
       { href: '/insight-radar', label: 'Cross-Project Insight Radar', icon: '◎' },
+      { href: '/attention-gravity', label: 'Attention Gravity Well', icon: '◉' },
     ],
   },
   {

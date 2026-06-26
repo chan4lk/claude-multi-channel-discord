@@ -6932,7 +6932,7 @@ Add a `/cognitive-load` page. A `/api/cognitive-load` endpoint scans the last 7 
 
 ## P296 — Fleet Topology Diff View
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-26
 
 ### Problem
@@ -6956,7 +6956,7 @@ Add a `/topology-diff` page. A `/api/topology-diff` endpoint reads `channels.jso
 
 ## P297 — Attention Gravity Well
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-26
 
 ### Problem
