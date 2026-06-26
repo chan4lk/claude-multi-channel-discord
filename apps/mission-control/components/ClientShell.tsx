@@ -77,6 +77,7 @@ const SIDEBAR_ITEMS = [
   { href: '/reports', icon: '◻', label: 'Reports' },
   { href: '/pipeline', icon: '⬒', label: 'Pipeline' },
   { href: '/memory-graph', icon: '✦', label: 'Memory' },
+  { href: '/memory-recovery', icon: '↺', label: 'Mem Recovery' },
   { href: '/goals', icon: '◎', label: 'Goals' },
   { href: '/branches', icon: '⑂', label: 'Branches' },
   { href: '/heatmap', icon: '▦', label: 'Heatmap' },
