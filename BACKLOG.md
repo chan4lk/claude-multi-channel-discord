@@ -6332,7 +6332,7 @@ Add a `/tool-heatmap` page. A `/api/tool-heatmap` endpoint scans JSONL transcrip
 
 ## P271 — Session Length Distribution
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-26
 
 ### Problem
@@ -6356,7 +6356,7 @@ Add a `/session-length` page. A `/api/session-length` endpoint reads JSONL files
 
 ## P272 — Project Inactivity Heatmap
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-26
 
 ### Problem
