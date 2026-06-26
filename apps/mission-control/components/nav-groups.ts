@@ -192,6 +192,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/proposal-memory-matrix', label: 'Proposal Memory Coverage Matrix', icon: '⊠' },
       { href: '/session-length', label: 'Session Length Distribution', icon: '⏱' },
       { href: '/inactivity-heatmap', label: 'Project Inactivity Heatmap', icon: '◻' },
+      { href: '/health-scorecard', label: 'Project Health Scorecard', icon: '◈' },
     ],
   },
   {

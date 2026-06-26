@@ -6423,3 +6423,123 @@ Add a `/proposal-memory-matrix` page. A `/api/proposal-memory-matrix` endpoint r
 - AC4: Hover tooltip: proposal title, project slug, overlap score, matched keywords
 - AC5: Sort rows by max-column-score desc (most-covered proposals first)
 - AC6: Added to Intelligence nav; empty state when no proposals found
+
+---
+
+## P275 — Project Health Scorecard
+
+**Status:** `[x] done`
+**Created:** 2026-06-26
+
+### Problem
+
+Operators have no single-view summary of each project's overall health. Metrics like memory count, session turns, last active, proposals, and alerts are scattered across multiple pages.
+
+### Proposed Solution
+
+Add a `/health-scorecard` page. A `/api/health-scorecard` endpoint aggregates per-project: memory file count, total sessions, last-active timestamp, open specclaw proposal count, watchdog-kill count (last 7 days), and a composite health score (0–100) computed from weighted sub-scores. Returns `{ projects: { slug, score, memory, sessions, lastActiveDaysAgo, openProposals, recentKills }[] }`. Page renders a grid of cards — one per project — each showing the score as a circular arc gauge (SVG), colored green/amber/red by score band, plus mini stat rows.
+
+### Acceptance Criteria
+
+- AC1: `/api/health-scorecard` returns composite health score and sub-metrics per project
+- AC2: Grid of project cards; each card has circular arc gauge (0–100, colored by band: ≥70 cyan, 40–69 amber, <40 red)
+- AC3: Card shows: slug, score, memory files, sessions, last-active (relative), open proposals, recent kills
+- AC4: Hover card shows breakdown of how score was computed (mini score table)
+- AC5: Cards sortable by score (default), slug, or last-active
+- AC6: Added to Fleet nav; empty state when no projects
+
+---
+
+## P276 — Turn Velocity Sparklines Wall
+
+**Status:** `[ ] todo`
+**Created:** 2026-06-26
+
+### Problem
+
+No single view shows turn-rate trends for all projects simultaneously. Operators must click into each project individually to assess whether activity is rising, falling, or flat.
+
+### Proposed Solution
+
+Add a `/velocity-wall` page. A `/api/velocity-wall` endpoint reads transcripts for all projects, groups turns by day for the last 30 days, and returns `{ projects: { slug, daily: { date: string, count: number }[] }[] }`. Page renders a dense grid of small sparklines (SVG polylines, 30 data points each), one per project, labeled with slug and 7-day total. Color-encodes trend: rising = cyan, falling = amber, flat = slate. Sparklines are click-to-zoom.
+
+### Acceptance Criteria
+
+- AC1: `/api/velocity-wall` returns daily turn counts for last 30 days per project
+- AC2: Grid of SVG sparklines: one per project, 30 data points, 80×30px each
+- AC3: Trend color: rising (last 7d avg > prior 7d avg) = cyan; falling = amber; flat = slate
+- AC4: Click sparkline opens expanded 90-day view modal
+- AC5: Header stats: most active project, fleet-wide daily average
+- AC6: Added to Fleet nav
+
+---
+
+## P277 — Memory Link Graph
+
+**Status:** `[ ] todo`
+**Created:** 2026-06-26
+
+### Problem
+
+Memory files can reference each other via `[[slug]]` links, but these cross-file connections are invisible. Operators cannot tell which memories are central hubs versus isolated islands.
+
+### Proposed Solution
+
+Add a `/memory-link-graph` page. A `/api/memory-link-graph` endpoint scans each project's `memory/` directory, extracts `[[...]]` references from file content, and builds a directed graph `{ nodes: { id, slug, project, type, wordCount }[], edges: { source, target, project }[] }`. Page renders a force-directed SVG graph using D3-style layout computed server-side (or client-side via simple spring algorithm): nodes colored by memory type, edges as faint arcs, node size ∝ wordCount. Project filter dropdown.
+
+### Acceptance Criteria
+
+- AC1: `/api/memory-link-graph` returns nodes and edges with type/wordCount metadata
+- AC2: Force-directed SVG graph: nodes colored by memory type (same palette as memory-radar)
+- AC3: Node size proportional to word count; isolated nodes shown in dim corner cluster
+- AC4: Hover node: shows slug, type, word count, in/out-degree
+- AC5: Project filter dropdown; "all projects" merges graphs, colors by project instead of type
+- AC6: Added to Intelligence nav
+
+---
+
+## P278 — Proposal Pipeline Kanban
+
+**Status:** `[ ] todo`
+**Created:** 2026-06-26
+
+### Problem
+
+There is no at-a-glance view of the specclaw proposal pipeline across all projects. Status transitions (proposed → planning → building → done) are invisible without reading individual spec files.
+
+### Proposed Solution
+
+Add a `/proposal-kanban` page. A `/api/proposal-kanban` endpoint scans `.specclaw/changes/*/proposal.md` across all projects, reads each `proposal.md` plus companion `spec.md`/`tasks.md`/`verify-report.md` to infer stage, and returns `{ columns: { stage, proposals: { slug, project, title, age }[] }[] }`. Stages: `proposed` (proposal only), `planning` (spec.md exists), `building` (tasks.md exists), `verifying` (verify-report.md exists), `done` (PR merged). Page renders a horizontal kanban: 5 columns, cards draggable (state managed client-side only, no persistence).
+
+### Acceptance Criteria
+
+- AC1: `/api/proposal-kanban` returns proposals bucketed into 5 stages based on file presence
+- AC2: Horizontal kanban with 5 columns; cards show project slug, title (truncated), age
+- AC3: Card color encodes project (consistent palette)
+- AC4: Column headers show stage name and count
+- AC5: Hover card: full title, last modified, stage inference logic
+- AC6: Added to Intelligence nav; empty state when no proposals
+
+---
+
+## P279 — Fleet Live Pulse Board
+
+**Status:** `[ ] todo`
+**Created:** 2026-06-26
+
+### Problem
+
+Operators have no real-time visual indicating which projects are actively processing turns at this moment. The fleet-view page shows session state but does not animate or pulse to draw attention to live activity.
+
+### Proposed Solution
+
+Add a `/live-pulse` page. An SSE endpoint `/api/live-pulse/stream` polls transcript mtimes every 3 seconds, detects files written within the last 10 seconds, and emits `{ active: string[] }` events. The page renders a grid of project circles: active circles glow cyan with a CSS pulse animation, idle circles are dim slate. Circle size ∝ average turns/day (last 7d). Hovering shows last-active timestamp and session count.
+
+### Acceptance Criteria
+
+- AC1: `/api/live-pulse/stream` is an SSE endpoint emitting `{ active: string[] }` every 3 seconds
+- AC2: Grid of project circles; active (transcript written in last 10s) pulse cyan; idle are dim
+- AC3: Circle size proportional to average turns/day (last 7 days); min/max clamped
+- AC4: Hover: slug, last-active timestamp, session count, current-turn status
+- AC5: Connection status indicator (connected/reconnecting)
+- AC6: Added to Fleet nav
