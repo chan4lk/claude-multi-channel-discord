@@ -6284,7 +6284,7 @@ Add a `/memory-gaps` page listing projects with memory coverage gaps. A `/api/me
 
 ## P269 — Fleet Memory Growth Timeline
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
 
 ### Problem
