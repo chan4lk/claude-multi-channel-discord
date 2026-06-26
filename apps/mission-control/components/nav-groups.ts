@@ -188,6 +188,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/memory-gaps', label: 'Memory Coverage Gap Detector', icon: '⊠' },
       { href: '/memory-growth', label: 'Fleet Memory Growth Timeline', icon: '◥' },
       { href: '/tool-heatmap', label: 'Cross-Project Tool Usage Heatmap', icon: '▦' },
+      { href: '/memory-radar', label: 'Memory Type Ratio Radar', icon: '◎' },
+      { href: '/proposal-memory-matrix', label: 'Proposal Memory Coverage Matrix', icon: '⊠' },
       { href: '/session-length', label: 'Session Length Distribution', icon: '⏱' },
       { href: '/inactivity-heatmap', label: 'Project Inactivity Heatmap', icon: '◻' },
     ],

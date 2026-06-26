@@ -6380,7 +6380,7 @@ Add a `/inactivity-heatmap` page. A `/api/inactivity-heatmap` endpoint reads tra
 
 ## P273 — Memory Type Ratio Radar
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-26
 
 ### Problem
@@ -6404,7 +6404,7 @@ Add a `/memory-radar` page. A `/api/memory-radar` endpoint scans each project's 
 
 ## P274 — Proposal × Memory Coverage Matrix
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-26
 
 ### Problem
