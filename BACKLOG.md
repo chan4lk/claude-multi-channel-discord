@@ -6303,3 +6303,123 @@ Add a `/memory-growth` page with a stacked area chart (pure SVG). X-axis = last 
 - AC4: Legend below chart lists project slugs with color swatches
 - AC5: Fleet total line overlaid in white above stacked areas
 - AC6: Added to nav under Intelligence; handles zero-growth periods (flat line)
+
+---
+
+## P270 — Cross-Project Tool Usage Heatmap
+
+**Status:** `[x] done`
+**Created:** 2026-06-26
+
+### Problem
+
+Operators cannot see which tools each project uses most, or how tool usage patterns differ across the fleet. High tool-call rates for expensive tools (Agent, Workflow) are invisible until they show up in cost.
+
+### Proposed Solution
+
+Add a `/tool-heatmap` page. A `/api/tool-heatmap` endpoint scans JSONL transcripts for `tool_use` blocks, aggregates call counts by project × tool name, and returns `{ projects: string[], tools: string[], matrix: number[][] }` (rows = projects, cols = tools, sorted by total desc). Page renders an SVG heatmap with project rows and tool columns, cell color = call count intensity, hover tooltip, row/column total bars.
+
+### Acceptance Criteria
+
+- AC1: `/api/tool-heatmap` returns `{ projects, tools, matrix, generatedAt }` for last 30 days
+- AC2: SVG heatmap: rows = projects, cols = tools sorted by fleet total; max 20 projects, max 30 tools
+- AC3: Cell color encodes call count (cyan gradient); zero cells are near-black
+- AC4: Row totals (right bar), column totals (bottom bar)
+- AC5: Hover tooltip: project, tool, count
+- AC6: Added to Observability nav
+
+---
+
+## P271 — Session Length Distribution
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-26
+
+### Problem
+
+There is no view of how long individual Claude sessions run (measured in turns or wall-clock time). Long sessions may indicate stuck agents or complex tasks; very short sessions may indicate repeated spawning due to restarts.
+
+### Proposed Solution
+
+Add a `/session-length` page. A `/api/session-length` endpoint reads JSONL files per project, groups lines by session (uuid from filename), computes turn count and wall-clock duration (last timestamp − first timestamp), and returns `{ sessions: { slug, sessionId, turns, durationMinutes, date }[] }`. Page shows a scatter plot (SVG, x = turns, y = duration) colored by project, plus a histogram of turn counts.
+
+### Acceptance Criteria
+
+- AC1: `/api/session-length` returns session records with slug, turns, durationMinutes, date
+- AC2: SVG scatter plot: x = turns, y = durationMinutes; dots colored by project (same palette as memory-growth)
+- AC3: Hover tooltip: slug, session date, turns, duration
+- AC4: Histogram of turn counts (10 buckets) shown below scatter
+- AC5: Stats header: median turns, median duration, longest session
+- AC6: Added to Observability nav
+
+---
+
+## P272 — Project Inactivity Heatmap
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-26
+
+### Problem
+
+The idle-fleet page shows which projects are currently idle, but gives no history of when each project was last active. Operators cannot see patterns like "project X goes silent every weekend" or identify projects that have been abandoned.
+
+### Proposed Solution
+
+Add a `/inactivity-heatmap` page. A `/api/inactivity-heatmap` endpoint reads transcript mtime per project per day (scanning JSONL files modified on each day) and builds a `{ slug, activeDays: string[] }[]` structure for the last 60 days. Page renders a calendar-strip heatmap: rows = projects, columns = days (last 60), cells colored by whether the project had any turns that day (active = cyan, inactive = dark). Hover shows date and turn count.
+
+### Acceptance Criteria
+
+- AC1: `/api/inactivity-heatmap` returns `{ slug, dailyTurns: { date, count }[] }[]` for last 60 days
+- AC2: Calendar-strip SVG heatmap: rows = projects (sorted by inactive days desc), cols = days
+- AC3: Active cells colored cyan (intensity = turn count), inactive cells near-black
+- AC4: Hover tooltip: project, date, turn count
+- AC5: Right-side bar shows inactive day count per project
+- AC6: Added to Observability nav; max 25 projects shown
+
+---
+
+## P273 — Memory Type Ratio Radar
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-26
+
+### Problem
+
+Projects have different memory type compositions (more feedback memories vs. project memories vs. user memories) but this ratio is invisible. Radar charts per project would reveal whether memory is balanced or skewed toward one type.
+
+### Proposed Solution
+
+Add a `/memory-radar` page. A `/api/memory-radar` endpoint scans each project's `memory/` directory, counts files per canonical type (user, feedback, project, reference), and also counts word-density (total words) per type. Returns `{ slug, typeCounts: Record<string, number>, typeWords: Record<string, number> }[]`. Page renders one small SVG radar (pentagon) per project — 4 axes for the 4 types, two overlaid polygons (file count fill, word density outline). Grid layout, up to 20 projects.
+
+### Acceptance Criteria
+
+- AC1: `/api/memory-radar` returns per-project type counts and word counts
+- AC2: Small SVG radar per project (4 axes), file-count polygon filled cyan, word-density polygon outlined amber
+- AC3: Grid layout: 4 or 5 columns; project slug label below each radar
+- AC4: Hover on a radar enlarges it in a tooltip overlay for detail
+- AC5: Legend shows file-count vs word-density encoding
+- AC6: Added to Intelligence nav; projects with no memory show empty radar
+
+---
+
+## P274 — Proposal × Memory Coverage Matrix
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-26
+
+### Problem
+
+There is no view connecting specclaw proposal topics to which projects have relevant memory coverage for those topics. An operator cannot tell if a proposal is being worked on by a project that lacks any memory of the relevant domain.
+
+### Proposed Solution
+
+Add a `/proposal-memory-matrix` page. A `/api/proposal-memory-matrix` endpoint reads `.specclaw/changes/*/proposal.md` files across all projects to extract proposal titles and keywords, then reads each project's memory files to extract keywords from frontmatter `description` fields. Returns `{ proposals: string[], projects: string[], matrix: number[][] }` where each cell is the keyword overlap score (0–1). Page renders an SVG heatmap: rows = proposals, cols = projects, cell color = overlap. High-coverage cells (score ≥ 0.5) get a bright highlight.
+
+### Acceptance Criteria
+
+- AC1: `/api/proposal-memory-matrix` returns overlap matrix for all proposal × project pairs
+- AC2: SVG heatmap rows = proposals (truncated title), cols = projects; max 20×20
+- AC3: Cell color encodes overlap (0 = near-black, 1 = bright cyan); cells ≥ 0.5 labeled with score
+- AC4: Hover tooltip: proposal title, project slug, overlap score, matched keywords
+- AC5: Sort rows by max-column-score desc (most-covered proposals first)
+- AC6: Added to Intelligence nav; empty state when no proposals found

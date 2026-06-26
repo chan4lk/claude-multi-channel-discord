@@ -187,6 +187,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/turn-heatmap', label: 'Session Turn Heatmap', icon: '▦' },
       { href: '/memory-gaps', label: 'Memory Coverage Gap Detector', icon: '⊠' },
       { href: '/memory-growth', label: 'Fleet Memory Growth Timeline', icon: '◥' },
+      { href: '/tool-heatmap', label: 'Cross-Project Tool Usage Heatmap', icon: '▦' },
     ],
   },
   {
