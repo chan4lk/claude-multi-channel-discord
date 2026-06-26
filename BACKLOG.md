@@ -6980,7 +6980,7 @@ Add a `/attention-gravity` page — a radial "gravity well" SVG visualization. P
 
 ## P298 — Memory Constellation Browser
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-26
 
 ### Problem
