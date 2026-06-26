@@ -6668,7 +6668,7 @@ Add a `/proposal-lifecycle` page. A `/api/proposal-lifecycle` endpoint walks all
 
 ## P285 — Memory-Project Correlation Matrix
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-26
 
 ### Problem
@@ -6740,7 +6740,7 @@ Add a `/session-replay` page. A `/api/session-replay?slug=<slug>&sessionId=<id>`
 
 ## P288 — Cross-Project Insight Radar
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-26
 
 ### Problem
