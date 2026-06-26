@@ -6596,7 +6596,7 @@ Extend `/api/velocity-wall` to include a `platform` field per project (from `cha
 
 ## P282 — Memory Orphan Report
 
-**Status:** `[ ] todo`
+**Status:** `[x] done`
 **Created:** 2026-06-26
 
 ### Problem
