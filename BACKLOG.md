@@ -6236,7 +6236,7 @@ Add a `/memory-age-strip` page. For each project, display a horizontal strip of 
 
 ## P267 — Session Turn Heatmap (Project × Day-of-Week)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
 
 ### Problem
@@ -6260,7 +6260,7 @@ Add a `/turn-heatmap` page mirroring the message-heatmap pattern but sourced fro
 
 ## P268 — Memory Coverage Gap Detector
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
 
 ### Problem
