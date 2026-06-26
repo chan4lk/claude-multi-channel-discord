@@ -1,235 +1,259 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import * as d3 from 'd3'
-import type {
-  MemoryConstellationResponse,
-  ConstellationKeywordNode,
-  ConstellationKeywordEdge,
-} from '../app/api/memory-constellation/route'
+import ForceGraph3DLib from 'react-force-graph-3d'
+import type { MemoryConstellationResponse, MemoryFileNode } from '../app/api/memory-constellation/route'
 
-interface GraphNode extends ConstellationKeywordNode {
+const PALETTE = [
+  '#22D3EE', '#38BDF8', '#818CF8', '#34D399', '#FB923C',
+  '#FCD34D', '#F472B6', '#A78BFA', '#4ADE80', '#E879F9',
+]
+
+function slugColor(slug: string): string {
+  let h = 0
+  for (let i = 0; i < slug.length; i++) h = (h * 31 + slug.charCodeAt(i)) >>> 0
+  return PALETTE[h % PALETTE.length]
+}
+
+function nodeVal(node: MemoryFileNode, maxWords: number): number {
+  if (maxWords <= 0) return 4
+  return 2 + Math.round(Math.sqrt(node.wordCount / maxWords) * 10)
+}
+
+interface SelectedNode {
+  node: MemoryFileNode
   x: number
   y: number
-  vx?: number
-  vy?: number
-  fx?: number | null
-  fy?: number | null
-  r: number
 }
 
-interface GraphLink {
-  source: string | GraphNode
-  target: string | GraphNode
-  weight: number
-}
-
-// Node color encodes distinct-project count: isolated (dim slate) → shared (bright cyan).
-function colorFor(projectCount: number, max: number): string {
-  const frac = max <= 1 ? 0 : (projectCount - 1) / (max - 1)
-  return d3.interpolateRgb('#475569', '#22D3EE')(Math.max(0, Math.min(1, frac)))
-}
-
-function nodeRadius(occurrences: number, maxOcc: number): number {
-  if (maxOcc <= 0) return 8
-  return 6 + Math.round(Math.sqrt(occurrences / maxOcc) * 18)
-}
-
-interface HoverCard {
-  node: GraphNode
+interface GraphNode extends MemoryFileNode {
+  val?: number
+  color?: string
 }
 
 export default function MemoryConstellation() {
-  const svgRef = useRef<SVGSVGElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const fgRef = useRef<any>(null)
   const [data, setData] = useState<MemoryConstellationResponse | null>(null)
-  const [hover, setHover] = useState<HoverCard | null>(null)
-  const [dims, setDims] = useState({ w: 800, h: 500 })
-  const simRef = useRef<d3.Simulation<GraphNode, undefined> | null>(null)
-  const nodesRef = useRef<GraphNode[]>([])
-
-  useEffect(() => {
-    const el = svgRef.current?.parentElement
-    if (!el) return
-    const obs = new ResizeObserver((entries) => {
-      const { width, height } = entries[0]!.contentRect
-      setDims({ w: Math.floor(width), h: Math.max(400, Math.floor(height)) })
-    })
-    obs.observe(el)
-    setDims({ w: Math.floor(el.clientWidth), h: Math.max(400, Math.floor(el.clientHeight || 500)) })
-    return () => obs.disconnect()
-  }, [])
+  const [filter, setFilter] = useState<string>('all')
+  const [selected, setSelected] = useState<SelectedNode | null>(null)
+  const autoRotateRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const userInteractRef = useRef(false)
+  const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const fetchData = useCallback(async () => {
     try {
       const res = await fetch('/api/memory-constellation')
       if (res.ok) setData(await res.json())
-    } catch {}
+    } catch { /* ignore */ }
   }, [])
 
   useEffect(() => {
     fetchData()
-    const t = setInterval(fetchData, 60_000)
+    const t = setInterval(fetchData, 30_000)
     return () => clearInterval(t)
   }, [fetchData])
 
+  // Auto-rotate when idle
   useEffect(() => {
-    const svg = svgRef.current
-    if (!svg || !data || data.nodes.length === 0) return
-
-    const maxOcc = Math.max(...data.nodes.map((n) => n.occurrences), 1)
-    const maxWeight = Math.max(...data.edges.map((e) => e.weight), 1)
-    const posCache: Record<string, { x: number; y: number }> = {}
-    for (const n of nodesRef.current) {
-      if (n.x && n.y) posCache[n.keyword] = { x: n.x, y: n.y }
+    const fg = fgRef.current
+    if (!fg) return
+    autoRotateRef.current = setInterval(() => {
+      if (userInteractRef.current) return
+      const camera = fg.camera()
+      if (!camera) return
+      const { x, z } = camera.position
+      const angle = Math.atan2(z, x) + 0.005
+      const dist = Math.sqrt(x * x + z * z)
+      fg.cameraPosition({ x: Math.cos(angle) * dist, z: Math.sin(angle) * dist })
+    }, 50)
+    return () => {
+      if (autoRotateRef.current) clearInterval(autoRotateRef.current)
     }
+  }, [data])
 
-    const nodes: GraphNode[] = data.nodes.map((n) => ({
-      ...n,
-      r: nodeRadius(n.occurrences, maxOcc),
-      x: posCache[n.keyword]?.x ?? dims.w / 2 + (Math.random() - 0.5) * 200,
-      y: posCache[n.keyword]?.y ?? dims.h / 2 + (Math.random() - 0.5) * 200,
-    }))
-    nodesRef.current = nodes
+  const filteredData = (() => {
+    if (!data) return null
+    if (filter === 'all') return { nodes: data.nodes, links: data.links }
+    const validIds = new Set(data.nodes.filter((n) => n.project === filter).map((n) => n.id))
+    return {
+      nodes: data.nodes.filter((n) => n.project === filter),
+      links: data.links.filter((l) => validIds.has(l.source as string) && validIds.has(l.target as string)),
+    }
+  })()
 
-    const links: GraphLink[] = data.edges.map((e) => ({ ...e }))
+  const maxWords = filteredData
+    ? Math.max(...filteredData.nodes.map((n) => n.wordCount), 1)
+    : 1
 
-    if (simRef.current) simRef.current.stop()
+  const graphNodes: GraphNode[] = (filteredData?.nodes ?? []).map((n) => ({
+    ...n,
+    val: nodeVal(n, maxWords),
+    color: slugColor(n.project),
+  }))
 
-    const sim = d3.forceSimulation(nodes)
-      .force('link', d3.forceLink<GraphNode, GraphLink>(links)
-        .id((d) => d.keyword)
-        .distance(70)
-        .strength((l) => Math.min(0.6, 0.15 + (l as GraphLink).weight / (maxWeight * 2))))
-      .force('charge', d3.forceManyBody().strength(-120))
-      .force('center', d3.forceCenter(dims.w / 2, dims.h / 2).strength(0.05))
-      .force('collide', d3.forceCollide<GraphNode>().radius((d) => d.r + 6))
-    simRef.current = sim
-
-    const svgSel = d3.select(svg)
-    svgSel.selectAll('*').remove()
-    svgSel.attr('width', dims.w).attr('height', dims.h)
-
-    const g = svgSel.append('g')
-
-    const zoom = d3.zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.3, 4])
-      .on('zoom', (event) => g.attr('transform', event.transform))
-    svgSel.call(zoom)
-
-    const defs = svgSel.append('defs')
-    const filter = defs.append('filter').attr('id', 'kw-glow').attr('x', '-50%').attr('y', '-50%').attr('width', '200%').attr('height', '200%')
-    filter.append('feGaussianBlur').attr('stdDeviation', '3').attr('result', 'blur')
-    const feMerge = filter.append('feMerge')
-    feMerge.append('feMergeNode').attr('in', 'blur')
-    feMerge.append('feMergeNode').attr('in', 'SourceGraphic')
-
-    const linkSel = g.append('g').attr('class', 'links')
-      .selectAll('line')
-      .data(links)
-      .join('line')
-      .attr('stroke', '#22D3EE')
-      .attr('stroke-opacity', (d) => Math.min(0.5, 0.08 + d.weight / (maxWeight * 1.5)))
-      .attr('stroke-width', (d) => Math.max(0.5, Math.min(3, d.weight)))
-
-    const nodeGroup = g.append('g').attr('class', 'nodes')
-      .selectAll('g')
-      .data(nodes)
-      .join('g')
-      .attr('cursor', 'pointer')
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .call(d3.drag<SVGGElement, GraphNode>()
-        .on('start', (event, d) => {
-          if (!event.active) sim.alphaTarget(0.3).restart()
-          d.fx = d.x; d.fy = d.y
-        })
-        .on('drag', (event, d) => { d.fx = event.x; d.fy = event.y })
-        .on('end', (event, d) => {
-          if (!event.active) sim.alphaTarget(0)
-          d.fx = null; d.fy = null
-        }) as any)
-      .on('mouseenter', (_event, d) => setHover({ node: d }))
-      .on('mouseleave', () => setHover(null))
-
-    nodeGroup.append('circle')
-      .attr('r', (d) => d.r)
-      .attr('fill', (d) => `${colorFor(d.projectCount, data.maxProjectCount)}33`)
-      .attr('stroke', (d) => colorFor(d.projectCount, data.maxProjectCount))
-      .attr('stroke-width', 1.5)
-      .attr('filter', 'url(#kw-glow)')
-
-    nodeGroup.append('text')
-      .text((d) => d.keyword)
-      .attr('text-anchor', 'middle')
-      .attr('dominant-baseline', 'middle')
-      .attr('fill', (d) => colorFor(d.projectCount, data.maxProjectCount))
-      .attr('font-size', (d) => Math.max(7, Math.min(13, d.r * 0.5)))
-      .attr('font-family', 'JetBrains Mono, monospace')
-      .attr('pointer-events', 'none')
-
-    sim.on('tick', () => {
-      linkSel
-        .attr('x1', (d) => (d.source as GraphNode).x)
-        .attr('y1', (d) => (d.source as GraphNode).y)
-        .attr('x2', (d) => (d.target as GraphNode).x)
-        .attr('y2', (d) => (d.target as GraphNode).y)
-      nodeGroup.attr('transform', (d) => `translate(${d.x},${d.y})`)
-    })
-
-    return () => { sim.stop() }
-  }, [data, dims])
-
-  const nodeCount = data?.nodes.length ?? 0
-  const maxPc = data?.maxProjectCount ?? 0
+  const typeColor: Record<string, string> = {
+    user: '#4ADE80',
+    feedback: '#FB923C',
+    project: '#22D3EE',
+    reference: '#A78BFA',
+    unknown: '#475569',
+  }
 
   return (
-    <div className="relative w-full h-full flex flex-col">
-      {/* Legend */}
-      <div className="absolute top-3 left-3 z-10 flex items-center gap-2 flex-wrap">
-        <span className="text-[0.55rem] text-slate-500 font-mono">{nodeCount} themes</span>
-        <span className="flex items-center gap-1 text-[0.55rem] text-slate-500 font-mono">
-          <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: colorFor(1, maxPc) }} /> isolated
-        </span>
-        <span className="flex items-center gap-1 text-[0.55rem] text-slate-500 font-mono">
-          <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: colorFor(maxPc, maxPc) }} /> shared ({maxPc} projects)
-        </span>
-        <span className="text-[0.55rem] text-slate-600 font-mono">size ∝ mentions</span>
-      </div>
+    <div className="relative w-full h-full flex">
+      {/* Main 3D graph */}
+      <div
+        ref={containerRef}
+        className="flex-1 relative"
+        onPointerDown={() => {
+          userInteractRef.current = true
+          if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current)
+          resumeTimerRef.current = setTimeout(() => { userInteractRef.current = false }, 4000)
+        }}
+      >
+        {/* Controls bar */}
+        <div className="absolute top-3 left-3 z-10 flex items-center gap-3 flex-wrap">
+          <select
+            value={filter}
+            onChange={(e) => { setFilter(e.target.value); setSelected(null) }}
+            className="text-[0.6rem] font-mono bg-cyber-surface/80 border border-cyber-cyan/20 text-cyber-cyan px-2 py-1 rounded appearance-none cursor-pointer"
+          >
+            <option value="all">all projects</option>
+            {(data?.projects ?? []).map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+          <span className="text-[0.55rem] font-mono text-slate-500">
+            {graphNodes.length} files · {filteredData?.links.length ?? 0} links
+          </span>
+        </div>
 
-      <div className="flex-1 relative overflow-hidden">
-        {nodeCount === 0 ? (
+        {/* Type legend */}
+        <div className="absolute bottom-8 left-3 z-10 flex flex-col gap-1">
+          {Object.entries(typeColor).map(([t, c]) => (
+            <span key={t} className="flex items-center gap-1.5 text-[0.5rem] font-mono text-slate-400">
+              <span className="w-2 h-2 rounded-full" style={{ background: c }} />
+              {t}
+            </span>
+          ))}
+        </div>
+
+        {graphNodes.length === 0 ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-            <div className="text-4xl opacity-20">✦</div>
-            <p className="text-xs text-slate-600 font-mono">No memory themes found across the fleet</p>
+            <div className="text-4xl opacity-20">✶</div>
+            <p className="text-xs text-slate-600 font-mono">No memory files found across the fleet</p>
           </div>
         ) : (
-          <svg ref={svgRef} className="w-full h-full" style={{ background: 'transparent' }} />
+          <ForceGraph3DLib
+            ref={fgRef}
+            graphData={{ nodes: graphNodes, links: filteredData?.links ?? [] }}
+            nodeId="id"
+            nodeVal="val"
+            nodeColor="color"
+            nodeLabel={(node: object) => {
+              const n = node as GraphNode
+              return `${n.project} / ${n.file} (${n.wordCount}w · ${n.type})`
+            }}
+            linkColor={() => 'rgba(34,211,238,0.15)'}
+            linkWidth={1}
+            backgroundColor="#060d1a"
+            onNodeClick={(node: object, event: MouseEvent) => {
+              const n = node as GraphNode
+              setSelected({ node: n, x: event.clientX, y: event.clientY })
+            }}
+            onBackgroundClick={() => setSelected(null)}
+            width={containerRef.current?.clientWidth}
+            height={containerRef.current?.clientHeight}
+          />
         )}
       </div>
 
-      {/* Hover card: projects referencing this keyword */}
-      {hover && (
+      {/* Right panel — shown when a node is selected */}
+      {selected && (
         <div
-          className="absolute bottom-4 right-4 w-72 max-h-64 overflow-y-auto rounded-lg border border-white/10 bg-cyber-surface/95 backdrop-blur-md p-4 shadow-xl pointer-events-none"
-          style={{ boxShadow: `0 0 20px ${colorFor(hover.node.projectCount, maxPc)}30` }}
+          className="w-80 border-l border-cyber-cyan/12 bg-cyber-surface/95 backdrop-blur-md flex flex-col overflow-hidden"
+          style={{ flexShrink: 0 }}
         >
-          <div className="flex items-center gap-2 mb-2">
-            <span
-              className="px-1.5 py-0.5 rounded text-[0.65rem] font-mono font-bold tracking-wider"
-              style={{
-                color: colorFor(hover.node.projectCount, maxPc),
-                border: `1px solid ${colorFor(hover.node.projectCount, maxPc)}40`,
-                background: `${colorFor(hover.node.projectCount, maxPc)}12`,
-              }}
+          <div className="px-4 py-3 border-b border-cyber-cyan/10 flex items-start justify-between gap-2">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span
+                  className="w-2.5 h-2.5 rounded-full"
+                  style={{ background: slugColor(selected.node.project) }}
+                />
+                <span className="text-[0.65rem] font-mono font-bold text-cyber-cyan">{selected.node.file}</span>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[0.5rem] font-mono text-slate-500">{selected.node.project}</span>
+                <span
+                  className="text-[0.5rem] font-mono px-1 py-0.5 rounded"
+                  style={{
+                    color: typeColor[selected.node.type] ?? '#475569',
+                    background: `${typeColor[selected.node.type] ?? '#475569'}18`,
+                    border: `1px solid ${typeColor[selected.node.type] ?? '#475569'}40`,
+                  }}
+                >
+                  {selected.node.type}
+                </span>
+                <span className="text-[0.5rem] font-mono text-slate-600">{selected.node.wordCount}w</span>
+              </div>
+            </div>
+            <button
+              onClick={() => setSelected(null)}
+              className="text-slate-600 hover:text-slate-400 text-xs font-mono"
             >
-              {hover.node.keyword}
-            </span>
-            <span className="text-[0.55rem] font-mono text-slate-500">{hover.node.occurrences}× · {hover.node.projectCount} project{hover.node.projectCount === 1 ? '' : 's'}</span>
+              ✕
+            </button>
           </div>
-          <div className="flex flex-wrap gap-1">
-            {hover.node.projects.map((p) => (
-              <span key={p} className="text-[0.55rem] font-mono text-cyber-cyan/80 bg-cyber-cyan/8 border border-cyber-cyan/20 px-1.5 py-0.5 rounded">{p}</span>
-            ))}
+
+          <div className="flex-1 overflow-y-auto px-4 py-3">
+            <p className="text-[0.6rem] font-mono text-slate-400 leading-relaxed whitespace-pre-wrap break-words">
+              {selected.node.excerpt}
+              {selected.node.excerpt.length >= 400 && <span className="text-slate-600">…</span>}
+            </p>
           </div>
+
+          {/* Outgoing links */}
+          {(() => {
+            if (!data) return null
+            const outgoing = data.links
+              .filter((l) =>
+                (l.source === selected.node.id || l.target === selected.node.id)
+              )
+              .map((l) => {
+                const otherId = l.source === selected.node.id ? l.target : l.source
+                return data.nodes.find((n) => n.id === otherId)
+              })
+              .filter((n): n is MemoryFileNode => !!n)
+            if (outgoing.length === 0) return null
+            return (
+              <div className="px-4 py-3 border-t border-cyber-cyan/10">
+                <p className="text-[0.5rem] font-mono text-slate-600 uppercase tracking-wider mb-2">
+                  Links ({outgoing.length})
+                </p>
+                <div className="flex flex-col gap-1">
+                  {outgoing.map((n) => (
+                    <button
+                      key={n.id}
+                      onClick={() => setSelected({ node: n, x: 0, y: 0 })}
+                      className="text-left text-[0.55rem] font-mono text-slate-400 hover:text-cyber-cyan transition-colors flex items-center gap-1.5"
+                    >
+                      <span
+                        className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                        style={{ background: slugColor(n.project) }}
+                      />
+                      {n.project !== selected.node.project && (
+                        <span className="text-slate-600">{n.project}/</span>
+                      )}
+                      {n.file}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )
+          })()}
         </div>
       )}
     </div>
