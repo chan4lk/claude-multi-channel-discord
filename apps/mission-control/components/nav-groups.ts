@@ -195,6 +195,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/health-scorecard', label: 'Project Health Scorecard', icon: '◈' },
       { href: '/velocity-wall', label: 'Turn Velocity Sparklines Wall', icon: '⋀' },
       { href: '/memory-link-graph', label: 'Memory Link Graph', icon: '⇄' },
+      { href: '/proposal-kanban', label: 'Proposal Pipeline Kanban', icon: '⬒' },
+      { href: '/live-pulse', label: 'Fleet Live Pulse', icon: '◉' },
     ],
   },
   {
