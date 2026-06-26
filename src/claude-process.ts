@@ -832,6 +832,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
   private dismissedMcpDialog = false
   private dismissedApiKeyDialog = false
   private dismissedSettingsDialog = false
+  private dismissedFullscreenRendererDialog = false
 
   /**
    * Poll the tmux pane for claude's prompt-ready marker (the `❯` cursor
@@ -913,6 +914,29 @@ export class ClaudeProjectProcess implements ProjectProcess {
         await sleep(120)
         spawnSync('tmux', ['send-keys', '-t', session, 'C-m'], { stdio: 'ignore' })
         this.dismissedSettingsDialog = true
+        await sleep(800)
+        continue
+      }
+
+      // Auto-dismiss the "Try the new fullscreen renderer?" dialog that
+      // Claude Code shows after auto-updating to a version that ships
+      // the new renderer. Defaults to "1. Yes, try it", but in a bot
+      // tmux pane the fullscreen renderer doesn't have room to render
+      // (and breaks the pane-width heuristics the MCD bot relies on for
+      // prompt detection). Pick "2. Not now" so the user keeps the
+      // classic renderer — the question re-appears on the next launch
+      // until they opt in interactively. Same dismissal pattern as the
+      // other dialogs: send the option key + Enter, mark dismissed.
+      if (
+        !this.dismissedFullscreenRendererDialog &&
+        pane.includes('Try the new fullscreen renderer') &&
+        pane.match(/2\.\s*Not now/)
+      ) {
+        this.log('detected fullscreen-renderer prompt — sending 2 + Enter to defer')
+        spawnSync('tmux', ['send-keys', '-t', session, '2'], { stdio: 'ignore' })
+        await sleep(120)
+        spawnSync('tmux', ['send-keys', '-t', session, 'C-m'], { stdio: 'ignore' })
+        this.dismissedFullscreenRendererDialog = true
         await sleep(800)
         continue
       }
