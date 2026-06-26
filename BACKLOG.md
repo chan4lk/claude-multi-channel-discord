@@ -6543,3 +6543,99 @@ Add a `/live-pulse` page. An SSE endpoint `/api/live-pulse/stream` polls transcr
 - AC4: Hover: slug, last-active timestamp, session count, current-turn status
 - AC5: Connection status indicator (connected/reconnecting)
 - AC6: Added to Fleet nav
+
+---
+
+## P280 — Health Score History Trail
+
+**Status:** `[ ] todo`
+**Created:** 2026-06-26
+
+### Problem
+
+P275 (Project Health Scorecard) delivers a point-in-time health score per project, but scores are recalculated fresh on every page load with no persistence. Operators cannot tell whether a project's score is improving, declining, or stable — they only ever see right now.
+
+### Proposed Solution
+
+Add a `/health-score-history` page. A background job (or on-demand computation) appends daily health snapshots to `memory/health-snapshots.jsonl` per project (one JSON line per day: `{ date, slug, score, breakdown }`). A `/api/health-score-history` endpoint reads these files and returns `{ projects: { slug, history: { date, score }[] }[] }`. The page renders a multi-line area chart (one line per project, last 30 days) with a project-filter checkbox list. Clicking a data point expands the score breakdown for that day in a side panel. Color encodes trend direction: improving = cyan, declining = amber, flat = slate. Uses the same scoring logic as `/health-scorecard`.
+
+### Acceptance Criteria
+
+- AC1: Daily health snapshots written to `memory/health-snapshots.jsonl` per project (via cron or on-demand capture)
+- AC2: `/api/health-score-history` returns 30-day score history per project
+- AC3: Multi-line area chart: one line per project, 30 data points, color-coded by trend direction
+- AC4: Project-filter checkbox list; default shows top 10 by variance (most interesting)
+- AC5: Clicking a data point opens side panel with full score breakdown for that day
+- AC6: Added to Intelligence nav; empty state when <2 days of data exist
+
+---
+
+## P281 — Velocity Wall Platform Breakdown
+
+**Status:** `[x] done`
+**Created:** 2026-06-26
+
+### Problem
+
+P276 (Turn Velocity Sparklines Wall) aggregates all turns regardless of platform (Discord, Teams, WhatsApp). Operators managing multi-platform fleets cannot isolate whether a velocity change is platform-specific or fleet-wide — a Teams outage looks identical to organic slowdown.
+
+### Proposed Solution
+
+Extend `/api/velocity-wall` to include a `platform` field per project (from `channels.json`). Add a platform filter toggle bar at the top of `/velocity-wall` (All / Discord / Teams / WhatsApp). When a platform is selected, only sparklines for projects on that platform render; the header stats (most active, fleet average) recompute for the filtered set. Add a platform badge on each sparkline card. No new API endpoint needed — filter client-side from the existing response.
+
+### Acceptance Criteria
+
+- AC1: `/api/velocity-wall` response includes `platform` field per project
+- AC2: Platform filter toggle bar (All / Discord / Teams / WhatsApp) above the sparkline grid
+- AC3: Selecting a platform filters the grid; header stats recompute for filtered set
+- AC4: Filter state preserved in URL query param (`?platform=teams`)
+- AC5: Badge on each sparkline card shows platform icon
+- AC6: Existing AC1-AC6 from P276 unaffected
+
+---
+
+## P282 — Memory Orphan Report
+
+**Status:** `[ ] todo`
+**Created:** 2026-06-26
+
+### Problem
+
+P277 (Memory Link Graph) renders isolated memory nodes in a dim corner cluster, but provides no actionable path to cleaning them up. Operators must locate orphaned files manually, cross-reference with the graph, and decide what to link or delete — all across separate views.
+
+### Proposed Solution
+
+Add a `/memory-orphan-report` page. A `/api/memory-orphan-report` endpoint reuses the link-graph traversal from P277 to identify nodes with zero incoming and zero outgoing `[[...]]` links. Returns `{ orphans: { project, file, wordCount, lastModified, snippet }[] }` sorted by lastModified ascending (oldest first). Page renders a table with columns: project, file, age, word count, first-line preview. Each row has a "Copy path" button and an "Open in memory-link-graph" link. Header shows orphan count vs total memory files (orphan rate %).
+
+### Acceptance Criteria
+
+- AC1: `/api/memory-orphan-report` returns files with zero in-degree and zero out-degree in the link graph
+- AC2: Table columns: project, filename, age (relative), word count, first-line snippet
+- AC3: "Copy path" button per row; "View in graph" link opens `/memory-link-graph?highlight=<id>`
+- AC4: Header shows orphan count, total memory files, orphan rate %
+- AC5: Filter by project (dropdown) and minimum age (7d / 30d / 90d slider)
+- AC6: Added to Intelligence nav; empty state when no orphans
+
+---
+
+## P283 — Health Score Drop Alerts
+
+**Status:** `[ ] todo`
+**Created:** 2026-06-26
+
+### Problem
+
+P275 (Project Health Scorecard) displays scores but provides no proactive notification when a score drops below a critical threshold. Operators discover degraded projects only by periodically visiting the scorecard page.
+
+### Proposed Solution
+
+Add a health-score alert rule system. Extend `channels.json` defaults and per-project config with an optional `healthScoreThreshold` field (integer 0-100). The MCD server's scheduler tick evaluates health for projects with a threshold set; if score drops below threshold for two consecutive ticks, it posts a Discord/Teams message to the master channel. Alert format: `⚠️ [slug] health score dropped to <score>/<threshold> — top factors: <list>`. De-duplicates with hysteresis (no repeat until score recovers above threshold + 5). UI section in `/project-config` to view/edit thresholds.
+
+### Acceptance Criteria
+
+- AC1: `healthScoreThreshold` field supported in `channels.json` per-project and defaults
+- AC2: Scheduler tick evaluates health score for projects with threshold set
+- AC3: Alert fires to master channel when score < threshold for 2 consecutive ticks
+- AC4: Alert de-duplicates: no repeat until score recovers above threshold + 5 (hysteresis)
+- AC5: `/project-config` shows threshold input per project
+- AC6: `/api/health-alert-rules` returns current rules and last-evaluated scores

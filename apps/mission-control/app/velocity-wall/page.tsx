@@ -1,8 +1,11 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
 import SubPageHeader from '../../components/SubPageHeader'
 import type { VelocityWallResponse, VelocityProject } from '../api/velocity-wall/route'
+
+type Platform = 'all' | 'discord' | 'teams' | 'whatsapp'
 
 const TREND_COLOR: Record<string, string> = {
   rising: '#22D3EE',
@@ -15,6 +18,14 @@ const TREND_LABEL: Record<string, string> = {
   falling: '↓ falling',
   flat: '→ flat',
 }
+
+const PLATFORM_ICON: Record<string, string> = {
+  discord: '💬',
+  teams: '🟦',
+  whatsapp: '📱',
+}
+
+const PLATFORM_LABELS: Platform[] = ['all', 'discord', 'teams', 'whatsapp']
 
 const W = 80
 const H = 30
@@ -90,10 +101,10 @@ function ExpandedModal({
         <div className="flex justify-between items-center mb-4">
           <div>
             <span className="font-mono text-sm text-white">{project.slug}</span>
-            <span
-              className="ml-2 font-mono text-xs"
-              style={{ color }}
-            >
+            <span className="ml-2 font-mono text-[0.6rem] text-slate-500">
+              {PLATFORM_ICON[project.platform] ?? ''} {project.platform}
+            </span>
+            <span className="ml-2 font-mono text-xs" style={{ color }}>
               {TREND_LABEL[project.trend]}
             </span>
           </div>
@@ -125,9 +136,14 @@ function ExpandedModal({
 }
 
 export default function VelocityWallPage() {
+  const searchParams = useSearchParams()
+  const router = useRouter()
   const [data, setData] = useState<VelocityWallResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<VelocityProject | null>(null)
+
+  const platformParam = (searchParams.get('platform') ?? 'all') as Platform
+  const activePlatform: Platform = PLATFORM_LABELS.includes(platformParam) ? platformParam : 'all'
 
   const load = useCallback(() => {
     fetch('/api/velocity-wall')
@@ -142,14 +158,34 @@ export default function VelocityWallPage() {
     return () => clearInterval(t)
   }, [load])
 
+  function setPlatform(p: Platform) {
+    const params = new URLSearchParams(searchParams.toString())
+    if (p === 'all') {
+      params.delete('platform')
+    } else {
+      params.set('platform', p)
+    }
+    router.replace(`?${params.toString()}`, { scroll: false })
+  }
+
+  const filtered = data
+    ? (activePlatform === 'all'
+        ? data.projects
+        : data.projects.filter((p) => p.platform === activePlatform))
+    : []
+
+  const filteredMostActive = filtered.length > 0 ? filtered[0]!.slug : null
+  const filteredTotalTurns = filtered.reduce((s, p) => s + p.daily.reduce((a, d) => a + d.count, 0), 0)
+  const filteredDailyAvg = filtered.length > 0 ? Math.round((filteredTotalTurns / 30) * 10) / 10 : 0
+
   return (
     <div className="min-h-screen bg-slate-950 text-white">
       <div className="sticky top-0 z-40 bg-slate-950/90 backdrop-blur border-b border-white/5">
         <SubPageHeader title="Turn Velocity Sparklines Wall">
           {data && (
             <div className="flex gap-4 font-mono text-[0.6rem] text-slate-400">
-              <span>Most active: <span className="text-cyan-400">{data.mostActive ?? '—'}</span></span>
-              <span>Fleet avg/day: <span className="text-white">{data.fleetDailyAvg}</span></span>
+              <span>Most active: <span className="text-cyan-400">{filteredMostActive ?? '—'}</span></span>
+              <span>Fleet avg/day: <span className="text-white">{filteredDailyAvg}</span></span>
               <span className="text-slate-500">{data.generatedAt.slice(0, 19).replace('T', ' ')}</span>
             </div>
           )}
@@ -157,28 +193,49 @@ export default function VelocityWallPage() {
       </div>
 
       <div className="p-6">
-        {error && (
-          <p className="font-mono text-red-400 text-xs">{error}</p>
-        )}
-        {!data && !error && (
-          <p className="font-mono text-slate-500 text-xs">Loading…</p>
-        )}
+        {error && <p className="font-mono text-red-400 text-xs mb-4">{error}</p>}
+        {!data && !error && <p className="font-mono text-slate-500 text-xs">Loading…</p>}
 
         {data && (
           <>
-            <div className="flex gap-4 mb-6 font-mono text-[0.6rem]">
+            {/* Platform filter */}
+            <div className="flex gap-2 mb-5">
+              {PLATFORM_LABELS.map((p) => {
+                const active = p === activePlatform
+                const count = p === 'all' ? data.projects.length : data.projects.filter((proj) => proj.platform === p).length
+                return (
+                  <button
+                    key={p}
+                    onClick={() => setPlatform(p)}
+                    className="font-mono text-[0.6rem] rounded-lg px-3 py-1 border transition-colors"
+                    style={{
+                      background: active ? 'rgba(34,211,238,0.12)' : 'rgba(255,255,255,0.03)',
+                      borderColor: active ? '#22D3EE55' : 'rgba(255,255,255,0.08)',
+                      color: active ? '#22D3EE' : '#64748B',
+                    }}
+                  >
+                    {p === 'all' ? 'All' : `${PLATFORM_ICON[p]} ${p}`}
+                    {' '}
+                    <span style={{ opacity: 0.7 }}>({count})</span>
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Legend */}
+            <div className="flex gap-4 mb-5 font-mono text-[0.6rem]">
               <span><span style={{ color: TREND_COLOR.rising }}>■</span> rising</span>
               <span><span style={{ color: TREND_COLOR.falling }}>■</span> falling</span>
               <span><span style={{ color: TREND_COLOR.flat }}>■</span> flat</span>
             </div>
 
             <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))' }}>
-              {data.projects.map((p) => {
+              {filtered.map((p) => {
                 const color = TREND_COLOR[p.trend] ?? '#64748B'
                 return (
                   <div
                     key={p.slug}
-                    className="bg-white/3 border border-white/8 rounded-lg p-3 hover:border-white/20 transition-colors"
+                    className="bg-white/3 border border-white/8 rounded-lg p-3 hover:border-white/20 transition-colors cursor-pointer"
                     onClick={() => setExpanded(p)}
                   >
                     <div className="flex justify-between items-center mb-1">
@@ -188,16 +245,23 @@ export default function VelocityWallPage() {
                       </span>
                     </div>
                     <Sparkline daily={p.daily} trend={p.trend} onClick={() => setExpanded(p)} />
-                    <div className="mt-1 font-mono text-[0.5rem]" style={{ color }}>
-                      {TREND_LABEL[p.trend]}
+                    <div className="mt-1 flex justify-between items-center">
+                      <span className="font-mono text-[0.5rem]" style={{ color }}>
+                        {TREND_LABEL[p.trend]}
+                      </span>
+                      <span className="font-mono text-[0.5rem] text-slate-600" title={p.platform}>
+                        {PLATFORM_ICON[p.platform] ?? ''}
+                      </span>
                     </div>
                   </div>
                 )
               })}
             </div>
 
-            {data.projects.length === 0 && (
-              <p className="font-mono text-slate-500 text-xs">No projects found.</p>
+            {filtered.length === 0 && (
+              <p className="font-mono text-slate-500 text-xs">
+                No {activePlatform === 'all' ? '' : activePlatform + ' '}projects found.
+              </p>
             )}
           </>
         )}
