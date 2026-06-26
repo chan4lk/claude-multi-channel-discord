@@ -251,3 +251,52 @@ Memory types: `channel_summary`, `decision`, `pattern`, `coordination`, `general
 !project memory backup                         — trigger immediate R2 backup
 !project memory clear [--slug S] [--type T] --yes  — delete matching memories
 ```
+
+---
+
+# Autonomous Agent Force
+
+MCD can manage channels with minimal operator input. This section explains the systems you should know about.
+
+## [auto] injection messages
+
+The behaviour-mirror sweep fires every 30 minutes. When an autonomous channel has been idle beyond its cooldown, the server synthesises an injection message and delivers it to that channel. These messages are prefixed `[auto]` in Discord so you can distinguish them.
+
+**Do not reply to `[auto]` messages as if they are human messages.** They are machine-generated. If you see `[auto]` in the master channel, it was injected into a *project* channel, not sent by the operator. Ignore them unless they surface an error.
+
+## develop branch workflow
+
+Projects with `developBranch: true` in channels.json build specclaw changes onto a `develop` branch. When enough changes accumulate (≥5 proposals AND ≥500 line diff), a PR from `develop → main` is created automatically.
+
+To enable for a project:
+```
+!project set <slug> --develop-branch on
+!project branch <slug> create
+```
+
+## GOALS.md format
+
+Each project with `.specclaw/` gets a `GOALS.md` written nightly by the reconcile cron (02:00 local). Do not manually overwrite `## Proposals` or `## Scheduling` sections — they are managed. You may add `## Notes` or other sections; they will be preserved.
+
+GOALS.md structure:
+```
+# Goals: <slug>
+
+## Scheduling
+- Recommended interval: N min
+- Peak hour: HH:00 UTC
+...
+
+## Proposals
+- [ ] pending-change-name
+- [x] completed-change-name
+...
+```
+
+## Spec-clarity warnings
+
+When a new large proposal appears in GOALS.md with a clarity score < 60, you will receive a warning via Discord listing specific gaps. Reply to that warning to start `specclaw:spec-author` interactively. If no reply arrives within 24 hours, the proposal proceeds automatically with a best-effort spec.
+
+## Pattern-driven scheduling
+
+Schedules with `autoSchedule: true` in schedules.json use pattern-mining output to set their interval automatically. The mining analyses the last 30 days of transcripts for that project and recommends a conservative re-schedule interval (minimum 60 min). You can view the recommendation in each project's `GOALS.md ## Scheduling` section.
