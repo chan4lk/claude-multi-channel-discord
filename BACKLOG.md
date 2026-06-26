@@ -6188,7 +6188,7 @@ Add a `/memory-density` page with a grid heatmap: rows = projects, columns = hou
 
 ## P265 — Memory Write Velocity Sparklines
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
 
 ### Problem
@@ -6212,7 +6212,7 @@ Add a `/memory-velocity` page with one sparkline per project (pure SVG). X-axis 
 
 ## P266 — Per-Project Memory File Age Strip
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-25
 
 ### Problem
