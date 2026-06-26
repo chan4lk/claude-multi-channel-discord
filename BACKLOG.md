@@ -6639,3 +6639,123 @@ Add a health-score alert rule system. Extend `channels.json` defaults and per-pr
 - AC4: Alert de-duplicates: no repeat until score recovers above threshold + 5 (hysteresis)
 - AC5: `/project-config` shows threshold input per project
 - AC6: `/api/health-alert-rules` returns current rules and last-evaluated scores
+
+---
+
+## P284 — Proposal Lifecycle Dashboard
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-26
+
+### Problem
+
+Operators proposing, planning, and building changes across many projects have no unified view of where each proposal sits in the specclaw lifecycle (propose → plan → build → verify → PR). Progress must be inferred from scattered `.specclaw/` directories, git branches, and GitHub PRs.
+
+### Proposed Solution
+
+Add a `/proposal-lifecycle` page. A `/api/proposal-lifecycle` endpoint walks all project directories under `MCD_CHANNELS_DIR`, reads `.specclaw/changes/*/proposal.md` + `spec.md` + `tasks.md` + `verify-report.md` for each project, and infers stage (proposed/planned/building/verifying/merged) from file presence and git branch status. Returns `{ projects: { slug, proposals: { name, stage, createdAt, updatedAt, prUrl? }[] }[] }`. Page renders a Kanban-style board with 5 stage columns; each card shows proposal name, slug badge, age, and a stage-progress mini-bar. Clicking a card opens a side drawer with the full proposal.md content. Header shows fleet-wide throughput: proposals merged/week (last 4 weeks), average time-to-merge.
+
+### Acceptance Criteria
+
+- AC1: `/api/proposal-lifecycle` returns proposals with inferred stage for all projects
+- AC2: Kanban board with columns: Proposed / Planned / Building / Verifying / Merged
+- AC3: Cards show proposal name, slug badge, age, and mini stage-progress bar
+- AC4: Clicking a card opens side drawer with full proposal.md and tasks.md checklist
+- AC5: Header shows fleet throughput: merged/week (4-week rolling), average time-to-merge
+- AC6: Filter by project slug (multi-select) and stage; added to Intelligence nav
+
+---
+
+## P285 — Memory-Project Correlation Matrix
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-26
+
+### Problem
+
+Operators cannot tell which projects share knowledge via memory links, which projects have isolated memory silos, or how densely interconnected the fleet's collective memory is. The existing memory-link graph (P277) shows per-project links but does not reveal cross-project patterns.
+
+### Proposed Solution
+
+Add a `/memory-correlation` page. A `/api/memory-correlation` endpoint reads all `memory/*.md` files across projects, extracts `[[link]]` references, and builds a project-to-project co-citation matrix: two projects are correlated when a memory in project A references a concept also referenced in project B (topic overlap by shared `[[slug]]` targets). Returns an NxN matrix with correlation scores (0–1). Page renders an interactive heatmap grid (projects on both axes, cell color = correlation intensity). Hovering a cell shows the shared memory concepts. A "cluster" button reorders rows/columns by hierarchical clustering to reveal knowledge communities. A sidebar shows the top-10 most cross-referenced memory concepts fleet-wide.
+
+### Acceptance Criteria
+
+- AC1: `/api/memory-correlation` returns NxN correlation matrix (N = active projects with memory)
+- AC2: Interactive heatmap; cell hover shows shared concept list
+- AC3: "Cluster" button reorders axes by hierarchical clustering; cluster boundaries visible
+- AC4: Sidebar shows top-10 cross-referenced memory concepts with link counts
+- AC5: Diagonal (self-correlation) shown as a distinct color (not white-noise)
+- AC6: Added to Intelligence nav; graceful empty state for fleets with <2 projects
+
+---
+
+## P286 — Fleet Constellation 3D View
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-26
+
+### Problem
+
+The existing 3D graph (P209) renders project relationships as a generic force-directed graph. It does not encode operational dimensions — health, activity, platform — as spatial or visual properties, making it hard to spot patterns at a glance. Operators want a "futuristic dashboard" feel where the fleet state is immediately legible from the visualization.
+
+### Proposed Solution
+
+Add a `/constellation` page. Uses Three.js / react-three-fiber. Each project is rendered as a star sphere: position in 3D space determined by PCA on [health score, turn velocity, memory richness, uptime%] — clusters emerge naturally. Star size = average turn duration (longer turns = larger star). Star color/glow = platform (Discord=cyan, Teams=indigo, WhatsApp=green). Pulsing animation rate = activity in last 24h (more active = faster pulse). Projects with active sessions emit particle trails. Hovering a star shows a floating HUD card with slug, health score, last-active, and current status. Clicking locks the HUD and opens a mini session panel. Platform legend, zoom controls, and a "reset camera" button complete the UI. Auto-rotates when idle; stops on interaction.
+
+### Acceptance Criteria
+
+- AC1: 3D scene renders all active projects as positioned star spheres
+- AC2: Position derived from PCA on [health, velocity, memory richness, uptime]; clusters visible
+- AC3: Size = avg turn duration; color/glow = platform; pulse rate = 24h activity
+- AC4: Active sessions emit particle trail animation
+- AC5: Hover shows floating HUD; click locks HUD + opens mini session panel
+- AC6: Added to Fleet nav; auto-rotate when idle, pause on interaction
+
+---
+
+## P287 — Session Replay Scrubber
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-26
+
+### Problem
+
+When a project session behaves unexpectedly (wrong tool calls, stuck agent, bad output), operators have no way to replay the sequence of events that led to the outcome. Reading raw `.jsonl` transcripts is slow and gives no visual sense of timing, branching, or tool-call chains.
+
+### Proposed Solution
+
+Add a `/session-replay` page. A `/api/session-replay?slug=<slug>&sessionId=<id>` endpoint reads the session's `.jsonl` transcript and returns `{ events: { ts, type: 'user'|'tool_use'|'tool_result'|'reply'|'agent_span', label, durationMs?, parentId? }[] }` structured for replay. Page renders a horizontal timeline scrubber (1px = configurable time scale, min 100ms). Events appear as colored blocks on swim-lanes: user inputs (top), tool calls (middle), replies (bottom). Dragging the playhead animates the event sequence with a "now playing" highlight. A speed control (0.25×/0.5×/1×/2×/5×) adjusts playback. Clicking any block opens a detail panel with full event content. A session selector dropdown lists available sessions for the chosen project.
+
+### Acceptance Criteria
+
+- AC1: `/api/session-replay` returns structured event list from `.jsonl` transcript
+- AC2: Horizontal timeline with swim-lanes (user / tool_use / replies); time-accurate spacing
+- AC3: Scrubber playhead with animated playback at selectable speed (0.25×–5×)
+- AC4: Clicking any event block opens detail panel with full content
+- AC5: Session selector dropdown lists past sessions; project selector for fleet-wide search
+- AC6: Added to Intelligence nav; graceful handling of missing/truncated transcripts
+
+---
+
+## P288 — Cross-Project Insight Radar
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-26
+
+### Problem
+
+Operators want to compare multiple projects across several health dimensions simultaneously — not just health score, but velocity, memory richness, schedule adherence, tool diversity, and backlog coverage — in a single glanceable view. Existing views are per-dimension, requiring navigation across multiple pages to build a mental model.
+
+### Proposed Solution
+
+Add a `/insight-radar` page. A `/api/insight-radar` endpoint computes 6 normalized scores (0–100) per project: health (from P275 logic), turn velocity (turns/day last 7d), memory richness (memory file count × avg link density), schedule adherence (jobs fired on time / total scheduled), tool diversity (unique tools used / total possible tools in last 7d), and backlog coverage (done proposals / total proposals). Returns `{ projects: { slug, platform, scores: { health, velocity, memory, schedule, toolDiversity, backlogCoverage } }[] }`. Page renders a radar/spider chart with 6 axes; operators select 2–8 projects via a checkbox list; each selected project draws one colored polygon overlay. A "compare" mode highlights gaps between selected projects. Axis labels are clickable and navigate to the relevant detail page.
+
+### Acceptance Criteria
+
+- AC1: `/api/insight-radar` returns 6 normalized scores per project
+- AC2: Radar chart with 6 axes; each selected project rendered as a colored polygon overlay
+- AC3: Project selector (checkbox list, max 8 simultaneous); default = top 5 by health score
+- AC4: "Compare" mode highlights the delta polygon between two selected projects
+- AC5: Axis label clicks navigate to the relevant detail page (e.g. health → `/scorecard`)
+- AC6: Added to Intelligence nav; score methodology documented in a collapsible legend
