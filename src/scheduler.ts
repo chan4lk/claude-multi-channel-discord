@@ -85,8 +85,23 @@ export class Scheduler {
   private timer: ReturnType<typeof setInterval> | null = null
   private readonly log: (msg: string) => void
 
+  // Pattern-mining cache: slug → recommended interval in minutes
+  private patternCache = new Map<string, number>()
+
+  // Tracks injection timestamps per chatId for the 60-min hard cap
+  private readonly injectionLog = new Map<string, number[]>()
+
   constructor(private readonly deps: SchedulerDeps) {
     this.log = deps.log ?? ((m) => process.stderr.write(`[scheduler] ${m}\n`))
+  }
+
+  /**
+   * Update the pattern-mining recommendation cache. Called externally
+   * (e.g. from a nightly behaviour-mirror analysis pass). Maps
+   * slug → recommended interval in minutes.
+   */
+  setPatternCache(cache: Map<string, number>): void {
+    this.patternCache = cache
   }
 
   /** Begin ticking. Idempotent. */
@@ -124,7 +139,20 @@ export class Scheduler {
 
     for (const s of file.schedules) {
       if (!s.enabled) continue
-      if (!isDue(s, now)) continue
+
+      // If autoSchedule is enabled, override the interval with the pattern-mining
+      // recommendation for this project's slug (if one exists in the cache).
+      let effectiveSchedule: Schedule = s
+      if ((s as Schedule & { autoSchedule?: boolean }).autoSchedule && s.interval !== undefined) {
+        const slug = this.deps.slugForChatId?.(s.chatId)
+        if (slug) {
+          const mins = this.patternCache.get(slug)
+          if (mins !== undefined) {
+            effectiveSchedule = { ...s, interval: `every ${mins}m` as Schedule['interval'] }
+          }
+        }
+      }
+      if (!isDue(effectiveSchedule, now)) continue
 
       this.log(`firing schedule ${s.id} → chat ${s.chatId}`)
       const fireStart = Date.now()
@@ -153,6 +181,88 @@ export class Scheduler {
         saveSchedules(file)
       } catch (err) {
         this.log(`persist failed: ${err}`)
+      }
+    }
+  }
+
+  /**
+   * Register a periodic sweep that injects behaviour-mirror messages into
+   * autonomous-mode projects. Safe to call once at startup — idempotent
+   * per Scheduler instance (re-registering creates an additional timer, so
+   * don't call more than once).
+   */
+  registerBehaviourMirrorSweep(opts: {
+    pool: { deliver: (chatId: string, envelope: InboundEnvelope) => Promise<void>; isCircuitOpen?: (chatId: string) => boolean }
+    getChannels: () => import('./channels-config.ts').ChannelsConfig
+    saveChannels: (cfg: import('./channels-config.ts').ChannelsConfig) => void
+    getVoiceModel: () => import('./behaviour-mirror.ts').VoiceModel
+    mcdDir: string
+    sweepIntervalMs?: number
+  }): void {
+    const intervalMs = opts.sweepIntervalMs ?? 30 * 60 * 1000
+    const timer = setInterval(() => void this.runBehaviourMirrorSweep(opts), intervalMs)
+    if (typeof timer.unref === 'function') timer.unref()
+    this.log('behaviour-mirror sweep registered')
+  }
+
+  private async runBehaviourMirrorSweep(opts: {
+    pool: { deliver: (chatId: string, envelope: InboundEnvelope) => Promise<void>; isCircuitOpen?: (chatId: string) => boolean }
+    getChannels: () => import('./channels-config.ts').ChannelsConfig
+    saveChannels: (cfg: import('./channels-config.ts').ChannelsConfig) => void
+    getVoiceModel: () => import('./behaviour-mirror.ts').VoiceModel
+    mcdDir: string
+  }): Promise<void> {
+    const { buildInjectionMessage } = await import('./behaviour-mirror.ts')
+    const config = opts.getChannels()
+    const now = Date.now()
+    const cooldownDefault = (config.defaults as { injectCooldownMinutes?: number } | undefined)?.injectCooldownMinutes ?? 60
+
+    for (const [chatId, project] of Object.entries(config.projects)) {
+      if (project.heartbeat?.mode !== 'autonomous') continue
+      if (opts.pool.isCircuitOpen?.(chatId)) continue
+
+      const cooldownMs = ((project as { injectCooldownMinutes?: number }).injectCooldownMinutes ?? cooldownDefault) * 60_000
+      const lastInjectedAt = (project as { lastInjectedAt?: string }).lastInjectedAt
+      if (lastInjectedAt) {
+        const lastMs = Date.parse(lastInjectedAt)
+        if (!isNaN(lastMs) && now - lastMs < cooldownMs) continue
+      }
+
+      // Hard cap: ≤3 injections in any 60-min rolling window
+      const window60 = now - 60 * 60 * 1000
+      const recent = (this.injectionLog.get(chatId) ?? []).filter((t) => t > window60)
+      if (recent.length >= 3) continue
+
+      const voiceModel = opts.getVoiceModel()
+      if (voiceModel.sentences.length === 0) continue
+
+      const text = buildInjectionMessage(project.slug, [], voiceModel)
+      if (!text) continue
+
+      try {
+        const envelope: InboundEnvelope = {
+          messageId: `auto-inject-${chatId}-${now}`,
+          userId: '__mcd_auto__',
+          username: 'auto',
+          content: text,
+          ts: new Date(now).toISOString(),
+        }
+        await opts.pool.deliver(chatId, envelope)
+        recent.push(now)
+        this.injectionLog.set(chatId, recent)
+
+        // Persist lastInjectedAt
+        const latest = opts.getChannels()
+        opts.saveChannels({
+          ...latest,
+          projects: {
+            ...latest.projects,
+            [chatId]: { ...latest.projects[chatId]!, lastInjectedAt: new Date(now).toISOString() },
+          },
+        })
+        this.log(`[auto-inject] ${project.slug}`)
+      } catch (err) {
+        this.log(`[auto-inject] failed for ${project.slug}: ${(err as Error).message}`)
       }
     }
   }

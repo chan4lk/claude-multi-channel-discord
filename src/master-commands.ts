@@ -173,6 +173,8 @@ export async function handleMasterCommand(
         result = { kind: 'reply', text: handleHeartbeat(rest, ctx) }; break
       case 'memory':
         result = { kind: 'reply', text: await handleMemory(rest, ctx) }; break
+      case 'branch':
+        result = { kind: 'reply', text: await handleBranch(rest, ctx) }; break
       default:
         result = {
           kind: 'reply',
@@ -557,8 +559,14 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
   // parseFlags uses `string | true`; presence of --distill-on-stop enables distillation
   const distillOnStop: boolean | null = distillOnStopRaw !== undefined ? true : null
 
-  if (prompt === null && stuckMinutes === null && heartbeatMode === null && heartbeatWindow === null && heartbeatStale === null && goalRaw === null && distillOnStop === null) {
-    return '`set` requires `--prompt "..."`, `--stuck-threshold-minutes N`, `--heartbeat-mode <supervised|autonomous>`, `--heartbeat-window <HH:MM-HH:MM>`, `--heartbeat-stale-minutes N`, `--goal "..."`, or `--distill-on-stop`'
+  const developBranchRaw = typeof flags['develop-branch'] === 'string' ? flags['develop-branch'] : null
+  if (developBranchRaw !== null && developBranchRaw !== 'on' && developBranchRaw !== 'off') {
+    return '`--develop-branch` must be `on` or `off`'
+  }
+  const developBranch = developBranchRaw === 'on' ? true : developBranchRaw === 'off' ? false : null
+
+  if (prompt === null && stuckMinutes === null && heartbeatMode === null && heartbeatWindow === null && heartbeatStale === null && goalRaw === null && distillOnStop === null && developBranch === null) {
+    return '`set` requires `--prompt "..."`, `--stuck-threshold-minutes N`, `--heartbeat-mode <supervised|autonomous>`, `--heartbeat-window <HH:MM-HH:MM>`, `--heartbeat-stale-minutes N`, `--goal "..."`, `--distill-on-stop`, or `--develop-branch on|off`'
   }
 
   const results: string[] = []
@@ -614,6 +622,13 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
     results.push(`✅ set \`distillOnStop\` = ${distillOnStop} for **${entry.project.slug}**.`)
   }
 
+  if (developBranch !== null) {
+    const latestConfig = loadConfig()
+    const latestEntry = latestConfig.projects[entry.chatId] ?? entry.project
+    saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: { ...latestEntry, developBranch } } })
+    results.push(`✅ set \`developBranch\` = ${developBranch} for **${entry.project.slug}**.`)
+  }
+
   // Respawn only needed when prompt changed (CLAUDE.md is read at session start).
   let respawnNote = ''
   if (prompt !== null) {
@@ -630,6 +645,29 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
   }
 
   return results.join('\n')
+}
+
+async function handleBranch(rest: string[], ctx: MasterContext): Promise<string> {
+  const { positional } = parseFlags(rest)
+  const slug = positional[0]
+  const subverb = positional[1] // 'create'
+  if (!slug || subverb !== 'create') {
+    return 'usage: `!project branch <slug> create` — create or checkout develop branch'
+  }
+  const config = loadConfig()
+  const entry = resolveTarget(config, slug)
+  if (!entry) return `no project found for "${slug}"`
+
+  const { gitCreateOrCheckoutDevelop } = await import('./git-ops.ts')
+  const cwd = projectDir(entry.project.slug)
+  const { env, cleanup } = buildGitEnv(null)
+  try {
+    const result = gitCreateOrCheckoutDevelop(cwd, env)
+    if (!result.ok) return `❌ git error: ${result.stderr}`
+    return `✅ develop branch ready for **${entry.project.slug}**: \`${result.stdout.trim() || 'develop'}\``
+  } finally {
+    cleanup()
+  }
 }
 
 async function handleRename(rest: string[], ctx: MasterContext): Promise<string> {
@@ -1635,6 +1673,64 @@ function readClaudeMdPreview(slug: string, max = 500): string {
     return `${raw.slice(0, max).trim()}\n… [+${raw.length - max} chars truncated]`
   } catch (err) {
     return `(read failed: ${(err as Error).message})`
+  }
+}
+
+export async function evaluateBatchPr(slug: string, ctx: MasterContext, notifyFn: (text: string) => Promise<void>): Promise<void> {
+  const config = ctx.config
+  const entry = Object.entries(config.projects).find(([, p]) => p.slug === slug)
+  if (!entry) return
+  const project = entry[1]
+  if (!project.developBranch) return
+
+  const { checkPipelineGreen } = await import('./specclaw-guard.ts')
+  const { runGit } = await import('./git-ops.ts')
+  const { execSync } = await import('node:child_process')
+  const cwd = projectDir(slug)
+
+  // Count proposals verified in STATUS.md
+  const statusPath = join(cwd, '.specclaw', 'STATUS.md')
+  let proposalCount = 0
+  try {
+    const statusText = readFileSync(statusPath, 'utf-8')
+    // Count occurrences of green Verify rows across the whole STATUS.md
+    proposalCount = (statusText.match(/\| Verify\s*\|\s*🟢/g) ?? []).length
+  } catch { return }
+
+  // Count line diff between develop and main
+  const diffResult = runGit(cwd, ['diff', '--stat', 'main...develop'])
+  if (!diffResult.ok) return
+  const lineMatch = diffResult.stdout.match(/(\d+) insertions?\(\+\)/)
+  const lineCount = lineMatch ? parseInt(lineMatch[1]!, 10) : 0
+
+  const defaults = config.defaults
+  const threshold = (defaults as typeof defaults & { batchThreshold?: { proposals: number; lines: number } }).batchThreshold
+  const minProposals = threshold?.proposals ?? 5
+  const minLines = threshold?.lines ?? 500
+
+  if (proposalCount < minProposals || lineCount < minLines) {
+    if (proposalCount > 0 || lineCount > 0) {
+      await notifyFn(`📊 **${slug}** develop progress: ${proposalCount}/${minProposals} proposals, ${lineCount}/${minLines} lines`)
+    }
+    return
+  }
+
+  // Both thresholds met — run pipeline guard
+  const guard = checkPipelineGreen(cwd)
+  if (!guard.ok) {
+    await notifyFn(`⚠️ **${slug}** batch PR blocked — pipeline not green: ${guard.blockedBy.join(', ')}`)
+    return
+  }
+
+  // Create PR
+  try {
+    const result = execSync(
+      `gh pr create --base main --head develop --title "chore(${slug}): batch proposals (${proposalCount} changes)" --body "Automated batch PR: ${proposalCount} specclaw proposals, ${lineCount} lines diff"`,
+      { cwd, encoding: 'utf-8', timeout: 30_000 }
+    )
+    await notifyFn(`🚀 **${slug}** batch PR created: ${result.trim()}`)
+  } catch (err) {
+    await notifyFn(`❌ **${slug}** batch PR failed: ${(err as Error).message.slice(0, 200)}`)
   }
 }
 

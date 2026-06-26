@@ -119,6 +119,15 @@ export function gitPullFastForward(workingDir: string, branch?: string, env?: No
  * Compact, chat-friendly snapshot of the working tree state. Returns
  * branch, ahead/behind vs upstream, and a count of dirty files.
  */
+export function gitCreateOrCheckoutDevelop(workingDir: string, env?: NodeJS.ProcessEnv): GitResult {
+  const existing = runGit(workingDir, ['branch', '--list', 'develop'], env ?? process.env)
+  if (!existing.ok) return existing
+  if (existing.stdout.trim() === '') {
+    return runGit(workingDir, ['checkout', '-b', 'develop'], env ?? process.env)
+  }
+  return runGit(workingDir, ['checkout', 'develop'], env ?? process.env)
+}
+
 export function gitStatusSummary(workingDir: string): { ok: boolean; text: string } {
   const branch = runGit(workingDir, ['rev-parse', '--abbrev-ref', 'HEAD'])
   if (!branch.ok) return { ok: false, text: `git: not a working tree at ${workingDir}` }

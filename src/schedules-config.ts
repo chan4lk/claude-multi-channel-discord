@@ -51,6 +51,12 @@ const ScheduleSchema = z.object({
   maxRuns: z.number().int().positive().nullable().default(null),
   /** Number of successful firings. */
   runCount: z.number().int().nonnegative().default(0),
+  /**
+   * When true, the Scheduler will override this schedule's interval with
+   * a pattern-mining recommendation (from the behaviour-mirror pattern
+   * cache) if one is available for the associated project.
+   */
+  autoSchedule: z.boolean().optional(),
 }).refine(
   (s) => (s.at !== undefined) !== (s.interval !== undefined),
   { message: 'Exactly one of `at` or `interval` must be set' },
