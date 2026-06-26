@@ -6692,7 +6692,7 @@ Add a `/memory-correlation` page. A `/api/memory-correlation` endpoint reads all
 
 ## P286 — Fleet Constellation 3D View
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-26
 
 ### Problem
@@ -6716,7 +6716,7 @@ Add a `/constellation` page. Uses Three.js / react-three-fiber. Each project is 
 
 ## P287 — Session Replay Scrubber
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-26
 
 ### Problem
@@ -6759,3 +6759,123 @@ Add a `/insight-radar` page. A `/api/insight-radar` endpoint computes 6 normaliz
 - AC4: "Compare" mode highlights the delta polygon between two selected projects
 - AC5: Axis label clicks navigate to the relevant detail page (e.g. health → `/scorecard`)
 - AC6: Added to Intelligence nav; score methodology documented in a collapsible legend
+
+---
+
+## P289 — Watchdog Kill Pattern Heatmap
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-26
+
+### Problem
+
+The `/watchdog-kills` page shows individual kill events but no pattern analysis. Operators cannot tell when kills cluster (time-of-day, day-of-week), which tool calls precede kills, or whether kills correlate with high context pressure. `watchdog-kills.jsonl` is active and growing but the data is underutilized.
+
+### Proposed Solution
+
+Add a `/watchdog-kill-patterns` page. A `/api/watchdog-kill-patterns` endpoint reads `watchdog-kills.jsonl`, groups kills by hour-of-day and day-of-week, and returns: `{ heatmap: { hour, day, count }[], precedingTools: { tool, count }[], contextPressureAtKill: { slug, contextPct, ts }[] }`. Page renders three panels: (1) 7×24 heatmap of kill frequency (darker = more kills), (2) horizontal bar chart of top-10 preceding tool calls (last tool before kill), (3) scatter of context pressure % at kill time (x=time, y=pct, colored by slug). Fleet-level kill rate badge in page header. Filter by project slug and date range.
+
+### Acceptance Criteria
+
+- AC1: `/api/watchdog-kill-patterns` returns heatmap, preceding-tool, and context-pressure data
+- AC2: 7×24 heatmap rendered; hover shows kill count for that hour×day cell
+- AC3: Preceding-tool bar chart shows top-10 tools that appear last before a kill
+- AC4: Context pressure scatter rendered; projects with kills at >80% context pressure highlighted
+- AC5: Fleet kill rate (kills/day, 7d rolling) badge in page header
+- AC6: Added to Health nav; filter by slug and date range; graceful empty state
+
+---
+
+## P290 — Proposal Implementation Lag Tracker
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-26
+
+### Problem
+
+After P284 shows proposal lifecycle, there is still no metric for how long proposals sit in approved state before the first implementation commit arrives. The gap between "approved" and "first commit" is invisible, making it impossible to identify stalled proposals or optimize the planning-to-build pipeline.
+
+### Proposed Solution
+
+Add a `/proposal-impl-lag` page. A `/api/proposal-impl-lag` endpoint reads `.specclaw/changes/*/proposal.md` files for approved proposals, then uses `git log --all --oneline` to find the first commit that references each proposal's change slug after approval date. Returns `{ proposals: { slug, proposalSlug, approvedAt, firstCommitAt, lagDays, status: 'implementing'|'not-started'|'done' }[] }`. Page renders: (1) scatter plot — x=approval date, y=lag days, point size=proposal complexity (task count), color=status; (2) P50/P90 lag badges; (3) table listing proposals with lag >7 days, sorted by staleness. A "start lag clock" tooltip shows on hover.
+
+### Acceptance Criteria
+
+- AC1: `/api/proposal-impl-lag` returns per-proposal lag data derived from git log
+- AC2: Scatter plot rendered with approval date on x-axis, lag days on y-axis
+- AC3: P50/P90 lag badges shown fleet-wide in header
+- AC4: Table of proposals with lag >7 days, sortable by lag, slug, and status
+- AC5: Proposals with "not-started" status after >14 days highlighted in red
+- AC6: Added to Proposals nav; empty state when no approved proposals found
+
+---
+
+## P291 — Alert Delivery Audit Log
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-26
+
+### Problem
+
+P283 fires health score drop alerts and the alerts table tracks `ack_ts`/`ack_by`, but there is no record of whether the Discord notification was successfully sent, if it failed, or if it was suppressed (e.g., rate-limited). Operators cannot verify alert delivery reliability or diagnose silent failure scenarios.
+
+### Proposed Solution
+
+Add a `/alert-delivery` page. Extend the existing alerts DB schema with `delivered_ts`, `delivery_channel`, `delivery_message_id`, `delivery_error` columns populated when `server.ts` sends the Discord notification. Add `/api/alert-delivery` endpoint returning `{ alerts: { id, ts, slug, alert_type, description, delivered_ts, delivery_channel, delivery_message_id, delivery_error, ack_ts }[] }`. Page renders a timeline list: each row shows alert type badge, slug, description excerpt, delivery status (green check / red X / amber pending), Discord message ID (clickable Discord link), and ack status. Stats row: delivery success rate (%), avg deliver latency (s), undelivered count in last 24h. Filter by delivery status and alert type.
+
+### Acceptance Criteria
+
+- AC1: Alert schema extended with delivery tracking columns; server.ts populates on send
+- AC2: `/api/alert-delivery` returns delivery status for all alerts
+- AC3: Timeline list renders with per-alert delivery status indicator
+- AC4: Stats row shows delivery success rate, avg latency, and undelivered-24h count
+- AC5: Undelivered alerts (delivery_error not null) highlighted and surfaced to top of list
+- AC6: Added to Alerts nav; filter by delivery status and alert type
+
+---
+
+## P292 — Cross-Project Tool Failure Spike Detector
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-26
+
+### Problem
+
+When an external dependency (GitHub API, npm registry, Bash environment) degrades, it causes tool failures across multiple projects simultaneously. No existing view correlates tool errors across projects to distinguish systemic outages from project-specific issues. Operators diagnose these fleet-wide incidents by inspecting individual projects one at a time.
+
+### Proposed Solution
+
+Add a `/tool-spike-detector` page. A `/api/tool-spike-detector` endpoint reads transcript `.jsonl` files across all projects, groups `tool_result` error events by tool name into 5-minute buckets, and computes per-tool fleet-wide error rate per bucket. A "spike" is defined as ≥3 projects showing elevated error rate for the same tool within the same 5-minute bucket. Returns `{ currentSpikes: { tool, affectedSlugs, errorCount, windowStart }[], history: { ts, tool, severity: 'low'|'medium'|'high' }[] }`. Page renders: (1) active spike banner (red if current spikes exist); (2) heatmap of tool×time-bucket spike intensity; (3) history timeline. Badge on main nav when active spike detected.
+
+### Acceptance Criteria
+
+- AC1: `/api/tool-spike-detector` returns current spikes and 24h spike history
+- AC2: Active spike banner renders at top of page (and optionally in global nav badge)
+- AC3: Tool×time-bucket heatmap rendered; hover shows affected project slugs
+- AC4: Spike severity thresholds: low=3 projects, medium=5 projects, high=8+ projects
+- AC5: History timeline shows past 24h spike events with tool name and severity
+- AC6: Added to Health nav; auto-refreshes every 30s; empty state when no spikes
+
+---
+
+## P293 — Memory Recovery Feedback Loop
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-26
+
+### Problem
+
+P282 identifies orphan memories (memory files with no incoming `[[links]]`) but there is no tracking of what happens to flagged orphans afterward. Were they cleaned up, re-linked, or ignored? Without a feedback loop, the orphan report grows stale, operators lose confidence in its accuracy, and the same orphans surface on every review.
+
+### Proposed Solution
+
+Add a `/memory-recovery` page. A `/api/memory-recovery` endpoint cross-references current orphan scan results with a persisted `memory-recovery.json` tracking file (`{ slug, file, firstFlaggedAt, resolvedAt?, resolution: 'relinked'|'deleted'|'ignored'|null }[]`). On each scan, new orphans are appended; previously flagged orphans that now have incoming links are auto-marked `relinked`; deleted files are auto-marked `deleted`. Returns current orphan list annotated with persistence duration and resolution history. Page renders: (1) orphan table with "days orphaned" column, colored amber/red by age; (2) resolution history chart (stacked bar: relinked vs. deleted vs. still-open per week); (3) per-project orphan count trend sparkline. One-click "Mark ignored" action suppresses an orphan from future reports.
+
+### Acceptance Criteria
+
+- AC1: `/api/memory-recovery` maintains and returns persisted orphan tracking state
+- AC2: New orphans auto-appended; re-linked/deleted orphans auto-resolved on each scan
+- AC3: Orphan table shows days-orphaned with amber (>3d) / red (>7d) coloring
+- AC4: Resolution history stacked bar chart rendered (weekly, last 8 weeks)
+- AC5: Per-project orphan trend sparkline in table row
+- AC6: "Mark ignored" action persists to `memory-recovery.json`; ignored orphans excluded from open count; Added to Memory nav
