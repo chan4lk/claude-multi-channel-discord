@@ -186,6 +186,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/memory-age-strip', label: 'Memory File Age Strip', icon: '◔' },
       { href: '/turn-heatmap', label: 'Session Turn Heatmap', icon: '▦' },
       { href: '/memory-gaps', label: 'Memory Coverage Gap Detector', icon: '⊠' },
+      { href: '/memory-growth', label: 'Fleet Memory Growth Timeline', icon: '◥' },
     ],
   },
   {
