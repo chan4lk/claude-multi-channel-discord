@@ -6644,7 +6644,7 @@ Add a health-score alert rule system. Extend `channels.json` defaults and per-pr
 
 ## P284 — Proposal Lifecycle Dashboard
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-26
 
 ### Problem
