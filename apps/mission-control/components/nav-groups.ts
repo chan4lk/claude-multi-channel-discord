@@ -104,6 +104,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/metrics', label: 'Metrics', icon: '◱' },
       { href: '/cost', label: 'Fleet Cost', icon: '$' },
       { href: '/burn-rate', label: 'Burn Rate', icon: '⥮' },
+      { href: '/token-ticker', label: 'Live Token Burn Ticker', icon: '⏱' },
+      { href: '/cognitive-load', label: 'Cognitive Load Heatmap', icon: '▦' },
       { href: '/anomalies', label: 'Anomaly Detection', icon: '⚠' },
       { href: '/health-trends', label: 'Health Trends', icon: '↗' },
       { href: '/health-score', label: 'Project Health Score Card', icon: '◈' },
