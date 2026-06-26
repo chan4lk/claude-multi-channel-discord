@@ -267,6 +267,137 @@ export class Scheduler {
     }
   }
 
+  /**
+   * Register a nightly cron that writes/updates GOALS.md for every project.
+   * Fires once per night at `opts.cronHour:00` local time (default 02:00).
+   * Safe to call once at startup — re-registering creates an additional timer.
+   */
+  registerGoalReconcileCron(opts: {
+    mcdDir: string
+    getChannels: () => import('./channels-config.ts').ChannelsConfig
+    patternMiner: (slug: string, mcdDir: string) => Promise<import('./pattern-mining.ts').PatternResult>
+    cronHour?: number   // default 2 (02:00 local)
+  }): void {
+    // Register a daily HH:MM schedule that fires at opts.cronHour:00
+    // We use setInterval with 60s checks to see if it's 02:00 local
+    const timer = setInterval(() => {
+      const now = new Date()
+      if (now.getHours() === (opts.cronHour ?? 2) && now.getMinutes() < 2) {
+        void this.runGoalReconcile(opts)
+      }
+    }, 60_000)
+    if (typeof timer.unref === 'function') timer.unref()
+    this.log('goal reconcile cron registered (02:00 local)')
+  }
+
+  private async runGoalReconcile(opts: {
+    mcdDir: string
+    getChannels: () => import('./channels-config.ts').ChannelsConfig
+    patternMiner: (slug: string, mcdDir: string) => Promise<import('./pattern-mining.ts').PatternResult>
+  }): Promise<void> {
+    const { join } = await import('node:path')
+    const { readFileSync, writeFileSync, existsSync, readdirSync } = await import('node:fs')
+    const config = opts.getChannels()
+
+    for (const project of Object.values(config.projects)) {
+      const slug = project.slug
+      const projectCwd = join(opts.mcdDir, 'projects', slug)
+      const specclawDir = join(projectCwd, '.specclaw')
+      const backlogPath = join(projectCwd, 'BACKLOG.md')
+      const hasSpecclaw = existsSync(join(specclawDir, 'STATUS.md'))
+      const hasBacklog = existsSync(backlogPath)
+      if (!hasSpecclaw && !hasBacklog) continue
+
+      // Parse proposals from STATUS.md
+      const proposals: Array<{ name: string; done: boolean }> = []
+      if (hasSpecclaw) {
+        try {
+          const changesDir = join(specclawDir, 'changes')
+          if (existsSync(changesDir)) {
+            for (const change of readdirSync(changesDir)) {
+              const statusFile = join(changesDir, change, 'status.md')
+              if (!existsSync(statusFile)) continue
+              const text = readFileSync(statusFile, 'utf-8')
+              const verifyGreen = /\|\s*Verify\s*\|\s*🟢/.test(text)
+              proposals.push({ name: change, done: verifyGreen })
+            }
+          }
+        } catch { /* skip */ }
+      }
+
+      // Get pattern-mining data
+      let scheduling = ''
+      try {
+        const pattern = await opts.patternMiner(slug, opts.mcdDir)
+        scheduling = [
+          `## Scheduling`,
+          `- **Recommended interval:** ${pattern.recommendedIntervalMinutes} min`,
+          `- **Peak hour:** ${String(pattern.peakHour).padStart(2, '0')}:00 UTC`,
+          `- **Avg turns/day:** ${pattern.avgTurnsPerDay.toFixed(1)}`,
+          `- **Last updated:** ${new Date().toISOString()}`,
+        ].join('\n')
+      } catch { /* skip */ }
+
+      // Read existing GOALS.md to preserve non-managed sections
+      const goalsPath = join(projectCwd, 'GOALS.md')
+      let preserved = ''
+      if (existsSync(goalsPath)) {
+        try {
+          const existing = readFileSync(goalsPath, 'utf-8')
+          // Preserve sections that are NOT ## Proposals or ## Scheduling
+          const lines = existing.split('\n')
+          let inManaged = false
+          const kept: string[] = []
+          for (const line of lines) {
+            if (line.startsWith('# Goals:') || line.startsWith('## Proposals') || line.startsWith('## Scheduling')) {
+              inManaged = true
+              continue
+            }
+            if (line.startsWith('## ') && inManaged) inManaged = false
+            if (!inManaged) kept.push(line)
+          }
+          preserved = kept.join('\n').trim()
+        } catch { /* skip */ }
+      }
+
+      // Build proposals section
+      const proposalLines = proposals
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((p) => `- [${p.done ? 'x' : ' '}] ${p.name}`)
+        .join('\n')
+
+      // BACKLOG summary line for projects with BACKLOG.md
+      let backlogSummary = ''
+      if (hasBacklog) {
+        try {
+          const bl = readFileSync(backlogPath, 'utf-8')
+          const done = (bl.match(/Status.*\[x\] done/g) ?? []).length
+          const pending = (bl.match(/Status.*\[\s*\] pending/g) ?? []).length
+          backlogSummary = `\n- **BACKLOG.md:** ${done} done / ${pending} pending`
+        } catch { /* skip */ }
+      }
+
+      const sections = [
+        `# Goals: ${slug}`,
+        '',
+        scheduling,
+        '',
+        `## Proposals`,
+        proposalLines || '_(no specclaw changes yet)_',
+        backlogSummary,
+        '',
+        preserved,
+      ].filter((s) => s !== undefined).join('\n').trimEnd() + '\n'
+
+      try {
+        writeFileSync(goalsPath, sections, { encoding: 'utf-8' })
+        this.log(`[goal-reconcile] wrote GOALS.md for ${slug}`)
+      } catch (err) {
+        this.log(`[goal-reconcile] failed for ${slug}: ${(err as Error).message}`)
+      }
+    }
+  }
+
   private envelopeFor(s: Schedule, now: Date): InboundEnvelope {
     const ts = now.toISOString()
     let content: string
