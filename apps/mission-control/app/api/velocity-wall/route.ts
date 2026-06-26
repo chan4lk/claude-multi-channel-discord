@@ -6,6 +6,7 @@ export const dynamic = 'force-dynamic'
 
 export interface VelocityProject {
   slug: string
+  platform: 'discord' | 'teams' | 'whatsapp'
   daily: { date: string; count: number }[]
   sevenDayTotal: number
   trend: 'rising' | 'falling' | 'flat'
@@ -93,6 +94,22 @@ function calcTrend(daily: { date: string; count: number }[]): 'rising' | 'fallin
   return 'flat'
 }
 
+function buildSlugPlatformMap(mcdDir: string): Record<string, 'discord' | 'teams' | 'whatsapp'> {
+  const map: Record<string, 'discord' | 'teams' | 'whatsapp'> = {}
+  try {
+    const raw = fs.readFileSync(path.join(mcdDir, 'channels.json'), 'utf-8')
+    const cfg = JSON.parse(raw) as {
+      projects?: Record<string, { slug?: string; platform?: string }>
+    }
+    for (const proj of Object.values(cfg.projects ?? {})) {
+      if (!proj.slug) continue
+      const p = proj.platform
+      map[proj.slug] = (p === 'teams' || p === 'whatsapp') ? p : 'discord'
+    }
+  } catch {}
+  return map
+}
+
 export async function GET(): Promise<Response> {
   const mcdDir =
     process.env.MCD_CHANNELS_DIR ??
@@ -100,6 +117,7 @@ export async function GET(): Promise<Response> {
 
   const dates = getLast30Dates()
   const slugs = getProjectSlugs(mcdDir)
+  const platformMap = buildSlugPlatformMap(mcdDir)
 
   const projects: VelocityProject[] = []
   for (const slug of slugs) {
@@ -108,7 +126,8 @@ export async function GET(): Promise<Response> {
     const daily = dates.map((date) => ({ date, count: countMap[date] ?? 0 }))
     const sevenDayTotal = daily.slice(-7).reduce((s, d) => s + d.count, 0)
     const trend = calcTrend(daily)
-    projects.push({ slug, daily, sevenDayTotal, trend })
+    const platform = platformMap[slug] ?? 'discord'
+    projects.push({ slug, platform, daily, sevenDayTotal, trend })
   }
 
   projects.sort((a, b) => b.sevenDayTotal - a.sevenDayTotal)
