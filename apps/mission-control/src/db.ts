@@ -277,6 +277,12 @@ db.prepare("DELETE FROM fleet_snapshots WHERE ts < ?").run(snapshotCutoff);
 try { db.exec("ALTER TABLE alert_events ADD COLUMN ack_ts INTEGER"); } catch { /* column already present */ }
 try { db.exec("ALTER TABLE alert_events ADD COLUMN ack_by TEXT NOT NULL DEFAULT ''"); } catch { /* column already present */ }
 
+// P291 — alert delivery tracking columns (additive migration)
+try { db.exec("ALTER TABLE alert_events ADD COLUMN delivered_ts INTEGER"); } catch { /* column already present */ }
+try { db.exec("ALTER TABLE alert_events ADD COLUMN delivery_channel TEXT NOT NULL DEFAULT ''"); } catch { /* column already present */ }
+try { db.exec("ALTER TABLE alert_events ADD COLUMN delivery_message_id TEXT NOT NULL DEFAULT ''"); } catch { /* column already present */ }
+try { db.exec("ALTER TABLE alert_events ADD COLUMN delivery_error TEXT NOT NULL DEFAULT ''"); } catch { /* column already present */ }
+
 export function insertEvent(e: McEvent): void {
   db.prepare(
     `INSERT INTO events (instance_id, host, user, ts, type, payload)
@@ -544,6 +550,10 @@ export type AlertEventRow = {
   payload: string
   ack_ts: number | null
   ack_by: string
+  delivered_ts: number | null
+  delivery_channel: string
+  delivery_message_id: string
+  delivery_error: string
 }
 
 export function insertAlertEvent(
@@ -559,6 +569,18 @@ export function insertAlertEvent(
 
 export function getAlertEvent(id: number): AlertEventRow | null {
   return db.prepare(`SELECT * FROM alert_events WHERE id = ?`).get(id) as AlertEventRow | null
+}
+
+/** P291 — mark an alert as delivered to a Discord channel */
+export function markAlertDelivered(
+  id: number,
+  channel: string,
+  messageId: string,
+  error: string = ''
+): void {
+  db.prepare(
+    `UPDATE alert_events SET delivered_ts = unixepoch(), delivery_channel = ?, delivery_message_id = ?, delivery_error = ? WHERE id = ?`
+  ).run(channel, messageId, error, id)
 }
 
 /**
