@@ -6764,7 +6764,7 @@ Add a `/insight-radar` page. A `/api/insight-radar` endpoint computes 6 normaliz
 
 ## P289 — Watchdog Kill Pattern Heatmap
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-26
 
 ### Problem
@@ -6788,7 +6788,7 @@ Add a `/watchdog-kill-patterns` page. A `/api/watchdog-kill-patterns` endpoint r
 
 ## P290 — Proposal Implementation Lag Tracker
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-26
 
 ### Problem
