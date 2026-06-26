@@ -199,6 +199,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/memory-link-graph', label: 'Memory Link Graph', icon: '⇄' },
       { href: '/memory-orphan-report', label: 'Memory Orphan Report', icon: '⊘' },
       { href: '/proposal-kanban', label: 'Proposal Pipeline Kanban', icon: '⊟' },
+      { href: '/proposal-lifecycle', label: 'Proposal Lifecycle Dashboard', icon: '⇉' },
     ],
   },
   {
