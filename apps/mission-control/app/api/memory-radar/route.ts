@@ -4,7 +4,7 @@ import * as os from 'os'
 
 export const dynamic = 'force-dynamic'
 
-export const MEMORY_TYPES = ['user', 'feedback', 'project', 'reference'] as const
+const MEMORY_TYPES = ['user', 'feedback', 'project', 'reference'] as const
 export type MemoryType = (typeof MEMORY_TYPES)[number]
 
 export interface MemoryRadarProject {

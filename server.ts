@@ -1295,12 +1295,16 @@ async function maybeInitProjectsBackend(): Promise<void> {
       const platform = cfg.projects[reply.chatId]?.platform ?? 'discord'
       if (platform === 'teams' && teamsAdapter) {
         if (reply.kind === 'text') {
+          // Clear edit-progress state so next turn creates a fresh progress message
+          editProgressState.delete(reply.chatId)
           teamsAdapter.postReply(reply.chatId, reply.text, reply.replyTo).catch(err => {
             process.stderr.write(`teams: postReply failed: ${err}\n`)
           })
         }
       } else if (platform === 'whatsapp' && whatsappAdapter) {
         if (reply.kind === 'text') {
+          // Clear edit-progress state so next turn creates a fresh progress message
+          editProgressState.delete(reply.chatId)
           whatsappAdapter.postReply(reply.chatId, reply.text, reply.replyTo).catch(err => {
             process.stderr.write(`whatsapp: postReply failed: ${err}\n`)
           })
