@@ -6500,7 +6500,7 @@ Add a `/memory-link-graph` page. A `/api/memory-link-graph` endpoint scans each 
 
 ## P278 — Proposal Pipeline Kanban
 
-**Status:** `[ ] todo`
+**Status:** `[x] done`
 **Created:** 2026-06-26
 
 ### Problem
@@ -6524,7 +6524,7 @@ Add a `/proposal-kanban` page. A `/api/proposal-kanban` endpoint scans `.speccla
 
 ## P279 — Fleet Live Pulse Board
 
-**Status:** `[ ] todo`
+**Status:** `[x] done`
 **Created:** 2026-06-26
 
 ### Problem
