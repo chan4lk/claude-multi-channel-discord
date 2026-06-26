@@ -6860,7 +6860,7 @@ Add a `/tool-spike-detector` page. A `/api/tool-spike-detector` endpoint reads t
 
 ## P293 — Memory Recovery Feedback Loop
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-26
 
 ### Problem
