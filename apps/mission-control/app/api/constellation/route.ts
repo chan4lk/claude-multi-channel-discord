@@ -14,6 +14,10 @@ export interface ConstellationNode {
   contextPct: number
   turnsPerHour: number
   state: string
+  platform: 'discord' | 'teams' | 'whatsapp'
+  avgTurnDurationMs: number
+  activity24h: number
+  isActive: boolean
 }
 
 export interface ConstellationEdge {
@@ -245,6 +249,81 @@ function getTurnsPerHour(slug: string, mcdDir: string): number {
   return turnCount
 }
 
+function getTranscriptDir(slug: string, mcdDir: string): string | null {
+  const projectPath = path.join(mcdDir, 'projects', slug)
+  let realPath = projectPath
+  try { realPath = fs.realpathSync(projectPath) } catch { return null }
+  return path.join(os.homedir(), '.claude', 'projects', encodeProjectCwd(realPath))
+}
+
+function getAvgTurnDurationMs(slug: string, mcdDir: string): number {
+  const transcriptDir = getTranscriptDir(slug, mcdDir)
+  if (!transcriptDir) return 0
+  const durations: number[] = []
+  try {
+    const files = fs.readdirSync(transcriptDir).filter((f) => f.endsWith('.jsonl'))
+    for (const file of files) {
+      try {
+        const lines = fs.readFileSync(path.join(transcriptDir, file), 'utf-8').trim().split('\n')
+        let lastUserTs = 0
+        for (const line of lines) {
+          try {
+            const obj = JSON.parse(line) as { type?: string; timestamp?: string }
+            if (!obj.timestamp) continue
+            const ms = new Date(obj.timestamp).getTime()
+            if (obj.type === 'user') { lastUserTs = ms }
+            else if (obj.type === 'assistant' && lastUserTs > 0) {
+              const dur = ms - lastUserTs
+              if (dur > 0 && dur < 600_000) durations.push(dur)
+              lastUserTs = 0
+            }
+          } catch { /* skip */ }
+        }
+      } catch { /* skip */ }
+    }
+  } catch { /* skip */ }
+  if (durations.length === 0) return 0
+  return Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
+}
+
+function getActivity24h(slug: string, mcdDir: string): number {
+  const transcriptDir = getTranscriptDir(slug, mcdDir)
+  if (!transcriptDir) return 0
+  const cutoff = Date.now() - 86_400_000
+  let count = 0
+  try {
+    const files = fs.readdirSync(transcriptDir).filter((f) => f.endsWith('.jsonl'))
+    for (const file of files) {
+      try {
+        const lines = fs.readFileSync(path.join(transcriptDir, file), 'utf-8').trim().split('\n')
+        for (const line of lines) {
+          try {
+            const obj = JSON.parse(line) as { type?: string; timestamp?: string }
+            if (obj.type === 'assistant' && obj.timestamp && new Date(obj.timestamp).getTime() >= cutoff) count++
+          } catch { /* skip */ }
+        }
+      } catch { /* skip */ }
+    }
+  } catch { /* skip */ }
+  return count
+}
+
+function getIsActive(slug: string, mcdDir: string): boolean {
+  const transcriptDir = getTranscriptDir(slug, mcdDir)
+  if (!transcriptDir) return false
+  const twoMinAgo = Date.now() - 120_000
+  try {
+    const files = fs.readdirSync(transcriptDir).filter((f) => f.endsWith('.jsonl'))
+    for (const file of files) {
+      try {
+        const st = fs.statSync(path.join(transcriptDir, file))
+        if (st.mtimeMs >= twoMinAgo) return true
+      } catch { /* skip */ }
+    }
+  } catch { /* skip */ }
+  return false
+}
+
 // 5-min cache
 let cache: { result: ConstellationResponse; ts: number } | null = null
 const CACHE_TTL_MS = 5 * 60 * 1000
@@ -257,12 +336,19 @@ export async function GET(): Promise<Response> {
   const mcdDir = process.env.MCD_CHANNELS_DIR ??
     path.join(os.homedir(), '.claude', 'channels', 'discord-multi')
 
-  const channels = readJson<{ projects?: Record<string, { slug?: string }> }>(
+  const channels = readJson<{ projects?: Record<string, { slug?: string; platform?: string }> }>(
     path.join(mcdDir, 'channels.json')
   )
-  const slugs = Object.values(channels?.projects ?? {})
-    .map((p) => p.slug)
-    .filter((s): s is string => !!s)
+  const projectEntries = Object.values(channels?.projects ?? {})
+  const slugs = projectEntries.map((p) => p.slug).filter((s): s is string => !!s)
+
+  // Build slug→platform map
+  const platformMap = new Map<string, 'discord' | 'teams' | 'whatsapp'>()
+  for (const p of projectEntries) {
+    if (!p.slug) continue
+    const plat = (p.platform ?? 'discord') as 'discord' | 'teams' | 'whatsapp'
+    platformMap.set(p.slug, ['discord', 'teams', 'whatsapp'].includes(plat) ? plat : 'discord')
+  }
 
   // Build keyword maps
   const keywordMaps = new Map<string, Map<string, number>>()
@@ -292,6 +378,10 @@ export async function GET(): Promise<Response> {
       contextPct: getContextPct(slug, mcdDir),
       turnsPerHour: getTurnsPerHour(slug, mcdDir),
       state: getProjectState(slug, mcdDir),
+      platform: platformMap.get(slug) ?? 'discord',
+      avgTurnDurationMs: getAvgTurnDurationMs(slug, mcdDir),
+      activity24h: getActivity24h(slug, mcdDir),
+      isActive: getIsActive(slug, mcdDir),
     }
   })
 
