@@ -6879,3 +6879,123 @@ Add a `/memory-recovery` page. A `/api/memory-recovery` endpoint cross-reference
 - AC4: Resolution history stacked bar chart rendered (weekly, last 8 weeks)
 - AC5: Per-project orphan trend sparkline in table row
 - AC6: "Mark ignored" action persists to `memory-recovery.json`; ignored orphans excluded from open count; Added to Memory nav
+
+---
+
+## P294 — Live Token Burn Ticker
+
+**Status:** `[x] done`
+**Created:** 2026-06-26
+
+### Problem
+
+The cost page (`/cost`) shows total token spend but requires a page visit to check. During active sessions with many concurrent projects, operators have no ambient awareness of the fleet's live burn rate — they cannot tell if spend is accelerating, whether a runaway agent is burning tokens, or when the monthly budget will be exhausted at the current rate.
+
+### Proposed Solution
+
+Add a `/token-ticker` page. A `/api/token-ticker` SSE endpoint streams live updates every 5 seconds: current fleet tokens/minute (computed from transcript writes in the last 60s across all active projects), top 3 spenders by current rate, and projected monthly total at current burn rate. The page renders: (1) a large animated counter showing tokens/min (updates live); (2) a 2-minute rolling sparkline bar chart (bars = 5s buckets); (3) "top burners" list — slug, model, tokens/min; (4) a circular progress gauge for monthly budget consumed vs cap. Counts flash amber when rate exceeds 2× 7-day average; flash red when projected monthly > 90% of cap. Added to the Cost nav group.
+
+### Acceptance Criteria
+
+- AC1: `/api/token-ticker` SSE streams `{ tokensPerMin, topBurners: {slug, model, rate}[], projectedMonthly, budgetPct }` every 5s
+- AC2: Large live counter shows fleet tokens/min; updates without page reload
+- AC3: Rolling 2-minute sparkline (24 × 5s buckets) rendered in SVG
+- AC4: Top 3 burner rows with slug, model, and per-project rate
+- AC5: Monthly budget gauge; amber at 2× avg rate; red at 90% projected cap
+- AC6: Added to Cost nav; graceful empty state when no transcripts exist
+
+---
+
+## P295 — Cognitive Load Heatmap
+
+**Status:** `[x] done`
+**Created:** 2026-06-26
+
+### Problem
+
+Operators cannot tell which projects are cognitively demanding on the model — long thinking blocks, high tool-call counts, many retries. Context usage percentage is a proxy but does not distinguish between a project that asked one huge question vs. one that iterated many small tool chains. There is no visual that reveals "where is Claude working hardest."
+
+### Proposed Solution
+
+Add a `/cognitive-load` page. A `/api/cognitive-load` endpoint scans the last 7 days of transcript JSONL per project and computes: avg thinking block length (chars), avg tool calls per turn, avg tool retry rate (tool_result `is_error` ratio), avg turn depth (nested subagent levels detected by `Agent` tool calls). Returns `{ projects: { slug, thinkingAvg, toolCallsPerTurn, retryRate, subagentDepth, composite }[] }` sorted by composite desc. Page renders a heatmap grid: rows = projects, columns = the 4 dimensions, cells color-coded from slate (low) to violet (high). A "composite" bar renders alongside each row. Clicking a cell opens a side panel showing the 3 worst turns for that dimension, each linkable to Session Replay (P287). Added to Intelligence nav.
+
+### Acceptance Criteria
+
+- AC1: `/api/cognitive-load` returns 4-dimension scores per project for last 7 days
+- AC2: Heatmap grid: rows = projects, cols = thinking/toolCalls/retryRate/subagentDepth; slate→violet gradient
+- AC3: Composite score bar rendered per row; sorted descending
+- AC4: Clicking a cell opens side panel with top-3 worst turns and links to `/session-replay`
+- AC5: Legend explains each dimension; tooltip on hover shows raw value + fleet percentile
+- AC6: Added to Intelligence nav; empty-state when <1 day of transcripts exist
+
+---
+
+## P296 — Fleet Topology Diff View
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-26
+
+### Problem
+
+When projects are added, renamed, or removed, the fleet topology changes — but there is no view that shows what the fleet looked like at a previous point in time vs. now. Operators onboarding after a weekend cannot see what changed. The 3D constellation (P286) renders the current snapshot only.
+
+### Proposed Solution
+
+Add a `/topology-diff` page. A `/api/topology-diff` endpoint reads `channels.json` current state and a persisted `topology-snapshots.jsonl` (one snapshot per day: `{ date, projects: { slug, platform, model, state, chatId }[] }`). Returns a diff: `{ added: slug[], removed: slug[], changed: { slug, field, from, to }[] }` between the selected `from` date and `today`. The background job (or on-demand) appends a snapshot daily. Page renders: (1) date-range selector (default: 7 days ago → today); (2) three columns — Added (green), Removed (red), Changed (amber); (3) each entry shows slug badge, platform icon, and the diff fields. A "view in constellation" button deep-links to `/fleet-constellation-3d` with the relevant slugs highlighted. Added to Overview nav.
+
+### Acceptance Criteria
+
+- AC1: Daily topology snapshots persisted to `memory/topology-snapshots.jsonl`
+- AC2: `/api/topology-diff` returns added/removed/changed lists between two dates
+- AC3: Page renders three-column diff (added/removed/changed) with slug badges and platform icons
+- AC4: Date-range picker; default 7d; range cannot exceed 90d
+- AC5: "View in constellation" button deep-links to P286 with diff slugs highlighted
+- AC6: Added to Overview nav; empty-state when <2 snapshots exist
+
+---
+
+## P297 — Attention Gravity Well
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-26
+
+### Problem
+
+The advisor page (`/advisor`) ranks projects by attention score but uses a flat list. Operators must read row by row. For fleets with 20+ projects, high-attention items compete visually with low-attention ones. There is no spatial or visual encoding of urgency — high-attention projects do not visually "demand" focus.
+
+### Proposed Solution
+
+Add a `/attention-gravity` page — a radial "gravity well" SVG visualization. Projects orbit a central "attention core" at radii inversely proportional to their attention score (highest score = closest to center). Each project is a labeled circle; size encodes message queue depth; color encodes state (`active`=cyan, `idle`=slate, `stuck`=amber, `circuit-open`=red). Orbit rings labeled: `critical` (score ≥80), `elevated` (60–79), `nominal` (30–59), `quiet` (<30). Projects animate slowly along their orbital path. Clicking a project opens a side panel with score breakdown and deep-links to detail pages. Auto-refreshes every 30s. Added to Overview nav.
+
+### Acceptance Criteria
+
+- AC1: Radial SVG renders projects on orbits; radius inversely proportional to attention score
+- AC2: Four orbit rings labeled critical / elevated / nominal / quiet with score ranges
+- AC3: Circle size encodes `queuedCount`; color encodes state (cyan/slate/amber/red)
+- AC4: Slow orbital animation (CSS animation on each orbit ring, projects positioned on ring path)
+- AC5: Click opens side panel with attention score breakdown + links to fleet detail
+- AC6: Auto-refresh every 30s; added to Overview nav; empty state when no projects
+
+---
+
+## P298 — Memory Constellation Browser
+
+**Status:** `[ ] pending`
+**Created:** 2026-06-26
+
+### Problem
+
+The memory link graph (P277) shows links between memory files within a project. The memory-project correlation matrix (P285) shows which projects share keywords. Neither gives an operator a navigable 3D space where they can "fly through" the fleet's entire memory graph — all projects, all files, all links — as a single explorable constellation.
+
+### Proposed Solution
+
+Add a `/memory-constellation` page. A `/api/memory-constellation` endpoint traverses all memory directories under `MCD_CHANNELS_DIR/projects/*/memory/` and returns `{ nodes: { id, project, file, wordCount, type }[], links: { source, target, weight }[] }` where links come from `[[...]]` cross-references parsed from file bodies. Page renders a Three.js force-directed graph in 3D: nodes as glowing spheres (color = project hue, size = wordCount), edges as thin lines (weight = link count). Camera can orbit (mouse drag) and zoom (scroll). Clicking a node opens a right-panel showing the file contents and its outgoing/incoming links. A "project filter" dropdown isolates one project's memory subgraph. Node labels appear on hover. Added to Memory nav.
+
+### Acceptance Criteria
+
+- AC1: `/api/memory-constellation` returns nodes (project, file, wordCount, type) and links (source, target, weight) for all memory files
+- AC2: 3D force-directed graph renders with mouse orbit and scroll zoom
+- AC3: Node color = project hue (consistent with fleet-constellation-3d); size proportional to wordCount
+- AC4: Clicking a node opens right-panel with file content excerpt and link list
+- AC5: Project filter isolates one project's subgraph; "all" mode shows full constellation
+- AC6: Added to Memory nav; graceful empty-state when no memory files found
