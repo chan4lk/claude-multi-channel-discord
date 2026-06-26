@@ -182,6 +182,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/holographic', label: 'Holographic Overview', icon: '⬡' },
       { href: '/star-map', label: 'Fleet Star Map', icon: '✦' },
       { href: '/memory-density', label: 'Memory Density Heatmap', icon: '▦' },
+      { href: '/memory-velocity', label: 'Memory Write Velocity Sparklines', icon: '⋀' },
+      { href: '/memory-age-strip', label: 'Memory File Age Strip', icon: '◔' },
     ],
   },
   {
