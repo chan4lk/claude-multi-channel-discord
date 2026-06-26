@@ -6452,7 +6452,7 @@ Add a `/health-scorecard` page. A `/api/health-scorecard` endpoint aggregates pe
 
 ## P276 — Turn Velocity Sparklines Wall
 
-**Status:** `[ ] todo`
+**Status:** `[x] done`
 **Created:** 2026-06-26
 
 ### Problem
@@ -6476,7 +6476,7 @@ Add a `/velocity-wall` page. A `/api/velocity-wall` endpoint reads transcripts f
 
 ## P277 — Memory Link Graph
 
-**Status:** `[ ] todo`
+**Status:** `[x] done`
 **Created:** 2026-06-26
 
 ### Problem
