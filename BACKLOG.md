@@ -6812,7 +6812,7 @@ Add a `/proposal-impl-lag` page. A `/api/proposal-impl-lag` endpoint reads `.spe
 
 ## P291 — Alert Delivery Audit Log
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-26
 
 ### Problem
@@ -6836,7 +6836,7 @@ Add a `/alert-delivery` page. Extend the existing alerts DB schema with `deliver
 
 ## P292 — Cross-Project Tool Failure Spike Detector
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-06-26
 
 ### Problem
