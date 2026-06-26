@@ -19,6 +19,7 @@ interface FormState {
   model: string
   progressMode: string
   stuckThresholdMinutes: string
+  healthScoreThreshold: string
   allowedTools: string
   disallowedTools: string
   permissionMode: string
@@ -29,6 +30,7 @@ function configToForm(c: ProjectConfig): FormState {
     model: c.model ?? '',
     progressMode: c.progressMode ?? '',
     stuckThresholdMinutes: c.stuckThresholdMinutes != null ? String(c.stuckThresholdMinutes) : '',
+    healthScoreThreshold: c.healthScoreThreshold != null ? String(c.healthScoreThreshold) : '',
     allowedTools: c.allowedTools.join(', '),
     disallowedTools: c.disallowedTools.join(', '),
     permissionMode: c.permissionMode ?? '',
@@ -119,6 +121,7 @@ export default function ProjectConfigPage() {
         model: form.model || null,
         progressMode: form.progressMode || null,
         stuckThresholdMinutes: form.stuckThresholdMinutes ? parseInt(form.stuckThresholdMinutes, 10) : null,
+        healthScoreThreshold: form.healthScoreThreshold ? parseInt(form.healthScoreThreshold, 10) : null,
         allowedTools: tools(form.allowedTools),
         disallowedTools: tools(form.disallowedTools),
         permissionMode: form.permissionMode || null,
@@ -227,6 +230,23 @@ export default function ProjectConfigPage() {
                 value={form.stuckThresholdMinutes}
                 onChange={(e) => setField('stuckThresholdMinutes', e.target.value)}
                 placeholder={ph('stuckThresholdMinutes') || '5'}
+                style={FIELD_STYLE}
+              />
+            </div>
+
+            {/* Health score alert threshold */}
+            <div style={{ marginBottom: 16 }}>
+              <label style={LABEL_STYLE}>
+                Health Score Alert Threshold{' '}
+                <span style={{ color: '#1E3A5F' }}>· range 0–100 · alert fires when score drops below this for 2 consecutive checks</span>
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={form.healthScoreThreshold}
+                onChange={(e) => setField('healthScoreThreshold', e.target.value)}
+                placeholder="e.g. 40 (leave empty to disable)"
                 style={FIELD_STYLE}
               />
             </div>

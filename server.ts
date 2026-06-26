@@ -52,6 +52,7 @@ import { projectDir, memoryDbFile, channelsDir } from './src/paths.ts'
 import { MemoryStore } from './src/memory-store.ts'
 import { backupMemory, type R2Config } from './src/memory-backup.ts'
 import { Scheduler } from './src/scheduler.ts'
+import { HealthAlertMonitor } from './src/health-alert-monitor.ts'
 import { VoicePipeline } from './src/voice-pipeline.ts'
 import { voiceSlashCommands, handleVoiceInteraction } from './src/voice-commands.ts'
 import { modelSlashCommands, handleModelInteraction } from './src/model-command.ts'
@@ -927,6 +928,7 @@ function shutdown(): void {
   // MCP stop() closes per-chat sessions.
   void (async () => {
     try { scheduler?.stop() } catch {}
+    try { healthAlertMonitor?.stop() } catch {}
     try {
       if (projectPool) await projectPool.shutdown()
     } catch (err) {
@@ -1071,6 +1073,7 @@ let projectPool: ProjectPool | null = null
 let masterMcp: MasterMcpServer | null = null
 let memoryStore: MemoryStore | null = null
 let scheduler: Scheduler | null = null
+let healthAlertMonitor: HealthAlertMonitor | null = null
 let voicePipeline: VoicePipeline | null = null
 const specclawWatchers = new Map<string, { watcher: FSWatcher; slug: string; chatId: string; debounce: ReturnType<typeof setTimeout> | null }>()
 
@@ -1466,6 +1469,16 @@ async function maybeInitProjectsBackend(): Promise<void> {
     },
   })
   scheduler.start()
+
+  healthAlertMonitor = new HealthAlertMonitor(async (text) => {
+    const cfg = loadChannelsConfig()
+    const masterChatId = cfg.master?.chatId
+    if (!masterChatId) return
+    const ch = await client.channels.fetch(masterChatId)
+    if (!ch || ch.type !== ChannelType.GuildText) return
+    await (ch as import('discord.js').TextChannel).send(text)
+  })
+  healthAlertMonitor.start()
 
   voicePipeline = new VoicePipeline({
     onTurnComplete: async (result) => {

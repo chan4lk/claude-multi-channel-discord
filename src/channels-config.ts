@@ -115,6 +115,13 @@ const ProjectSchema = z.object({
   distillOnStop: z.boolean().optional(),
   /** Monthly token budget for this project. null / omitted = unlimited. */
   monthlyTokenBudget: z.number().int().positive().optional(),
+  /**
+   * Health score alert threshold (0–100). When set, the health alert monitor
+   * posts to the master channel if the computed score drops below this value
+   * for two consecutive evaluation cycles. No repeat until score recovers
+   * above threshold + 5 (hysteresis).
+   */
+  healthScoreThreshold: z.number().int().min(0).max(100).optional(),
   heartbeat: z.object({
     mode: z.enum(['supervised', 'autonomous']).default('supervised'),
     window: z.string().regex(/^\d{2}:\d{2}-\d{2}:\d{2}$/).optional(),
