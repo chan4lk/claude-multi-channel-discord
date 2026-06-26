@@ -6548,7 +6548,7 @@ Add a `/live-pulse` page. An SSE endpoint `/api/live-pulse/stream` polls transcr
 
 ## P280 — Health Score History Trail
 
-**Status:** `[ ] todo`
+**Status:** `[x] done`
 **Created:** 2026-06-26
 
 ### Problem
@@ -6620,7 +6620,7 @@ Add a `/memory-orphan-report` page. A `/api/memory-orphan-report` endpoint reuse
 
 ## P283 — Health Score Drop Alerts
 
-**Status:** `[ ] todo`
+**Status:** `[x] done`
 **Created:** 2026-06-26
 
 ### Problem

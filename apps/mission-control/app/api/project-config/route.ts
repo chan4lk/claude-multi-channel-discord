@@ -10,6 +10,7 @@ export interface ProjectConfig {
   model: string | null
   progressMode: string | null
   stuckThresholdMinutes: number | null
+  healthScoreThreshold: number | null
   allowedTools: string[]
   disallowedTools: string[]
   permissionMode: string | null
@@ -31,6 +32,7 @@ interface ChannelEntry {
   model?: string
   progressMode?: string
   stuckThresholdMinutes?: number
+  healthScoreThreshold?: number
   claude?: ClaudeConfig
 }
 
@@ -40,6 +42,7 @@ interface ChannelsJson {
     model?: string
     progressMode?: string
     stuckThresholdMinutes?: number
+    healthScoreThreshold?: number
     claude?: ClaudeConfig
   }
 }
@@ -74,6 +77,7 @@ function buildConfig(slug: string, entry: ChannelEntry, defaults: ChannelsJson['
     model: entry.model ?? null,
     progressMode: entry.progressMode ?? null,
     stuckThresholdMinutes: entry.stuckThresholdMinutes ?? null,
+    healthScoreThreshold: entry.healthScoreThreshold ?? null,
     allowedTools: entry.claude?.allowedTools ?? [],
     disallowedTools: entry.claude?.disallowedTools ?? [],
     permissionMode: entry.claude?.permissionMode ?? null,
@@ -85,6 +89,7 @@ function buildDefaults(defaults: ChannelsJson['defaults']): Omit<ProjectConfig, 
     model: defaults?.model ?? null,
     progressMode: defaults?.progressMode ?? null,
     stuckThresholdMinutes: defaults?.stuckThresholdMinutes ?? null,
+    healthScoreThreshold: defaults?.healthScoreThreshold ?? null,
     allowedTools: defaults?.claude?.allowedTools ?? [],
     disallowedTools: defaults?.claude?.disallowedTools ?? [],
     permissionMode: defaults?.claude?.permissionMode ?? null,
@@ -114,6 +119,7 @@ export async function PUT(req: NextRequest): Promise<Response> {
     model?: string | null
     progressMode?: string | null
     stuckThresholdMinutes?: number | null
+    healthScoreThreshold?: number | null
     allowedTools?: string[]
     disallowedTools?: string[]
     permissionMode?: string | null
@@ -147,6 +153,10 @@ export async function PUT(req: NextRequest): Promise<Response> {
   if ('stuckThresholdMinutes' in body) {
     const v = body.stuckThresholdMinutes
     entry.stuckThresholdMinutes = (typeof v === 'number' && v >= 1 && v <= 60) ? v : undefined
+  }
+  if ('healthScoreThreshold' in body) {
+    const v = body.healthScoreThreshold
+    entry.healthScoreThreshold = (typeof v === 'number' && v >= 0 && v <= 100) ? v : undefined
   }
 
   if ('allowedTools' in body || 'disallowedTools' in body || 'permissionMode' in body) {
