@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import SubPageHeader from '../../components/SubPageHeader'
 import type { VelocityWallResponse, VelocityProject } from '../api/velocity-wall/route'
@@ -135,7 +135,7 @@ function ExpandedModal({
   )
 }
 
-export default function VelocityWallPage() {
+function VelocityWallInner() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const [data, setData] = useState<VelocityWallResponse | null>(null)
@@ -271,5 +271,13 @@ export default function VelocityWallPage() {
         <ExpandedModal project={expanded} onClose={() => setExpanded(null)} />
       )}
     </div>
+  )
+}
+
+export default function VelocityWallPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-slate-950 text-white p-6 font-mono text-slate-500 text-xs">Loading…</div>}>
+      <VelocityWallInner />
+    </Suspense>
   )
 }
