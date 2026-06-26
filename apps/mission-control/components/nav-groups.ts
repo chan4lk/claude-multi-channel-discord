@@ -61,6 +61,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/attention-clock', label: 'Attention Radial Clock', icon: '◷' },
       { href: '/command-bridge', label: 'Fleet Command Bridge', icon: '⌖' },
       { href: '/live-turns', label: 'Live Turn Activity Feed', icon: '◉' },
+      { href: '/live-pulse', label: 'Fleet Live Pulse Board', icon: '◉' },
       { href: '/circuit-timeline', label: 'Circuit Breaker Timeline', icon: '⊘' },
       { href: '/kill-circuit-correlation', label: 'Kill → Circuit Correlation', icon: '⊘' },
       { href: '/turn-duration', label: 'Turn Duration Histogram', icon: '⏱' },
@@ -196,6 +197,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/velocity-wall', label: 'Turn Velocity Sparklines Wall', icon: '⋀' },
       { href: '/memory-link-graph', label: 'Memory Link Graph', icon: '⇄' },
       { href: '/memory-orphan-report', label: 'Memory Orphan Report', icon: '⊘' },
+      { href: '/proposal-kanban', label: 'Proposal Pipeline Kanban', icon: '⊟' },
     ],
   },
   {
