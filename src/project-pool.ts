@@ -19,6 +19,7 @@ export type PoolEvent =
   | { kind: 'budget-exhausted'; chatId: string; slug: string; used: number; budget: number; queuedCount: number }
   | { kind: 'budget-alert'; chatId: string; slug: string; threshold: 50 | 80 | 100; used: number; budget: number }
   | { kind: 'budget-restored'; chatId: string; slug: string; drained: number }
+  | { kind: 'session-rotated'; chatId: string; slug: string; transcriptBytes: number }
 
 interface FailureLedger {
   count: number
@@ -572,6 +573,11 @@ export class ProjectPool {
       fs.writeFileSync(tmpPath, JSON.stringify(state, null, 2), 'utf-8')
       fs.renameSync(tmpPath, filePath)
     } catch { /* non-critical */ }
+  }
+
+  /** Called by ClaudeProjectProcess when it auto-rotates to a fresh session. */
+  emitSessionRotated(info: { slug: string; chatId: string; transcriptBytes: number }): void {
+    this.fireEvent({ kind: 'session-rotated', ...info })
   }
 
   private fireEvent(evt: PoolEvent): void {
