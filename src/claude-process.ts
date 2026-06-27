@@ -22,7 +22,7 @@
  * WSL until a future fallback path lands.
  */
 import { spawnSync } from 'node:child_process'
-import { appendFileSync, existsSync, mkdtempSync, openSync, readFileSync, readSync, closeSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdtempSync, openSync, readFileSync, readSync, closeSync, readdirSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -58,14 +58,17 @@ export const TUI_FAILURE_EXIT_CODE = 99
 /**
  * Hard cap on how big a transcript can grow before we refuse to
  * `--resume` it. The .jsonl is replayed on every resume; once it gets
- * fat enough (~1 MB ≈ 150K tokens in this corpus) claude either auto-
+ * fat enough (~512 KB ≈ 75K tokens in this corpus) claude either auto-
  * compacts on every spawn or hangs replaying tool calls. Past the cap
  * we rotate the .session-id aside and start fresh. Conversation
  * continuity is lost for that one channel, but a stuck pool is worse —
  * and the prior `.session-id.rotated-<ts>` is preserved on disk for
  * post-mortem.
+ *
+ * Per-project override: set `ClaudeProjectProcessOptions.sessionRotateThresholdBytes`
+ * to a different byte count; this constant is only the fallback.
  */
-export const RESUME_TRANSCRIPT_MAX_BYTES = 1_000_000
+export const RESUME_TRANSCRIPT_MAX_BYTES = 512_000
 
 /**
  * Shell-escape a single argv entry for use inside a `tmux new-session ... '<cmd>'`
@@ -287,6 +290,10 @@ export interface ClaudeProjectProcessOptions {
   distillOnStop?: boolean
   /** Called when distillation completes (for audit trail emission). */
   onDistillationComplete?: (result: { success: boolean; durationMs: number; attempt: number; error?: string }) => void
+  /** Per-project transcript size threshold in bytes. Falls back to RESUME_TRANSCRIPT_MAX_BYTES. */
+  sessionRotateThresholdBytes?: number
+  /** Called when session is auto-rotated due to oversized transcript. */
+  onSessionRotated?: (info: { slug: string; chatId: string; transcriptBytes: number }) => void
 }
 
 function summarizeToolInput(name: string, input: Record<string, unknown>): string {
@@ -346,6 +353,8 @@ export class ClaudeProjectProcess implements ProjectProcess {
   private goalText: string | null = null
   /** True after the first message has been sent this session (goal injection is one-shot). */
   private firstMessageSent = false
+  private rotatedContextText: string | null = null
+  private contextSnapshotPath: string | null = null
 
   constructor(opts: ClaudeProjectProcessOptions) {
     this.opts = opts
@@ -380,6 +389,18 @@ export class ClaudeProjectProcess implements ProjectProcess {
     } catch {
       // Non-fatal — proceed without goal injection.
     }
+
+    const snapshotPath = join(projectDir(this.slug), '.session-context.md')
+    try {
+      if (existsSync(snapshotPath)) {
+        this.rotatedContextText = readFileSync(snapshotPath, 'utf8').trim() || null
+        this.contextSnapshotPath = snapshotPath
+        if (this.rotatedContextText) this.log(`context snapshot loaded: ${this.rotatedContextText.length} chars`)
+      }
+    } catch {
+      // Non-fatal.
+    }
+
     this.firstMessageSent = false
 
     this.mcpConfigPath = this.writeMcpConfig()
@@ -994,12 +1015,21 @@ export class ClaudeProjectProcess implements ProjectProcess {
     }
     const channelMsg = `<channel ${meta.join(' ')}>${envelope.content}</channel>`
 
-    // Inject goal context on the first message of each session start (P39).
-    if (!this.firstMessageSent && this.goalText) {
+    // Inject goal context and/or rotated session snapshot on the first message of each session start.
+    if (!this.firstMessageSent) {
       this.firstMessageSent = true
-      return `<goal>${this.goalText}</goal>\n${channelMsg}`
+      const prefix: string[] = []
+      if (this.goalText) prefix.push(`<goal>${this.goalText}</goal>`)
+      if (this.rotatedContextText) {
+        prefix.push(this.rotatedContextText)
+        if (this.contextSnapshotPath) {
+          try { unlinkSync(this.contextSnapshotPath) } catch { /* non-fatal */ }
+          this.contextSnapshotPath = null
+        }
+        this.rotatedContextText = null
+      }
+      if (prefix.length > 0) return `${prefix.join('\n')}\n${channelMsg}`
     }
-    this.firstMessageSent = true
     return channelMsg
   }
 
@@ -1296,6 +1326,49 @@ export class ClaudeProjectProcess implements ProjectProcess {
     return path
   }
 
+  private extractContextSnapshot(transcriptPath: string, sizeBytes: number): void {
+    try {
+      const raw = readFileSync(transcriptPath, 'utf8')
+      const lines = raw.split('\n').filter(l => l.trim())
+      const userMsgs: string[] = []
+      const assistantSnippets: string[] = []
+      for (let i = lines.length - 1; i >= 0; i--) {
+        if (userMsgs.length >= 10 && assistantSnippets.length >= 3) break
+        try {
+          const d = JSON.parse(lines[i]!)
+          const role = d.role ?? d.message?.role
+          const content = d.message?.content ?? d.content
+          if (role === 'user' && userMsgs.length < 10 && typeof content === 'string') {
+            const inner = content.replace(/^<channel[^>]*>/, '').replace(/<\/channel>$/, '').trim()
+            if (inner) userMsgs.unshift(inner.slice(0, 150))
+          } else if (role === 'assistant' && assistantSnippets.length < 3) {
+            const arr = Array.isArray(content) ? content : []
+            const text = arr.find((c: {type?: string}) => c?.type === 'text')?.text ?? ''
+            if (text) assistantSnippets.unshift(text.slice(0, 200))
+          }
+        } catch { /* skip malformed line */ }
+      }
+      if (userMsgs.length === 0 && assistantSnippets.length === 0) return
+      const parts = [
+        `[auto] Prior session context (rotated at ${Math.round(sizeBytes / 1024)} KB):`,
+        '',
+        'Recent operator messages:',
+        ...userMsgs.map(m => `- ${m}`),
+        '',
+        'Last assistant replies:',
+        ...assistantSnippets.map(s => `- ${s}`),
+      ]
+      const snapshot = parts.join('\n').slice(0, 2000)
+      const snapshotPath = join(projectDir(this.slug), '.session-context.md')
+      writeFileSync(snapshotPath, snapshot)
+      this.rotatedContextText = snapshot
+      this.contextSnapshotPath = snapshotPath
+      this.log(`context snapshot written: ${snapshot.length} chars`)
+    } catch (err) {
+      this.log(`context snapshot extraction failed: ${(err as Error).message}`)
+    }
+  }
+
   private readSessionId(): string | undefined {
     const path = projectSessionFile(this.slug)
     if (!existsSync(path)) return undefined
@@ -1326,15 +1399,18 @@ export class ClaudeProjectProcess implements ProjectProcess {
       // through to the existing TUI-failure handling.
       return id
     }
-    if (size > RESUME_TRANSCRIPT_MAX_BYTES) {
+    const threshold = this.opts.sessionRotateThresholdBytes ?? RESUME_TRANSCRIPT_MAX_BYTES
+    if (size > threshold) {
+      this.extractContextSnapshot(transcriptPath, size)
       const stamp = new Date().toISOString().replace(/[:.]/g, '-')
       const rotated = `${path}.rotated-${stamp}`
       try {
         renameSync(path, rotated)
-        this.log(`resume refused: transcript ${size} bytes > ${RESUME_TRANSCRIPT_MAX_BYTES}; rotated .session-id → ${rotated}`)
+        this.log(`resume refused: transcript ${size} bytes > ${threshold}; rotated .session-id → ${rotated}`)
       } catch (err) {
         this.log(`resume refused but rotate failed: ${(err as Error).message}`)
       }
+      this.opts.onSessionRotated?.({ slug: this.slug, chatId: this.chatId, transcriptBytes: size })
       return undefined
     }
     return id

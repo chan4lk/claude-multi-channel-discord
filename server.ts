@@ -1277,6 +1277,12 @@ async function maybeInitProjectsBackend(): Promise<void> {
         onDistillationComplete: (result) => {
           mcEmit('distillation_complete', { slug: project.slug, chatId, ...result })
         },
+        sessionRotateThresholdBytes: project.sessionRotateThresholdKB
+          ? project.sessionRotateThresholdKB * 1024
+          : undefined,
+        onSessionRotated: (info) => {
+          projectPool?.emitSessionRotated(info)
+        },
       })
       // Fire-and-forget; the pool may call deliver() before start() resolves
       // for the very first message — ClaudeProjectProcess deliver() awaits
@@ -1444,6 +1450,19 @@ async function maybeInitProjectsBackend(): Promise<void> {
       }
       if (evt.kind === 'budget-exhausted') {
         process.stderr.write(`pool: budget-exhausted for ${evt.slug}, queue=${evt.queuedCount}\n`)
+      }
+      if (evt.kind === 'session-rotated') {
+        const kb = Math.round(evt.transcriptBytes / 1024)
+        const cfg = loadChannelsConfig()
+        const proj = cfg.projects[evt.chatId]
+        if (proj?.platform !== 'whatsapp' && proj?.platform !== 'teams') {
+          const notice: OutboundReply = {
+            kind: 'text',
+            chatId: evt.chatId,
+            text: `⚠️ \`${evt.slug}\`: session rotated (${kb} KB transcript). Prior context briefed into fresh session.`,
+          }
+          void routeNotification(cfg, notice, 'session-rotated notify')
+        }
       }
       if (evt.kind === 'tool-progress') {
         void handleToolProgressEvent(evt.chatId, evt.slug, evt.event).catch((err) => {
