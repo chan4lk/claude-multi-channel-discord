@@ -300,3 +300,61 @@ When a new large proposal appears in GOALS.md with a clarity score < 60, you wil
 ## Pattern-driven scheduling
 
 Schedules with `autoSchedule: true` in schedules.json use pattern-mining output to set their interval automatically. The mining analyses the last 30 days of transcripts for that project and recommends a conservative re-schedule interval (minimum 60 min). You can view the recommendation in each project's `GOALS.md ## Scheduling` section.
+
+---
+
+# Loop Skills
+
+Three skills that amplify your simple words into precise goals and autonomously drive project channels to completion. Each loop is a schedule entry — cancellable at any time.
+
+## Skill overview
+
+| Operator says | You invoke | What it does |
+|---|---|---|
+| "make keyflow work on payments" | `/mcd-loops:goal-inject keyflow "ship payments module"` | Crafts objective + criteria, injects into keyflow, monitors GOALS.md to `[x]` |
+| "have agent-nexus build auth with JWT" | `/mcd-loops:spec-inject agent-nexus "auth module with JWT"` | Elaborates full spec prompt, injects, monitors STATUS.md through Verify 🟢, posts PR link |
+| "drain keyflow's backlog" | `/mcd-loops:backlog-inject keyflow` | Reads BACKLOG.md count, creates daily schedule at 09:00, monitors until 0 pending |
+
+## goal-inject
+
+**Trigger phrases:** "make \<slug\> work on X", "have \<slug\> do X", "monitor \<slug\> goal: X", "send \<slug\> a goal to X"
+
+**Invocation:** `/mcd-loops:goal-inject <slug> "<words>" [--interval N]`
+
+What the skill does:
+1. Expands `<words>` into a structured goal (objective ≤ 20 words, 2–5 measurable success criteria, ≤ 400 chars total).
+2. Injects goal + GOALS.md update instructions into project channel via `mcp__mcd__inject`.
+3. Creates a monitor schedule (default every 30 min) that checks GOALS.md for `[x]`; injects nudge if stalled; removes itself on completion.
+4. Replies to you with the crafted goal text and schedule id.
+
+## spec-inject
+
+**Trigger phrases:** "have \<slug\> build X", "start a spec in \<slug\> for X", "kick off X in \<slug\>", "create a feature X in \<slug\>"
+
+**Invocation:** `/mcd-loops:spec-inject <slug> "<feature>" [--interval N]`
+
+What the skill does:
+1. Elaborates feature into change name, problem statement, solution sketch, 2–3 ACs (≤ 500 chars).
+2. Injects a specclaw lifecycle prompt into the project channel (`/specclaw:propose` → plan → build → verify → pr).
+3. Creates an hourly monitor that tracks STATUS.md phase progression; nudges on stall; notifies you with PR link on Verify 🟢.
+
+## backlog-inject
+
+**Trigger phrases:** "drain \<slug\>'s backlog", "keep \<slug\> working on backlog", "start backlog loop for \<slug\>"
+
+**Invocation:** `/mcd-loops:backlog-inject <slug> [--time HH:MM]`
+
+What the skill does:
+1. Reads BACKLOG.md; if missing, reports error and stops.
+2. Creates a daily schedule (default 09:00) to pick next 2 `[ ]` items, implement, commit, PR, mark `[x]`.
+3. Injects a kickoff message to start immediately.
+4. Replies with pending count and schedule id.
+
+## Cancelling a loop
+
+Every loop is a schedule entry. To stop:
+```
+!project schedule list <slug>
+!project schedule rm <id>
+```
+Or natural language: "stop the goal-loop on keyflow" → find the `[loop:goal:keyflow]` schedule and `schedule rm` it.
