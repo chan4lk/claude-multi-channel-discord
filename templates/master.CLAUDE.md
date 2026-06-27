@@ -311,7 +311,7 @@ Three skills that amplify your simple words into precise goals and autonomously 
 
 | Operator says | You invoke | What it does |
 |---|---|---|
-| "make keyflow work on payments" | `/mcd-loops:goal-inject keyflow "ship payments module"` | Crafts objective + criteria, injects into keyflow, monitors GOALS.md to `[x]` |
+| "make keyflow work on payments" | `/mcd-loops:goal-inject keyflow "ship payments module"` | Crafts specclaw proposal, injects into keyflow, monitors STATUS.md through Verify 🟢 |
 | "have agent-nexus build auth with JWT" | `/mcd-loops:spec-inject agent-nexus "auth module with JWT"` | Elaborates full spec prompt, injects, monitors STATUS.md through Verify 🟢, posts PR link |
 | "drain keyflow's backlog" | `/mcd-loops:backlog-inject keyflow` | Reads BACKLOG.md count, creates daily schedule at 09:00, monitors until 0 pending |
 
@@ -321,11 +321,13 @@ Three skills that amplify your simple words into precise goals and autonomously 
 
 **Invocation:** `/mcd-loops:goal-inject <slug> "<words>" [--interval N]`
 
+**IMPORTANT:** Do NOT write to GOALS.md directly. Goals become specclaw proposals; GOALS.md is managed by the nightly reconcile cron (auto-populated from STATUS.md). Any manual entry in GOALS.md will be overwritten at 02:00.
+
 What the skill does:
-1. Expands `<words>` into a structured goal (objective ≤ 20 words, 2–5 measurable success criteria, ≤ 400 chars total).
-2. Injects goal + GOALS.md update instructions into project channel via `mcp__mcd__inject`.
-3. Creates a monitor schedule (default every 30 min) that checks GOALS.md for `[x]`; injects nudge if stalled; removes itself on completion.
-4. Replies to you with the crafted goal text and schedule id.
+1. Expands `<words>` into a specclaw-ready proposal: change name, objective, problem statement, 2–5 success criteria.
+2. Injects a `/specclaw:propose` prompt into the project channel via `mcp__mcd__inject`.
+3. Creates a monitor schedule (default every 30 min) that watches `.specclaw/changes/<change-name>/status.md` for Verify 🟢. On stall, injects a nudge. On completion, uses `schedule list` + `schedule rm` (by prompt prefix) to self-cancel, then notifies you.
+4. Replies with the crafted proposal summary.
 
 ## spec-inject
 
