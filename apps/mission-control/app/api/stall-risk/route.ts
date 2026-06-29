@@ -82,7 +82,11 @@ function historyRisk(slug: string): Contribution {
 export async function GET(req: NextRequest): Promise<Response> {
   let fleet: FleetResponse
   try {
-    const res = await fetch(new URL('/api/fleet', req.url), { cache: 'no-store' })
+    const res = await fetch(new URL('/api/fleet', req.url), {
+      cache: 'no-store',
+      headers: { cookie: req.headers.get('cookie') ?? '' },
+    })
+    if (!res.ok) return Response.json({ projects: [], computedAt: new Date().toISOString() } satisfies StallRiskResponse)
     fleet = (await res.json()) as FleetResponse
   } catch {
     return Response.json({ projects: [], computedAt: new Date().toISOString() } satisfies StallRiskResponse)
