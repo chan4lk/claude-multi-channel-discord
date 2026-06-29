@@ -127,6 +127,17 @@ const ProjectSchema = z.object({
     window: z.string().regex(/^\d{2}:\d{2}-\d{2}:\d{2}$/).optional(),
     staleAfterMinutes: z.number().int().positive().default(60),
   }).optional(),
+  /** ISO timestamp of the last autonomous injection into this project. */
+  lastInjectedAt: z.string().optional(),
+  /** Minimum minutes between autonomous injections for this project. */
+  injectCooldownMinutes: z.number().optional(),
+  /** When true, use develop-branch workflow for this project. */
+  developBranch: z.boolean().optional(),
+  /**
+   * Per-project transcript size threshold in kilobytes before session rotation.
+   * Falls back to RESUME_TRANSCRIPT_MAX_BYTES when unset.
+   */
+  sessionRotateThresholdKB: z.number().int().positive().optional(),
 }).superRefine((val, ctx) => {
   if (val.platform === 'whatsapp' && !val.whatsappJid) {
     ctx.addIssue({
@@ -183,6 +194,16 @@ const DefaultsSchema = z.object({
   /** Default context-warning threshold % (0–100). Default 80. */
   contextWarningThresholdPct: z.number().int().min(1).max(100).default(80),
   memory: MemoryConfigSchema,
+  /** How often (minutes) the autonomous inject sweep runs. */
+  injectSweepIntervalMinutes: z.number().optional(),
+  /** Proposal/line thresholds that trigger a batch autonomous injection. */
+  batchThreshold: z.object({ proposals: z.number(), lines: z.number() }).optional(),
+  /**
+   * Default transcript size threshold in kilobytes before session rotation.
+   * Falls back to RESUME_TRANSCRIPT_MAX_BYTES when unset. Projects can override
+   * per-channel via their own sessionRotateThresholdKB field.
+   */
+  sessionRotateThresholdKB: z.number().int().positive().optional(),
 })
 
 const MasterSchema = z.object({

@@ -1277,6 +1277,12 @@ async function maybeInitProjectsBackend(): Promise<void> {
         onDistillationComplete: (result) => {
           mcEmit('distillation_complete', { slug: project.slug, chatId, ...result })
         },
+        sessionRotateThresholdBytes: project.sessionRotateThresholdKB
+          ? project.sessionRotateThresholdKB * 1024
+          : undefined,
+        onSessionRotated: (info) => {
+          projectPool?.emitSessionRotated(info)
+        },
       })
       // Fire-and-forget; the pool may call deliver() before start() resolves
       // for the very first message — ClaudeProjectProcess deliver() awaits
@@ -1445,6 +1451,19 @@ async function maybeInitProjectsBackend(): Promise<void> {
       if (evt.kind === 'budget-exhausted') {
         process.stderr.write(`pool: budget-exhausted for ${evt.slug}, queue=${evt.queuedCount}\n`)
       }
+      if (evt.kind === 'session-rotated') {
+        const kb = Math.round(evt.transcriptBytes / 1024)
+        const cfg = loadChannelsConfig()
+        const proj = cfg.projects[evt.chatId]
+        if (proj?.platform !== 'whatsapp' && proj?.platform !== 'teams') {
+          const notice: OutboundReply = {
+            kind: 'text',
+            chatId: evt.chatId,
+            text: `⚠️ \`${evt.slug}\`: session rotated (${kb} KB transcript). Prior context briefed into fresh session.`,
+          }
+          void routeNotification(cfg, notice, 'session-rotated notify')
+        }
+      }
       if (evt.kind === 'tool-progress') {
         void handleToolProgressEvent(evt.chatId, evt.slug, evt.event).catch((err) => {
           process.stderr.write(`discord: tool-progress dispatch failed: ${err}\n`)
@@ -1462,6 +1481,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
   // knowing the prompt was machine-generated.
   scheduler = new Scheduler({
     deliver: (chatId, envelope) => projectPool!.deliver(chatId, envelope),
+    slugForChatId: (chatId) => loadChannelsConfig().projects[chatId]?.slug,
     onFire: (chatId, jobId, scheduledTime) => {
       const cfg = loadChannelsConfig()
       const slug = cfg.projects[chatId]?.slug ?? chatId
@@ -1469,6 +1489,54 @@ async function maybeInitProjectsBackend(): Promise<void> {
     },
   })
   scheduler.start()
+
+  // --- Autonomous Agent Force ---
+
+  // Background: build voice model from operator transcript history
+  let voiceModel: import('./src/behaviour-mirror.ts').VoiceModel = {
+    sentences: [], avgLength: 0, vocabulary: new Set(), channelSentences: {},
+  }
+  void import('./src/behaviour-mirror.ts').then(({ extractOperatorVoice }) => {
+    extractOperatorVoice(channelsDir()).then((model) => {
+      voiceModel = model
+    }).catch(() => { /* non-fatal */ })
+  })
+
+  // Background: seed pattern cache for autonomous projects
+  void import('./src/pattern-mining.ts').then(async ({ minePatterns }) => {
+    const cfg = loadChannelsConfig()
+    const cache = new Map<string, number>()
+    for (const project of Object.values(cfg.projects)) {
+      if (project.heartbeat?.mode === 'autonomous' || existsSync(join(channelsDir(), 'projects', project.slug, '.specclaw'))) {
+        try {
+          const result = await minePatterns(project.slug, channelsDir())
+          cache.set(project.slug, result.recommendedIntervalMinutes)
+        } catch { /* skip */ }
+      }
+    }
+    scheduler!.setPatternCache(cache)
+  })
+
+  // Behaviour-mirror sweep: inject messages into idle autonomous channels
+  scheduler.registerBehaviourMirrorSweep({
+    pool: {
+      deliver: (chatId, envelope) => projectPool!.deliver(chatId, envelope),
+      isCircuitOpen: (chatId) => projectPool!.getCircuitStates().get(chatId)?.circuitOpen ?? false,
+    },
+    getChannels: () => loadChannelsConfig(),
+    saveChannels: (cfg) => saveConfig(cfg),
+    getVoiceModel: () => voiceModel,
+    mcdDir: channelsDir(),
+  })
+
+  // Nightly GOALS.md reconcile cron (02:00 local)
+  void import('./src/pattern-mining.ts').then(({ minePatterns }) => {
+    scheduler!.registerGoalReconcileCron({
+      mcdDir: channelsDir(),
+      getChannels: () => loadChannelsConfig(),
+      patternMiner: minePatterns,
+    })
+  })
 
   healthAlertMonitor = new HealthAlertMonitor(async (text) => {
     const cfg = loadChannelsConfig()
