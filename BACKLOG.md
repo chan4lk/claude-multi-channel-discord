@@ -6999,3 +6999,77 @@ Add a `/memory-constellation` page. A `/api/memory-constellation` endpoint trave
 - AC4: Clicking a node opens right-panel with file content excerpt and link list
 - AC5: Project filter isolates one project's subgraph; "all" mode shows full constellation
 - AC6: Added to Memory nav; graceful empty-state when no memory files found
+
+---
+
+## P299 — Proactive Claude Crash Respawn
+
+**Status:** `[ ] pending`
+**Created:** 2026-07-02
+
+### Problem
+
+When the `claude` CLI process crashes inside the tmux session (OOM, segfault, uncaught exception, SIGKILL), the tmux session remains alive but the pane shows a bare shell prompt. The bot only discovers the crash on the next incoming message — lazy respawn. For channels with low message frequency or autonomous agents waiting for external events, this can leave a channel dead for hours without operator notice.
+
+### Proposed Solution
+
+Add a proactive crash detector to `ClaudeProjectProcess`. After `tuiReady` is true, start a lightweight pane-content poller (every 30s) that reads the last line of the tmux pane with `tmux capture-pane -pt <session> -p`. If the line matches a bare shell prompt pattern (`\$ $` or `> $` or blank after exit) and does NOT match the claude TUI cursor (`❯`), increment a consecutive-miss counter. After 2 consecutive misses (60s grace), emit a `crash-detected` event, post a Discord notice to the project channel, and call `killAndRespawn()`. Emit `project-crashed` PoolEvent so `server.ts` can route the notification. Reset counter on any successful reply or transcript write.
+
+### Acceptance Criteria
+
+- AC1: `ClaudeProjectProcess` polls pane content every 30s after `tuiReady`
+- AC2: Two consecutive misses (shell prompt detected, no TUI cursor) triggers respawn
+- AC3: Counter resets on any `mcp__mcd__reply` call or transcript write within the window
+- AC4: `project-crashed` PoolEvent emitted with `{ chatId, slug, consecutiveMisses }`
+- AC5: `server.ts` routes a Discord notice: `⚠️ \`<slug>\`: Claude crashed — respawning now`
+- AC6: Crash poller stops when `kill()` is called (no double-respawn)
+- AC7: `stuckThresholdMinutes` per-project config also shortens the miss window proportionally (high-activity channels get faster detection)
+
+---
+
+## P300 — Full Cron Expression Syntax for Scheduler
+
+**Status:** `[ ] pending`
+**Created:** 2026-07-02
+
+### Problem
+
+The scheduler only supports `HH:MM` (daily at a fixed time) and `every <N><unit>` intervals. Operators cannot express common scheduling patterns like "every weekday at 09:00", "first of month at 00:00", or "every 15 minutes between 08:00–18:00". This limits autonomous agent orchestration to coarse schedules.
+
+### Proposed Solution
+
+Replace the `at: string` field parser in `src/scheduler.ts` with `cronstrue`/`cron-parser` (add as dependency). Accept a `cron` field alongside the existing `at` and `interval` fields. Parse standard 5-field cron expressions (`* * * * *`). On each 60s tick, check `cron-parser`'s `next()` against the last-fired timestamp to decide whether to fire. Backward-compatible: existing `at: "HH:MM"` records continue to work unchanged. `!project schedule add <slug> --cron "*/15 9-18 * * 1-5" "..."` syntax added to master-commands. Validation rejects malformed expressions at add-time with a clear error.
+
+### Acceptance Criteria
+
+- AC1: `cron-parser` added as dependency; parses standard 5-field cron expressions
+- AC2: `!project schedule add --cron "<expr>" "<prompt>"` accepted by master-commands
+- AC3: Each scheduler tick evaluates cron schedules via `next()` comparison
+- AC4: Existing `at: "HH:MM"` and `interval: "every Xm"` schedules unchanged
+- AC5: Invalid cron expression rejected at `add` time with error message quoting the bad field
+- AC6: `!project schedule list` shows cron expression alongside existing at/interval display
+- AC7: TypeScript types updated; `bun tsc --noEmit` clean; existing tests still pass
+
+---
+
+## P301 — Session-ID Capture Retry Loop
+
+**Status:** `[ ] pending`
+**Created:** 2026-07-02
+
+### Problem
+
+After spawning a claude subprocess, `ClaudeProjectProcess` captures the session UUID by diffing the transcript directory before and after TUI-ready. If claude writes its first transcript line before the post-spawn diff runs (race condition under load), the diff is empty and `.session-id` is never written. Subsequent restarts then lose the conversation history because `--resume` has no UUID to pass.
+
+### Proposed Solution
+
+In `persistSessionAndRename()`, add a retry loop: if the snapshot diff yields no UUID, wait 500ms and retry up to 6 times (3s total). On each retry, re-scan the transcript directory for new JSONL files that appeared since spawn. If a UUID is found, write `.session-id` and emit a `session-id-captured` debug event. If all retries fail, log a warning `[claude-process] session-id capture failed after retries — resume unavailable` and continue (non-fatal). Add a test in `src/project-pool.test.ts` that simulates delayed transcript write and verifies `.session-id` is eventually written.
+
+### Acceptance Criteria
+
+- AC1: Retry loop attempts up to 6 times with 500ms delay (3s window)
+- AC2: Each retry re-scans the transcript directory for new JSONL files
+- AC3: On success, `.session-id` written and `session-id-captured` debug event emitted
+- AC4: On exhaustion, warning logged; process continues without `.session-id` (non-fatal)
+- AC5: Test simulates 2-retry-delay scenario and asserts `.session-id` written on 3rd attempt
+- AC6: `bun tsc --noEmit` clean; existing tests pass

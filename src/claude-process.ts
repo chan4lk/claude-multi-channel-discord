@@ -1228,6 +1228,17 @@ export class ClaudeProjectProcess implements ProjectProcess {
     }
   }
 
+  private notifyCrash(reason: string): void {
+    const reply: OutboundReply = {
+      kind: 'text',
+      chatId: this.chatId,
+      text: `⚠️ \`${this.slug}\`: ${reason} — respawning on next message`,
+    }
+    for (const h of this.replyHandlers) {
+      try { h(reply) } catch {}
+    }
+  }
+
   private startAliveCheck(): void {
     if (this.aliveCheckTimer) return
     this.aliveCheckTimer = setInterval(() => {
@@ -1235,6 +1246,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
       const r = spawnSync('tmux', ['has-session', '-t', this.tmuxSessionName], { stdio: 'ignore' })
       if (r.status !== 0) {
         this.log(`tmux session ${this.tmuxSessionName} gone — marking dead`)
+        this.notifyCrash('tmux session disappeared')
         this.markDead(null, null)
         return
       }
@@ -1252,6 +1264,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
         const pane = cap.stdout?.toString().trim() ?? '(empty)'
         this.log(`claude pane died — last output:\n${pane}`)
         spawnSync('tmux', ['kill-session', '-t', this.tmuxSessionName], { stdio: 'ignore' })
+        this.notifyCrash('claude process exited unexpectedly')
         this.markDead(null, null)
       }
     }, TMUX_POLL_INTERVAL_MS)
