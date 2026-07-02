@@ -13,6 +13,12 @@ export async function seedAdminIfNeeded(): Promise<void> {
     await auth.api.signUpEmail({
       body: { name: "Admin", email, password },
     });
+    try {
+      db.exec("ALTER TABLE user ADD COLUMN role TEXT NOT NULL DEFAULT 'viewer'");
+    } catch {
+      /* column already present */
+    }
+    db.prepare("UPDATE user SET role = 'admin' WHERE email = ?").run(email);
     console.log("[mcd] Admin user seeded:", email);
   } catch (err) {
     console.warn("[mcd] Admin seed skipped:", (err as Error).message);

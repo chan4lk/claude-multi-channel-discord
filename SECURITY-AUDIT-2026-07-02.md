@@ -12,12 +12,13 @@ Middleware only checks the session **cookie exists**, not that it is valid (no s
 `execSync(\`tmux send-keys -t ... -l ${JSON.stringify(envelope)}\`)`. `JSON.stringify` double-quotes but the shell still expands `$(...)` / backticks inside double quotes. The `message` body is unvalidated. **Verified live:** body `hello$(id)world` executed `id`. Chained with #1 = **unauthenticated RCE on the host**.
 **Fix:** `spawnSync('tmux', ['send-keys','-t',session,'-l',envelope], {shell:false})`.
 
-### 3. No role model — every logged-in user is full admin
+### 3. No role model — every logged-in user is full admin — **FIXED** (branch `security/role-model`)
 - `app/api/admin/users/[id]/route.ts:10` — DELETE any user; gate is `if(!session)` only.
 - `app/api/admin/users/route.ts:7` — list all users.
 - `app/api/project-config/route.ts:116` (PUT) — can set `permissionMode: bypassPermissions` / `allowedTools:["*"]` on any project → fleet-wide RCE.
 - `app/api/projects/[slug]/claude-md/route.ts:28` (PUT) — overwrite any system prompt.
 **Fix:** add `role` column; gate admin + mutating routes on `session.user.role==='admin'`.
+**Applied:** `role` column on better-auth `user` table (default `viewer`; earliest user auto-promoted to `admin` on legacy DBs; `MC_ADMIN_EMAIL` seed gets `admin`). New `requireAdmin()` in `src/security.ts` gates: admin/users GET, admin/users/[id] DELETE, admin/audit GET, project-config PUT, claude-md PUT, inject POST, broadcast POST. Role changes require direct DB access (no privilege-escalation API surface).
 
 ### 4. Arbitrary file read+write (path traversal) — `app/api/projects/[slug]/claude-md/route.ts:6-9`
 `path.join(mcdDir,'projects',slug,'CLAUDE.md')` with no slug sanitization. `slug=../../../../home/openclaw/.ssh/authorized_keys` → GET reads, PUT writes any file.

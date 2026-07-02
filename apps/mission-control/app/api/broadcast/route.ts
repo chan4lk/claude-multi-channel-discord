@@ -1,7 +1,7 @@
 import { spawnSync } from 'child_process'
 import { NextRequest } from 'next/server'
 import { insertBroadcast } from '../../../src/db'
-import { requireSession } from '../../../src/security'
+import { requireAdmin } from '../../../src/security'
 
 export const dynamic = 'force-dynamic'
 
@@ -45,8 +45,8 @@ function injectSlug(slug: string, rawMessage: string): { slug: string; status: '
 }
 
 export async function POST(req: NextRequest): Promise<Response> {
-  const unauth = await requireSession()
-  if (unauth) return unauth
+  const admin = await requireAdmin()
+  if (admin.deny) return admin.deny
 
   let slugs: string[]
   let message: string

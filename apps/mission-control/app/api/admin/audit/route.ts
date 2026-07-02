@@ -1,13 +1,12 @@
 import { NextRequest } from 'next/server'
-import { auth } from '@/src/auth'
-import { headers } from 'next/headers'
+import { requireAdmin } from '@/src/security'
 import { getAuditLog, type AuditRow } from '@/src/db'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest): Promise<Response> {
-  const session = await auth.api.getSession({ headers: await headers() })
-  if (!session) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+  const admin = await requireAdmin()
+  if (admin.deny) return admin.deny
 
   const { searchParams } = req.nextUrl
   const format = searchParams.get('format') ?? 'json'
