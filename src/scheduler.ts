@@ -16,6 +16,7 @@ import {
   hasFiredToday,
   hasFiredWithin,
   loadSchedules,
+  matchesCron,
   nextFireMs,
   saveSchedules,
   type Schedule,
@@ -442,6 +443,20 @@ function isDue(s: Schedule, now: Date): boolean {
     const durationMs = unit === 'h' ? value * 60 * 60 * 1000 : value * 60 * 1000
     if (hasFiredWithin(s, durationMs, now)) return false
     return now.getTime() >= nextFireMs(s, now)
+  }
+  if (s.cron !== undefined) {
+    // Cron fires at most once per minute. Dedup by checking lastRunAt is not this same minute.
+    if (s.lastRunAt) {
+      const last = new Date(s.lastRunAt)
+      if (
+        last.getFullYear() === now.getFullYear() &&
+        last.getMonth() === now.getMonth() &&
+        last.getDate() === now.getDate() &&
+        last.getHours() === now.getHours() &&
+        last.getMinutes() === now.getMinutes()
+      ) return false
+    }
+    return matchesCron(s.cron, now)
   }
   // at-based daily schedule
   if (hasFiredToday(s, now)) return false
