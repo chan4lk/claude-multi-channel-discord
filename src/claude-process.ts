@@ -788,9 +788,15 @@ export class ClaudeProjectProcess implements ProjectProcess {
       return
     }
 
-    const sid = findNewSessionId(this.projectCwd, this.preSpawnSessionIds)
+    // Retry up to 6× (3s) in case claude's first transcript write races with TUI-ready.
+    let sid: string | null = null
+    for (let attempt = 0; attempt < 6; attempt++) {
+      sid = findNewSessionId(this.projectCwd, this.preSpawnSessionIds)
+      if (sid) break
+      if (attempt < 5) await sleep(500)
+    }
     if (!sid) {
-      this.log(`session-id capture: no new transcript file yet for cwd=${this.projectCwd} (pre-spawn snapshot had ${this.preSpawnSessionIds.size} entries)`)
+      this.log(`session-id capture: no new transcript file after retries for cwd=${this.projectCwd} (pre-spawn snapshot had ${this.preSpawnSessionIds.size} entries) — resume unavailable`)
       // Don't mark persisted — try again next deliver in case the
       // transcript was just slow to land.
       return
