@@ -1,16 +1,12 @@
-import { execSync } from 'child_process'
+import { spawnSync } from 'child_process'
 import { NextRequest } from 'next/server'
 import { insertAlertEvent } from '../../../src/db'
+import { requireSession } from '../../../src/security'
 
 export const dynamic = 'force-dynamic'
 
 function sessionExists(name: string): boolean {
-  try {
-    execSync(`tmux has-session -t ${JSON.stringify(name)}`, { stdio: 'ignore' })
-    return true
-  } catch {
-    return false
-  }
+  return spawnSync('tmux', ['has-session', '-t', name], { stdio: 'ignore' }).status === 0
 }
 
 function buildEnvelope(slug: string, text: string): string {
@@ -20,6 +16,9 @@ function buildEnvelope(slug: string, text: string): string {
 }
 
 export async function POST(req: NextRequest): Promise<Response> {
+  const unauth = await requireSession()
+  if (unauth) return unauth
+
   let slug: string
   let message: string
   try {
@@ -45,11 +44,10 @@ export async function POST(req: NextRequest): Promise<Response> {
 
   const envelope = buildEnvelope(slug, message)
 
-  try {
-    execSync(`tmux send-keys -t ${JSON.stringify(session)} -l ${JSON.stringify(envelope)}`, { stdio: 'ignore' })
-    execSync(`tmux send-keys -t ${JSON.stringify(session)} C-m`, { stdio: 'ignore' })
-  } catch (err) {
-    return Response.json({ error: (err as Error).message }, { status: 500 })
+  const lit = spawnSync('tmux', ['send-keys', '-t', session, '-l', envelope], { stdio: 'ignore' })
+  const enter = spawnSync('tmux', ['send-keys', '-t', session, 'C-m'], { stdio: 'ignore' })
+  if (lit.status !== 0 || enter.status !== 0) {
+    return Response.json({ error: 'tmux send-keys failed' }, { status: 500 })
   }
 
   try {

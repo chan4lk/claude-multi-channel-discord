@@ -1,7 +1,8 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
-import { execSync } from 'child_process'
+import { spawnSync } from 'child_process'
+import { isSafeSlug } from '../../../src/security'
 
 export const dynamic = 'force-dynamic'
 
@@ -52,10 +53,13 @@ function gitLogForFile(projectDir: string, filePath: string, windowDays: number)
   const rel = path.relative(projectDir, filePath)
   const since = new Date(Date.now() - windowDays * 86_400_000).toISOString().slice(0, 10)
   try {
-    const out = execSync(
-      `git -C "${projectDir}" log --follow --format="%H %aI %s" --since="${since}" -- "${rel}"`,
+    const res = spawnSync(
+      'git',
+      ['-C', projectDir, 'log', '--follow', '--format=%H %aI %s', `--since=${since}`, '--', rel],
       { encoding: 'utf-8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }
-    ).trim()
+    )
+    if (res.status !== 0) return []
+    const out = res.stdout.trim()
     if (!out) return []
     return out.split('\n').map(line => {
       const spaceIdx = line.indexOf(' ')
@@ -80,6 +84,9 @@ export async function GET(request: Request): Promise<Response> {
 
   if (!slug) {
     return Response.json({ slug: '', series: [], windowDays, generatedAt } satisfies MemoryTimelineResponse)
+  }
+  if (!isSafeSlug(slug)) {
+    return Response.json({ error: 'Invalid slug' }, { status: 400 })
   }
 
   const projectDir = getProjectDir(mcdDir, slug)
