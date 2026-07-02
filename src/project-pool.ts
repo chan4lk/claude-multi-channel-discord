@@ -475,7 +475,9 @@ export class ProjectPool {
       this.cleanups.get(chatId)?.()
       this.cleanups.delete(chatId)
 
-      const isCrash = code !== 0 && code !== null
+      // code=0 → clean stop (evict / !project stop); anything else including
+      // null (tmux session gone / pane dead detected by alive-check) is a crash.
+      const isCrash = code !== 0
       if (isCrash) {
         this.fireEvent({ kind: 'crashed', chatId, slug: project.slug, code, signal })
         this.recordFailureAndMaybeRespawn(chatId, project, config)
