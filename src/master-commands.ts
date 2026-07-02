@@ -19,7 +19,7 @@ import {
 import { buildGitEnv, gitClone, gitPullFastForward, gitSetRemote, gitStatusSummary } from './git-ops.ts'
 import { getCredential, loadCredentials } from './git-credentials.ts'
 import { accessFile, archiveDir, channelsDir, projectClaudeMd, projectDir, projectGoalFile } from './paths.ts'
-import { IntervalSchema, loadSchedules, newScheduleId, saveSchedules, type Schedule } from './schedules-config.ts'
+import { IntervalSchema, loadSchedules, newScheduleId, saveSchedules, validateCron, type Schedule } from './schedules-config.ts'
 import { scanChannels, classifyChannel } from './heartbeat.ts'
 
 export type MasterCommandResult =
@@ -212,7 +212,8 @@ function helpText(prefix: string): string {
     `${prefix} pull   <chat_id-or-slug>                               — git pull --ff-only`,
     `${prefix} usage                         — resource snapshot of running project subprocesses (alias: ps, top)`,
     `${prefix} stop   <chat_id-or-slug>                               — kill the project's subprocess; lazy-respawns on next message`,
-    `${prefix} schedule add <chat_id-or-slug> --at HH:MM|every 30m|every 2h --prompt "..." [--max-runs N]   — daily recurring job`,
+    `${prefix} schedule add <chat_id-or-slug> --at HH:MM|every 30m|every 2h --prompt "..." [--max-runs N]   — daily/interval job`,
+    `${prefix} schedule add <chat_id-or-slug> --cron "*/15 9-18 * * 1-5" --prompt "..."                     — cron-syntax job`,
     `${prefix} schedule list [<chat_id-or-slug>]      — show all schedules (or just one project's)`,
     `${prefix} schedule pause/resume/rm <id>          — toggle or delete a schedule`,
     `${prefix} provider <chat_id-or-slug> [--set ALIAS | --clear]    — switch a project to a different provider (or back to Claude subscription)`,
@@ -1087,8 +1088,51 @@ async function scheduleAdd(tail: string[]): Promise<string> {
   const { positional, flags } = parseFlags(tail)
   if (positional.length === 0) return '`schedule add` needs a chat_id or slug as the first argument'
 
+  const cronRaw = flags.cron
   const atRaw = flags.at
-  if (typeof atRaw !== 'string') return '`schedule add` requires `--at HH:MM` or `--at every Xm/Xh`'
+
+  if (typeof cronRaw === 'string') {
+    const cronErr = validateCron(cronRaw)
+    if (cronErr) return `invalid \`--cron\` expression: ${cronErr}`
+
+    const prompt = typeof flags.prompt === 'string' ? flags.prompt : null
+    if (!prompt) return '`schedule add` requires `--prompt "..."` — what to ask the agent each fire'
+    const maxRunsRaw = flags['max-runs']
+    let maxRuns: number | null = null
+    if (typeof maxRunsRaw === 'string') {
+      const n = Number(maxRunsRaw)
+      if (!Number.isInteger(n) || n <= 0) return `\`--max-runs\` must be a positive integer; got "${maxRunsRaw}"`
+      maxRuns = n
+    }
+    const config = loadConfig()
+    const entry = resolveTarget(config, positional[0]!)
+    if (!entry) return `no project found for "${positional[0]!}"`
+    const id = newScheduleId()
+    const sched: Schedule = {
+      id,
+      type: 'prompt',
+      chatId: entry.chatId,
+      cron: cronRaw,
+      prompt,
+      enabled: true,
+      lastRunAt: null,
+      createdAt: new Date().toISOString(),
+      maxRuns,
+      runCount: 0,
+    }
+    const file = loadSchedules()
+    file.schedules.push(sched)
+    saveSchedules(file)
+    return [
+      `✅ scheduled job **${id}**`,
+      `project: **${entry.project.slug}** (chat \`${entry.chatId}\`)`,
+      `cron: \`${cronRaw}\``,
+      `prompt: ${prompt.length > 120 ? prompt.slice(0, 120) + '…' : prompt}`,
+      maxRuns ? `max runs: ${maxRuns}` : '_no run cap (use `pause`/`rm` to stop)_',
+    ].join('\n')
+  }
+
+  if (typeof atRaw !== 'string') return '`schedule add` requires `--at HH:MM|every Xm/Xh` or `--cron "* * * * *"`'
 
   const isInterval = IntervalSchema.safeParse(atRaw).success
   const isHHMM = /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(atRaw)
@@ -1228,12 +1272,12 @@ function scheduleList(tail: string[]): string {
 
   const lines = ['**Schedules:**', '```']
   lines.push('id                              slug                 at     enabled  runs   last_run')
-  const sortKey = (s: Schedule) => s.at ?? `~${s.interval ?? ''}`
+  const sortKey = (s: Schedule) => s.at ?? (s.cron ? `~~${s.cron}` : `~${s.interval ?? ''}`)
   for (const s of rows.sort((a, b) => sortKey(a).localeCompare(sortKey(b)))) {
     const project = config.projects[s.chatId]
     const slug = (project?.slug ?? '?').padEnd(20).slice(0, 20)
     const id = s.id.padEnd(30).slice(0, 30)
-    const at = (s.at ?? s.interval ?? '?').padEnd(5)
+    const at = (s.at ?? s.interval ?? (s.cron ? `cron:${s.cron}` : '?')).padEnd(5)
     const en = s.enabled ? 'yes' : 'no '
     const runs = s.maxRuns ? `${s.runCount}/${s.maxRuns}` : `${s.runCount}`
     const last = s.lastRunAt ?? '(never)'

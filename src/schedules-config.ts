@@ -58,8 +58,8 @@ const ScheduleSchema = z.object({
    */
   autoSchedule: z.boolean().optional(),
 }).refine(
-  (s) => (s.at !== undefined) !== (s.interval !== undefined),
-  { message: 'Exactly one of `at` or `interval` must be set' },
+  (s) => [s.at, s.interval, s.cron].filter((v) => v !== undefined).length === 1,
+  { message: 'Exactly one of `at`, `interval`, or `cron` must be set' },
 )
 export type Schedule = z.infer<typeof ScheduleSchema>
 
@@ -148,4 +148,81 @@ export function hasFiredToday(s: Schedule, now: Date = new Date()): boolean {
 /** A fresh id for new schedules. Short, sortable-ish. */
 export function newScheduleId(): string {
   return `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+/**
+ * Validate a 5-field cron expression. Returns an error string on failure,
+ * null on success.
+ * Format: `minute hour day-of-month month day-of-week`
+ * Each field: `*`, `N`, `N-M`, `* /N` (no space), `N,M,...`, `N-M/S`
+ */
+export function validateCron(expr: string): string | null {
+  const fields = expr.trim().split(/\s+/)
+  if (fields.length !== 5) return `cron must have 5 fields (got ${fields.length}): "minute hour day month weekday"`
+  const ranges = [
+    { name: 'minute', min: 0, max: 59 },
+    { name: 'hour', min: 0, max: 23 },
+    { name: 'day', min: 1, max: 31 },
+    { name: 'month', min: 1, max: 12 },
+    { name: 'weekday', min: 0, max: 7 },
+  ]
+  for (let i = 0; i < 5; i++) {
+    const err = validateCronField(fields[i]!, ranges[i]!)
+    if (err) return `cron field ${i + 1} (${ranges[i]!.name}): ${err}`
+  }
+  return null
+}
+
+function validateCronField(field: string, { min, max }: { name: string; min: number; max: number }): string | null {
+  for (const part of field.split(',')) {
+    const stepMatch = part.match(/^(.+)\/(\d+)$/)
+    const step = stepMatch ? Number(stepMatch[2]) : null
+    const base = stepMatch ? stepMatch[1]! : part
+    if (step !== null && (step <= 0 || step > max - min + 1)) return `step ${step} out of range`
+    if (base === '*') continue
+    const rangeMatch = base.match(/^(\d+)-(\d+)$/)
+    if (rangeMatch) {
+      const lo = Number(rangeMatch[1]), hi = Number(rangeMatch[2])
+      if (lo < min || hi > max || lo > hi) return `range ${base} invalid (allowed ${min}-${max})`
+      continue
+    }
+    const n = Number(base)
+    if (!Number.isInteger(n) || n < min || n > max) return `value ${base} invalid (allowed ${min}-${max})`
+  }
+  return null
+}
+
+/**
+ * Returns true if `expr` matches the given `now` date (minute-level precision).
+ * Assumes a valid 5-field cron expression (validate first with `validateCron`).
+ */
+export function matchesCron(expr: string, now: Date): boolean {
+  const [mField, hField, domField, monField, dowField] = expr.trim().split(/\s+/)
+  return (
+    cronFieldMatches(mField!, now.getMinutes(), 0, 59) &&
+    cronFieldMatches(hField!, now.getHours(), 0, 23) &&
+    cronFieldMatches(domField!, now.getDate(), 1, 31) &&
+    cronFieldMatches(monField!, now.getMonth() + 1, 1, 12) &&
+    cronFieldMatches(dowField!, now.getDay(), 0, 7)
+  )
+}
+
+function cronFieldMatches(field: string, value: number, min: number, max: number): boolean {
+  for (const part of field.split(',')) {
+    const stepMatch = part.match(/^(.+)\/(\d+)$/)
+    const step = stepMatch ? Number(stepMatch[2]) : 1
+    const base = stepMatch ? stepMatch[1]! : part
+    let lo = min, hi = max
+    if (base !== '*') {
+      const rangeMatch = base.match(/^(\d+)-(\d+)$/)
+      if (rangeMatch) {
+        lo = Number(rangeMatch[1])
+        hi = Number(rangeMatch[2])
+      } else {
+        lo = hi = Number(base)
+      }
+    }
+    if (value >= lo && value <= hi && (value - lo) % step === 0) return true
+  }
+  return false
 }
