@@ -1299,7 +1299,7 @@ export async function handleModel(rest: string[], ctx: MasterContext): Promise<s
   // arbitrary model ids the endpoint aliases internally. `--force` overrides.
   if (setName) {
     const usesProvider = (entry.project.provider ?? config.defaults.provider) !== undefined
-    const KNOWN = ['opus', 'sonnet', 'haiku']
+    const KNOWN = ['opus', 'sonnet', 'haiku', 'fable']
     const ok = usesProvider || KNOWN.includes(setName.toLowerCase()) || setName.startsWith('claude-')
     if (!ok && flags.force !== true) {
       return `⚠️ \`${setName}\` is not a known subscription model (${KNOWN.join(', ')}, or a \`claude-*\` id). A bad alias bricks the channel — claude errors at first turn. Re-run with \`--force\` if intended.`
