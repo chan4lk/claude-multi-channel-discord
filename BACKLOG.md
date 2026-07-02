@@ -7004,7 +7004,7 @@ Add a `/memory-constellation` page. A `/api/memory-constellation` endpoint trave
 
 ## P299 — Proactive Claude Crash Respawn
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-07-02
 
 ### Problem
@@ -7029,7 +7029,7 @@ Add a proactive crash detector to `ClaudeProjectProcess`. After `tuiReady` is tr
 
 ## P300 — Full Cron Expression Syntax for Scheduler
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-07-02
 
 ### Problem
@@ -7054,7 +7054,7 @@ Replace the `at: string` field parser in `src/scheduler.ts` with `cronstrue`/`cr
 
 ## P301 — Session-ID Capture Retry Loop
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 **Created:** 2026-07-02
 
 ### Problem

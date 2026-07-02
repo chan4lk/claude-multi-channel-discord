@@ -301,8 +301,14 @@ export function updateLastSeen(e: McEvent): void {
   ).run(e.instance_id, e.host, e.user, e.ts);
 }
 
-export function getInstances(): InstanceRow[] {
-  return db.prepare("SELECT * FROM instances ORDER BY created_at DESC").all() as InstanceRow[];
+// Never SELECT * here: the api_key column is the bearer token for
+// POST /api/events and must never reach the client. Enumerate columns.
+export function getInstances(): Omit<InstanceRow, "api_key">[] {
+  return db
+    .prepare(
+      "SELECT instance_id, host, user, last_seen, created_at FROM instances ORDER BY created_at DESC"
+    )
+    .all() as Omit<InstanceRow, "api_key">[];
 }
 
 export function getEvents(filters: {
