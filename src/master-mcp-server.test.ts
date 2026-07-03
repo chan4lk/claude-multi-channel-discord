@@ -34,6 +34,20 @@ check('GET /notmcp → 404', badRes.status === 404)
 const wrongShape = await fetch(`http://${host}:${port}/mcp/ab`)
 check('GET /mcp/ab → 404 (chat_id too short)', wrongShape.status === 404)
 
+// No x-mcd-token → 401 even on a well-formed chat path
+const noToken = await fetch(url, { method: 'POST', body: '{}' })
+check('POST /mcp/<id> without token → 401', noToken.status === 401)
+
+// Bad token → 401
+const badToken = await fetch(url, { method: 'POST', body: '{}', headers: { 'x-mcd-token': 'wrong' } })
+check('POST /mcp/<id> with bad token → 401', badToken.status === 401)
+
+// tokenFor mints a stable token per chat
+const t1 = server.tokenFor('123456789012345678')
+const t2 = server.tokenFor('123456789012345678')
+check('tokenFor: stable per chat', t1 === t2 && t1.length >= 32)
+check('tokenFor: distinct across chats', server.tokenFor('999999999999999999') !== t1)
+
 // notifyChat with no live session is a no-op (does not throw)
 let notifyThrew = false
 try {

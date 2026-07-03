@@ -340,9 +340,20 @@ function writeTranscriptEntry(
     method: 'tools/call',
     params: { name: 'reply', arguments: { text: 'hello from test' } },
   })
-  const res = await fetch(mcpUrl, {
+  const noToken = await fetch(mcpUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+    body,
+  })
+  check('7: MCP reply without token → 401', noToken.status === 401)
+
+  const res = await fetch(mcpUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json, text/event-stream',
+      'x-mcd-token': server.tokenFor(chatId),
+    },
     body,
   })
   check('7: MCP reply HTTP 200', res.status === 200)

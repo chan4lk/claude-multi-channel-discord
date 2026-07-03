@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
 
 import { parseFlags, splitArgv } from './argv.ts'
@@ -16,7 +16,7 @@ import {
   type ProgressMode,
   type Project,
 } from './channels-config.ts'
-import { buildGitEnv, gitClone, gitPullFastForward, gitSetRemote, gitStatusSummary } from './git-ops.ts'
+import { assertSafeGitRef, buildGitEnv, gitClone, gitPullFastForward, gitSetRemote, gitStatusSummary } from './git-ops.ts'
 import { getCredential, loadCredentials } from './git-credentials.ts'
 import { accessFile, archiveDir, channelsDir, projectClaudeMd, projectDir, projectGoalFile } from './paths.ts'
 import { IntervalSchema, loadSchedules, newScheduleId, saveSchedules, validateCron, type Schedule } from './schedules-config.ts'
@@ -90,9 +90,17 @@ function appendCommandLog(
   const mcdDir = process.env.MCD_CHANNELS_DIR
   if (!mcdDir) return
   try {
+    // Never persist secrets. `teams-setup <APP_ID> <APP_SECRET>` carries a
+    // client secret in args[1]; redact it (and any obvious token-shaped arg).
+    let safeArgs = args
+    if (verb === 'teams-setup' && args.length >= 2) {
+      safeArgs = args.map((a, i) => (i === 1 ? '<redacted>' : a))
+    }
+    const logPath = join(mcdDir, 'command-log.jsonl')
     const entry =
-      JSON.stringify({ ts: new Date().toISOString(), userId, verb, args, outcomeSnippet: outcomeSnippet.slice(0, 150), error: error ?? null }) + '\n'
-    appendFileSync(join(mcdDir, 'command-log.jsonl'), entry)
+      JSON.stringify({ ts: new Date().toISOString(), userId, verb, args: safeArgs, outcomeSnippet: outcomeSnippet.slice(0, 150), error: error ?? null }) + '\n'
+    appendFileSync(logPath, entry, { mode: 0o600 })
+    try { chmodSync(logPath, 0o600) } catch { /* pre-existing file perms */ }
   } catch {
     // Non-fatal
   }
@@ -770,6 +778,12 @@ async function handleClone(rest: string[], ctx: MasterContext): Promise<string> 
 
   const repo = flags.repo
   if (typeof repo !== 'string') return '`clone` requires `--repo URL`'
+  try {
+    assertSafeGitRef('repo', repo)
+    if (typeof flags.branch === 'string') assertSafeGitRef('branch', flags.branch)
+  } catch (err) {
+    return `❌ ${(err as Error).message}`
+  }
 
   const branch = typeof flags.branch === 'string' ? flags.branch : undefined
   const credsAlias = typeof flags.creds === 'string' ? flags.creds : undefined
@@ -1493,6 +1507,13 @@ function handleTeamsSetup(rest: string[]): string {
 
   const appId = rest[0]!
   const appSecret = rest[1]!
+
+  // These are written as `KEY=value` lines into a shared .env. A value
+  // containing a newline could inject arbitrary env vars (e.g. a second
+  // line overriding DISCORD_BOT_TOKEN); `=`/control chars corrupt parsing.
+  if (/[\n\r\0]/.test(appId) || /[\n\r\0]/.test(appSecret)) {
+    return '❌ APP_ID / APP_SECRET may not contain newlines or control characters'
+  }
 
   const envPath = join(channelsDir(), '.env')
 

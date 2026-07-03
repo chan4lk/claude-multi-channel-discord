@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { getWebhook, insertWebhookDelivery } from '../../../../../src/db'
+import { assertSafeWebhookUrl } from '../../../../../src/security'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,6 +11,11 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   const hook = getWebhook(webhookId)
   if (!hook) return new Response('Not Found', { status: 404 })
+
+  // Re-validate at fetch time: rows may predate the store-time guard, and the
+  // host could re-resolve to a private address (DNS rebinding).
+  const urlError = await assertSafeWebhookUrl(hook.url)
+  if (urlError) return new Response(urlError, { status: 400 })
 
   const ts = new Date().toISOString()
   const payload = hook.use_slack_format

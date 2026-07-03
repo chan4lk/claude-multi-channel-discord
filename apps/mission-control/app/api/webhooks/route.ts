@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { getWebhooks, insertWebhook } from '../../../src/db'
+import { assertSafeWebhookUrl } from '../../../src/security'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,6 +15,8 @@ export async function POST(req: NextRequest): Promise<Response> {
 
   const { name = '', url = '', event_filter = 'all', use_slack_format = false } = body
   if (!url) return new Response('url required', { status: 400 })
+  const urlError = await assertSafeWebhookUrl(url)
+  if (urlError) return new Response(urlError, { status: 400 })
 
   const id = insertWebhook(name, url, event_filter, Boolean(use_slack_format))
   return Response.json({ id }, { status: 201 })

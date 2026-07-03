@@ -1,13 +1,15 @@
-import { execSync } from 'child_process'
+import { spawnSync } from 'child_process'
 import { NextRequest } from 'next/server'
 import { insertBroadcast } from '../../../src/db'
+import { requireSession } from '../../../src/security'
 
 export const dynamic = 'force-dynamic'
 
 function findSession(slug: string): string | null {
   try {
-    const out = execSync('tmux ls -F "#{session_name}"', { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] })
-    const sessions = out.trim().split('\n').filter(Boolean)
+    const res = spawnSync('tmux', ['ls', '-F', '#{session_name}'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] })
+    if (res.status !== 0) return null
+    const sessions = res.stdout.trim().split('\n').filter(Boolean)
     // Match exact `mcd-<slug>` or timestamped `mcd-<slug>-<ts>`
     return sessions.find((s) => s === `mcd-${slug}` || s.startsWith(`mcd-${slug}-`)) ?? null
   } catch {
@@ -31,8 +33,11 @@ function injectSlug(slug: string, rawMessage: string): { slug: string; status: '
 
   try {
     const envelope = buildEnvelope(slug, message)
-    execSync(`tmux send-keys -t ${JSON.stringify(session)} -l ${JSON.stringify(envelope)}`, { stdio: 'ignore' })
-    execSync(`tmux send-keys -t ${JSON.stringify(session)} C-m`, { stdio: 'ignore' })
+    const lit = spawnSync('tmux', ['send-keys', '-t', session, '-l', envelope], { stdio: 'ignore' })
+    const enter = spawnSync('tmux', ['send-keys', '-t', session, 'C-m'], { stdio: 'ignore' })
+    if (lit.status !== 0 || enter.status !== 0) {
+      return { slug, status: 'error', error: 'tmux send-keys failed' }
+    }
     return { slug, status: 'sent' }
   } catch (err) {
     return { slug, status: 'error', error: (err as Error).message }
@@ -40,6 +45,9 @@ function injectSlug(slug: string, rawMessage: string): { slug: string; status: '
 }
 
 export async function POST(req: NextRequest): Promise<Response> {
+  const unauth = await requireSession()
+  if (unauth) return unauth
+
   let slugs: string[]
   let message: string
 

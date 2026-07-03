@@ -1,11 +1,13 @@
 import * as fs from 'fs'
 import * as path from 'path'
+import { requireSession, isSafeSlug } from '@/src/security'
 
 export const dynamic = 'force-dynamic'
 
 function claudeMdPath(slug: string): string | null {
   const mcdDir = process.env.MCD_CHANNELS_DIR
   if (!mcdDir) return null
+  if (!isSafeSlug(slug)) return null
   return path.join(mcdDir, 'projects', slug, 'CLAUDE.md')
 }
 
@@ -13,7 +15,10 @@ export async function GET(
   _req: Request,
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<Response> {
+  const unauth = await requireSession()
+  if (unauth) return unauth
   const { slug } = await params
+  if (!isSafeSlug(slug)) return Response.json({ error: 'Invalid slug' }, { status: 400 })
   const filePath = claudeMdPath(slug)
   if (!filePath) return Response.json({ error: 'MCD_CHANNELS_DIR not set' }, { status: 500 })
   try {
@@ -29,7 +34,10 @@ export async function PUT(
   req: Request,
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<Response> {
+  const unauth = await requireSession()
+  if (unauth) return unauth
   const { slug } = await params
+  if (!isSafeSlug(slug)) return Response.json({ error: 'Invalid slug' }, { status: 400 })
   const filePath = claudeMdPath(slug)
   if (!filePath) return Response.json({ error: 'MCD_CHANNELS_DIR not set' }, { status: 500 })
   try {

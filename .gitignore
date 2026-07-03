@@ -11,3 +11,4 @@ git-credentials.json
 .specclaw/.specclaw/
 .specclaw/learnings.md
 /memory/
+watchdog-kills.jsonl

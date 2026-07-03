@@ -1007,19 +1007,27 @@ export class ClaudeProjectProcess implements ProjectProcess {
   }
 
   private formatPrompt(envelope: InboundEnvelope): string {
+    // Attribute values and body come from the remote sender. Escape them so a
+    // message body/username cannot close the envelope and forge a second
+    // <channel user_id="<operator>"> envelope (prompt-injection breakout).
+    const attr = (v: string) =>
+      v.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/[\r\n]/g, ' ')
+    // Only the envelope tag itself is neutralized in the body so ordinary
+    // markup/code in messages passes through untouched.
+    const body = envelope.content.replace(/<(\/?)channel\b/gi, '&lt;$1channel')
     const meta = [
       `source="discord"`,
       `chat_id="${this.chatId}"`,
-      `message_id="${envelope.messageId}"`,
-      `user="${envelope.username}"`,
-      `user_id="${envelope.userId}"`,
-      `ts="${envelope.ts}"`,
+      `message_id="${attr(envelope.messageId)}"`,
+      `user="${attr(envelope.username)}"`,
+      `user_id="${attr(envelope.userId)}"`,
+      `ts="${attr(envelope.ts)}"`,
     ]
     if (envelope.attachments?.length) {
       meta.push(`attachment_count="${envelope.attachments.length}"`)
-      meta.push(`attachments="${envelope.attachments.join('; ').replace(/"/g, '\\"')}"`)
+      meta.push(`attachments="${attr(envelope.attachments.join('; '))}"`)
     }
-    const channelMsg = `<channel ${meta.join(' ')}>${envelope.content}</channel>`
+    const channelMsg = `<channel ${meta.join(' ')}>${body}</channel>`
 
     // Inject goal context and/or rotated session snapshot on the first message of each session start.
     if (!this.firstMessageSent) {
@@ -1312,6 +1320,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
         mcd: {
           type: 'http',
           url: this.master.urlFor(this.chatId),
+          headers: { 'x-mcd-token': this.master.tokenFor(this.chatId) },
         },
       },
     }

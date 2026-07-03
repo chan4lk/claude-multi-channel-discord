@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
+import { requireSession } from '../../../src/security'
 
 export const dynamic = 'force-dynamic'
 
@@ -114,6 +115,9 @@ export async function GET(req: NextRequest): Promise<Response> {
 }
 
 export async function PUT(req: NextRequest): Promise<Response> {
+  const unauth = await requireSession()
+  if (unauth) return unauth
+
   let body: {
     slug: string
     model?: string | null

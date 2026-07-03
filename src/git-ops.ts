@@ -89,6 +89,26 @@ export function runGit(cwd: string, args: string[], env: NodeJS.ProcessEnv = pro
 }
 
 /**
+ * Reject repo URLs / branch names that would be interpreted as flags or
+ * as git's code-exec remote helper transports. Even in spawnSync array
+ * form (no shell), git itself treats a leading `-` as an option and
+ * `ext::`/`fd::` remotes as "run this command", so a `--repo` of
+ * `ext::sh -c "id"` is a plain RCE. Callers must pass user-supplied
+ * repo/branch through here first.
+ */
+export function assertSafeGitRef(kind: 'repo' | 'branch', value: string): void {
+  if (value.startsWith('-')) {
+    throw new Error(`${kind} "${value}" may not begin with '-' (would be parsed as a git flag)`)
+  }
+  if (/^(ext|fd)::/i.test(value)) {
+    throw new Error(`${kind} "${value}" uses a remote-helper transport that can execute commands; refused`)
+  }
+  if (/[\n\r\0]/.test(value)) {
+    throw new Error(`${kind} contains a control character; refused`)
+  }
+}
+
+/**
  * Clone a repo into target. Target's parent must exist; target itself
  * must NOT — git refuses to clone into a non-empty dir.
  */
@@ -98,15 +118,19 @@ export function gitClone(opts: {
   branch?: string
   env?: NodeJS.ProcessEnv
 }): GitResult {
+  assertSafeGitRef('repo', opts.repo)
+  if (opts.branch) assertSafeGitRef('branch', opts.branch)
   const args = ['clone']
   if (opts.branch) args.push('--branch', opts.branch)
-  args.push(opts.repo, opts.target)
+  // `--` stops git parsing the repo/target as options.
+  args.push('--', opts.repo, opts.target)
   // Run from /tmp; target is absolute and clone creates it.
   return runGit('/tmp', args, opts.env ?? process.env)
 }
 
 export function gitSetRemote(workingDir: string, name: string, url: string, env?: NodeJS.ProcessEnv): GitResult {
-  return runGit(workingDir, ['remote', 'set-url', name, url], env ?? process.env)
+  assertSafeGitRef('repo', url)
+  return runGit(workingDir, ['remote', 'set-url', '--', name, url], env ?? process.env)
 }
 
 export function gitPullFastForward(workingDir: string, branch?: string, env?: NodeJS.ProcessEnv): GitResult {

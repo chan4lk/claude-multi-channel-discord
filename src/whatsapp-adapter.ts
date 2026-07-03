@@ -307,10 +307,22 @@ export class WhatsAppAdapter {
           continue
         }
 
-        // Derive sender E.164 from remoteJid (format: <digits>@s.whatsapp.net).
-        const e164 = remoteJid.split('@')[0]
+        // Derive the *sender's* E.164 for the access check. For a 1:1 chat
+        // that's the remoteJid; for a group (`@g.us`) the remoteJid is the
+        // group id and the real sender is msg.key.participant. Using the
+        // group id would let anyone in an allowlisted group impersonate the
+        // allowed contact, so require and use the participant instead.
+        let senderJid = remoteJid
+        if (remoteJid.endsWith('@g.us')) {
+          if (!msg.key.participant) {
+            console.error(`whatsapp: drop — group ${remoteJid} message with no participant`)
+            continue
+          }
+          senderJid = msg.key.participant
+        }
+        const e164 = senderJid.split('@')[0]
 
-        // Access-control check.
+        // Access-control check (against the actual sender, never a group id).
         if (!this.opts.isAllowed(e164)) {
           console.error(`whatsapp: drop — sender ${e164} not in allowFrom`)
           continue

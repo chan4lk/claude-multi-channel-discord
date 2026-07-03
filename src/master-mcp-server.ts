@@ -13,6 +13,7 @@
  * Cross-platform: localhost HTTP works identically on Linux, macOS,
  * Windows. No Unix sockets, no named pipes.
  */
+import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
@@ -92,6 +93,14 @@ export class MasterMcpServer {
   private readonly teamsAdapter: { handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> } | undefined
   private readonly getPool: (() => ProjectPool | null) | undefined
   private readonly memoryStore: MemoryStore | null
+  /**
+   * Per-chat bearer tokens. The endpoint is localhost-only but any local
+   * process could otherwise POST /mcp/<chat_id> and reply as any channel —
+   * or reach `run_master_command` by guessing the master chat id. A token
+   * is minted per chat at spawn time, embedded in that project's
+   * --mcp-config headers, and required on every request.
+   */
+  private readonly chatTokens = new Map<string, string>()
 
   constructor(opts: MasterMcpServerOptions) {
     this.host = opts.host ?? '127.0.0.1'
@@ -142,6 +151,27 @@ export class MasterMcpServer {
     return `http://${this.host}:${this.boundPort}/mcp/${chatId}`
   }
 
+  /**
+   * Bearer token for this chat, minted on first request. Embed as the
+   * `x-mcd-token` header in the chat's --mcp-config alongside urlFor().
+   */
+  tokenFor(chatId: string): string {
+    let token = this.chatTokens.get(chatId)
+    if (!token) {
+      token = randomBytes(24).toString('hex')
+      this.chatTokens.set(chatId, token)
+    }
+    return token
+  }
+
+  private tokenValid(chatId: string, presented: string | string[] | undefined): boolean {
+    const expected = this.chatTokens.get(chatId)
+    if (!expected || typeof presented !== 'string') return false
+    const a = Buffer.from(presented)
+    const b = Buffer.from(expected)
+    return a.length === b.length && timingSafeEqual(a, b)
+  }
+
   // Stateless transport: no persistent server-side state per chat. The
   // pool used to call isChatReady / waitForChatReady / closeChat /
   // notifyChat against this server; with stateless HTTP MCP all of those
@@ -172,6 +202,13 @@ export class MasterMcpServer {
       return
     }
     const chatId = match[1]!
+
+    if (!this.tokenValid(chatId, req.headers['x-mcd-token'])) {
+      this.log(`rejected /mcp/${chatId}: missing or bad x-mcd-token`)
+      res.writeHead(401, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32000, message: 'unauthorized' } }))
+      return
+    }
 
     if (req.method === 'GET' || req.method === 'DELETE') {
       // Stateless mode rejects these per the SDK example. Claude only POSTs.
