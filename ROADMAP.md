@@ -137,7 +137,7 @@ Remaining:
 
 ## Smaller follow-ups (good first issues)
 
-- Tool tests: HTTP probe → `mcp__mcd__reply` round-trip with a mock OutboundReply sink (no live claude needed).
+- ✅ Tool tests: HTTP probe → `mcp__mcd__reply` round-trip with a mock OutboundReply sink (no live claude needed). Covers `tools/list` visibility gating (master vs project), `reply`/`inject`/`run_master_command` round-trips, and error paths — see `src/master-mcp-server.test.ts`.
 - Replace stale comments referencing the legacy notify path that we no longer use in standalone mode.
 - Coalesce duplicate inbound `messageCreate` events (Discord gateway resume edge case) by `messageId` TTL cache in the pool.
 - Auto-update `defaults.maxConcurrent` when running on small VMs (RAM heuristic).
