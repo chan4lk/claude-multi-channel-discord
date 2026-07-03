@@ -1221,6 +1221,8 @@ async function maybeInitProjectsBackend(): Promise<void> {
     getMasterChatId: () => loadChannelsConfig().master?.chatId,
     teamsAdapter: teamsAdapter ?? undefined,
     getPool: () => projectPool,
+    // Reread channels.json each call — handoff opt-ins can change at runtime.
+    getConfig: () => loadChannelsConfig(),
     memoryStore: memoryStore ?? undefined,
     // Master-only privileged path. Claude in the master channel can
     // execute the same `!project ...` verbs the operator would type, so
