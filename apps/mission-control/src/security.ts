@@ -2,6 +2,7 @@ import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { headers } from "next/headers";
 import { auth } from "./auth";
+import db from "./db";
 
 /**
  * Validates the caller's better-auth session server-side.
@@ -15,6 +16,62 @@ export async function requireSession(): Promise<Response | null> {
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });
   return null;
+}
+
+let rolesEnsured = false;
+
+/**
+ * Adds the `role` column to better-auth's user table if missing (defaults to
+ * 'viewer'), then promotes the earliest-created user to 'admin' when no admin
+ * exists yet — preserving operator access on databases created before the role
+ * model existed. Idempotent; memoized after the first successful pass.
+ */
+function ensureUserRoles(): void {
+  if (rolesEnsured) return;
+  try {
+    db.exec("ALTER TABLE user ADD COLUMN role TEXT NOT NULL DEFAULT 'viewer'");
+  } catch {
+    /* column already present */
+  }
+  try {
+    const hasAdmin = db.prepare("SELECT 1 FROM user WHERE role = 'admin' LIMIT 1").get();
+    if (!hasAdmin) {
+      db.prepare(
+        "UPDATE user SET role = 'admin' WHERE id = (SELECT id FROM user ORDER BY createdAt ASC LIMIT 1)"
+      ).run();
+    }
+    rolesEnsured = true;
+  } catch {
+    /* user table not created yet (fresh install before first sign-up) */
+  }
+}
+
+export type AdminCheck = { deny: Response; userId?: undefined } | { deny: null; userId: string };
+
+/**
+ * Validates the session AND requires the user to hold the 'admin' role.
+ * Every logged-in user is NOT an admin: mutating/privileged routes (user
+ * management, project config, prompt overwrite, fleet inject/broadcast) must
+ * use this instead of requireSession(). Returns { deny } to return directly,
+ * or { deny: null, userId } when the caller is an admin.
+ */
+export async function requireAdmin(): Promise<AdminCheck> {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) return { deny: Response.json({ error: "Unauthorized" }, { status: 401 }) };
+  ensureUserRoles();
+  let role: string | undefined;
+  try {
+    const row = db.prepare("SELECT role FROM user WHERE id = ?").get(session.user.id) as
+      | { role?: string }
+      | undefined;
+    role = row?.role;
+  } catch {
+    role = undefined;
+  }
+  if (role !== "admin") {
+    return { deny: Response.json({ error: "Forbidden: admin role required" }, { status: 403 }) };
+  }
+  return { deny: null, userId: session.user.id };
 }
 
 /** A slug is safe iff it contains only [a-z0-9_-]; blocks path traversal and shell metachars. */
