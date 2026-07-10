@@ -1192,6 +1192,21 @@ export class ClaudeProjectProcess implements ProjectProcess {
     if (!this._alive || !this.tmuxSessionName) return
     const session = this.tmuxSessionName
     this.log(`kill (${reason}) — tmux kill-session -t ${session}`)
+    // Best-effort session-id capture before teardown (FR2).
+    if (reason === 'watchdog' && !this.sessionIdPersisted && this.projectCwd && this.preSpawnSessionIds.size > 0) {
+      const sid = findNewSessionId(this.projectCwd, this.preSpawnSessionIds)
+      if (sid) {
+        const sessionFile = projectSessionFile(this.slug)
+        try {
+          if (!existsSync(sessionFile)) {
+            writeFileSync(sessionFile, sid, { mode: 0o600 })
+            this.log(`session-id captured at kill time: ${sid}`)
+            this.sessionIdPersisted = true
+            this.observedSessionId = sid
+          }
+        } catch { /* non-fatal */ }
+      }
+    }
     const result = spawnSync('tmux', ['kill-session', '-t', session], { stdio: 'ignore' })
     if (result.status !== 0) {
       this.log(`kill-session non-zero (${result.status}) — assuming already dead`)
