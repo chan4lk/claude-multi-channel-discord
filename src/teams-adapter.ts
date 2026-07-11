@@ -166,6 +166,7 @@ export class TeamsAdapter {
       // Only process message activities with text or attachments
       const hasText = !!activity.text?.trim()
       const hasAttachments = (activity.attachments?.length ?? 0) > 0
+      console.log(`[TeamsAdapter] activity type=${activity.type} hasText=${hasText} hasAttachments=${hasAttachments} attachments=${JSON.stringify(activity.attachments ?? [])}`)
       if (activity.type !== 'message' || (!hasText && !hasAttachments)) {
         sendJson(res, 200, {})
         return
