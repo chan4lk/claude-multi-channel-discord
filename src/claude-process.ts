@@ -247,6 +247,8 @@ function readProcStats(pid: number): { pid: number; cpuTimeMs?: number; memoryMb
 export interface ClaudeProjectProcessOptions {
   chatId: string
   slug: string
+  /** Platform this channel runs on. Affects channel tag source attribute. Defaults to 'discord'. */
+  platform?: 'discord' | 'teams' | 'whatsapp'
   /** Pre-started MasterMcpServer; shared across all ClaudeProjectProcesses. */
   master: MasterMcpServer
   /**
@@ -1016,7 +1018,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
     // markup/code in messages passes through untouched.
     const body = envelope.content.replace(/<(\/?)channel\b/gi, '&lt;$1channel')
     const meta = [
-      `source="discord"`,
+      `source="${this.opts.platform ?? 'discord'}"`,
       `chat_id="${this.chatId}"`,
       `message_id="${attr(envelope.messageId)}"`,
       `user="${attr(envelope.username)}"`,

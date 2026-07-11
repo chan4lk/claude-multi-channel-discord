@@ -1223,6 +1223,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
     getMasterChatId: () => loadChannelsConfig().master?.chatId,
     teamsAdapter: teamsAdapter ?? undefined,
     getPool: () => projectPool,
+    getProjectPlatform: (chatId) => loadChannelsConfig().projects[chatId]?.platform,
     memoryStore: memoryStore ?? undefined,
     // Master-only privileged path. Claude in the master channel can
     // execute the same `!project ...` verbs the operator would type, so
@@ -1266,6 +1267,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
       const proc = new ClaudeProjectProcess({
         chatId,
         slug: project.slug,
+        platform: project.platform as 'discord' | 'teams' | 'whatsapp' | undefined,
         master,
         model: project.model ?? config.defaults.model,
         claudeArgs: resolveClaudeArgs(config, project),

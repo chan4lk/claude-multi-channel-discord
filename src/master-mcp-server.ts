@@ -78,6 +78,11 @@ export interface MasterMcpServerOptions {
    * gains four tools: `remember`, `recall`, `forget`, and `memory_stats`.
    */
   memoryStore?: MemoryStore
+  /**
+   * Returns the platform ('discord' | 'teams' | 'whatsapp') for a given
+   * chatId. Used to gate Discord-only tool calls. Defaults to 'discord'.
+   */
+  getProjectPlatform?: (chatId: string) => string | undefined
 }
 
 export class MasterMcpServer {
@@ -93,6 +98,7 @@ export class MasterMcpServer {
   private readonly teamsAdapter: { handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> } | undefined
   private readonly getPool: (() => ProjectPool | null) | undefined
   private readonly memoryStore: MemoryStore | null
+  private readonly getProjectPlatform: ((chatId: string) => string | undefined) | null
   /**
    * Per-chat bearer tokens. The endpoint is localhost-only but any local
    * process could otherwise POST /mcp/<chat_id> and reply as any channel —
@@ -113,6 +119,7 @@ export class MasterMcpServer {
     this.teamsAdapter = opts.teamsAdapter
     this.getPool = opts.getPool
     this.memoryStore = opts.memoryStore ?? null
+    this.getProjectPlatform = opts.getProjectPlatform ?? null
   }
 
   async start(): Promise<{ host: string; port: number }> {
@@ -572,6 +579,13 @@ export class MasterMcpServer {
   private async callDownloadAttachment(defaultChatId: string, args: Record<string, unknown>) {
     if (!this.client) return errorResult('download_attachment requires a discord client')
     const chatId = (args.chat_id as string | undefined) ?? defaultChatId
+    const platform = this.getProjectPlatform?.(chatId) ?? 'discord'
+    if (platform === 'teams') {
+      return okResult(
+        'Teams attachments are downloaded at message ingest. ' +
+        'Their local paths appear in the `attachments` attribute of the `<channel>` tag — use the Read tool on those paths directly.'
+      )
+    }
     const messageId = String(args.message_id ?? '')
     if (!messageId) return errorResult('download_attachment requires message_id')
     const channel = await this.fetchTextChannel(chatId)
