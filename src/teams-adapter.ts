@@ -8,6 +8,9 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createVerify, createPublicKey, type JsonWebKeyInput } from 'node:crypto'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { homedir } from 'node:os'
 import type { InboundEnvelope } from './project-process.ts'
 
 // ---------------------------------------------------------------------------
@@ -33,6 +36,15 @@ interface OpenIdConfig {
   [key: string]: unknown
 }
 
+interface BotFrameworkAttachment {
+  contentUrl?: string
+  contentType?: string
+  name?: string
+  thumbnailUrl?: string
+  contentLength?: number
+  [key: string]: unknown
+}
+
 interface TeamsActivity {
   type: string
   id: string
@@ -40,6 +52,7 @@ interface TeamsActivity {
   serviceUrl: string
   channelId?: string
   text?: string
+  attachments?: BotFrameworkAttachment[]
   conversation?: {
     id: string
     [key: string]: unknown
@@ -61,6 +74,10 @@ export interface TeamsAdapterOpts {
   appSecret: string
   /** Tenant ID for SingleTenant app registrations. Omit for MultiTenant (botframework.com). */
   tenantId?: string
+  /** Directory for downloaded attachments. Defaults to ~/.claude/channels/discord-multi/inbox */
+  inboxDir?: string
+  /** Max attachment size in bytes. Defaults to 25MB. */
+  maxAttachmentBytes?: number
   onInbound: (chatId: string, env: InboundEnvelope, serviceUrl: string) => void
 }
 
@@ -80,6 +97,8 @@ const CACHE_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
 const BOT_FRAMEWORK_SCOPE = 'https://api.botframework.com/.default'
 const CHUNK_SIZE = 4000
 
+const DEFAULT_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+
 export class TeamsAdapter {
   private jwksCache: { keys: JwkKey[]; fetchedAt: number } | null = null
   private openIdCache: { jwksUri: string; fetchedAt: number } | null = null
@@ -87,10 +106,14 @@ export class TeamsAdapter {
   private conversationIdMap = new Map<string, string>() // chatId → conversationId
   private tokenCache: { token: string; expiresAt: number } | null = null
   private readonly tokenEndpoint: string
+  private readonly inboxDir: string
+  private readonly maxAttachmentBytes: number
 
   constructor(private opts: TeamsAdapterOpts) {
     const tenant = opts.tenantId ?? 'botframework.com'
     this.tokenEndpoint = `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`
+    this.inboxDir = opts.inboxDir ?? join(homedir(), '.claude', 'channels', 'discord-multi', 'inbox')
+    this.maxAttachmentBytes = opts.maxAttachmentBytes ?? DEFAULT_MAX_ATTACHMENT_BYTES
   }
 
   // -------------------------------------------------------------------------
@@ -140,8 +163,10 @@ export class TeamsAdapter {
         return
       }
 
-      // Only process message activities with non-empty text
-      if (activity.type !== 'message' || !activity.text?.trim()) {
+      // Only process message activities with text or attachments
+      const hasText = !!activity.text?.trim()
+      const hasAttachments = (activity.attachments?.length ?? 0) > 0
+      if (activity.type !== 'message' || (!hasText && !hasAttachments)) {
         sendJson(res, 200, {})
         return
       }
@@ -161,13 +186,26 @@ export class TeamsAdapter {
         this.conversationIdMap.set(chatId, activity.conversation.id)
       }
 
+      // Download attachments (parallel, non-blocking on individual failure)
+      const attachmentSummaries: string[] = []
+      if (hasAttachments) {
+        const results = await Promise.allSettled(
+          (activity.attachments ?? []).map(att => this.downloadTeamsAttachment(att))
+        )
+        for (const r of results) {
+          if (r.status === 'fulfilled') attachmentSummaries.push(r.value)
+          // rejected: already logged inside downloadTeamsAttachment
+        }
+      }
+
       // Build InboundEnvelope
       const envelope: InboundEnvelope = {
         messageId: activity.id,
         userId: activity.from?.id ?? 'unknown',
         username: activity.from?.name ?? 'unknown',
-        content: activity.text.trim(),
+        content: activity.text?.trim() || '(attachment)',
         ts: activity.timestamp ?? new Date().toISOString(),
+        ...(attachmentSummaries.length > 0 ? { attachments: attachmentSummaries } : {}),
       }
 
       // Deliver to project pool
@@ -261,6 +299,70 @@ export class TeamsAdapter {
     }).catch((err) => {
       console.error('[TeamsAdapter] updateActivity: fetch error:', err)
     })
+  }
+
+  // -------------------------------------------------------------------------
+  // Attachment download
+  // -------------------------------------------------------------------------
+
+  private async downloadTeamsAttachment(att: BotFrameworkAttachment): Promise<string> {
+    const rawName = att.name ?? 'attachment'
+    const safeName = rawName.replace(/[\r\n;]/g, '_')
+    const contentType = att.contentType ?? 'unknown'
+    const maxMB = (this.maxAttachmentBytes / 1024 / 1024).toFixed(0)
+
+    if (!att.contentUrl) {
+      return `${safeName} (no download URL)`
+    }
+
+    // Pre-check size from contentLength if present
+    if (att.contentLength !== undefined && att.contentLength > this.maxAttachmentBytes) {
+      const sizeMB = (att.contentLength / 1024 / 1024).toFixed(1)
+      return `${safeName} (too large: ${sizeMB}MB, max ${maxMB}MB)`
+    }
+
+    let token: string
+    try {
+      token = await this.getAccessToken()
+    } catch (err) {
+      console.error(`[TeamsAdapter] downloadTeamsAttachment: token error for ${safeName}:`, err)
+      return `${safeName} (download failed)`
+    }
+
+    let buf: Buffer
+    try {
+      const resp = await fetch(att.contentUrl, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!resp.ok) {
+        console.error(`[TeamsAdapter] downloadTeamsAttachment: CDN returned ${resp.status} for ${safeName}`)
+        return `${safeName} (download failed)`
+      }
+      buf = Buffer.from(await resp.arrayBuffer())
+    } catch (err) {
+      console.error(`[TeamsAdapter] downloadTeamsAttachment: fetch error for ${safeName}:`, err)
+      return `${safeName} (download failed)`
+    }
+
+    // Post-check size if contentLength was absent
+    if (buf.byteLength > this.maxAttachmentBytes) {
+      const sizeMB = (buf.byteLength / 1024 / 1024).toFixed(1)
+      return `${safeName} (too large: ${sizeMB}MB, max ${maxMB}MB)`
+    }
+
+    // Sanitize filename for filesystem path (path traversal prevention)
+    const fsName = rawName.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/\.\./g, '_')
+    const path = join(this.inboxDir, `${Date.now()}-${fsName}`)
+    try {
+      mkdirSync(this.inboxDir, { recursive: true })
+      writeFileSync(path, buf)
+    } catch (err) {
+      console.error(`[TeamsAdapter] downloadTeamsAttachment: write error for ${safeName}:`, err)
+      return `${safeName} (download failed)`
+    }
+
+    const kb = (buf.byteLength / 1024).toFixed(0)
+    return `${safeName} (${contentType}, ${kb}KB)`
   }
 
   // -------------------------------------------------------------------------
