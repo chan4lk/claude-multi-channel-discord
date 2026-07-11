@@ -264,4 +264,35 @@ describe('TeamsAdapter attachment handling', () => {
     expect(envelopes[0]!.attachments).toBeUndefined()
     expect(fetchCalled).toBe(false)
   })
+
+  // -------------------------------------------------------------------------
+  // Test 6: filename sanitization — \r \n ; stripped from summary strings
+  // -------------------------------------------------------------------------
+  test('filename sanitization: strips \\r, \\n, ; from attachment name in summary', async () => {
+    const fileContent = Buffer.from('data')
+    fetchStub = async () => new Response(fileContent, { status: 200 })
+
+    const activity = {
+      type: 'message',
+      id: 'msg6',
+      serviceUrl: 'https://smba.trafficmanager.net/apis',
+      conversation: { id: 'conv1' },
+      from: { id: 'user1', name: 'Alice' },
+      text: 'file with bad name',
+      attachments: [
+        { contentUrl: 'https://cdn.teams.microsoft.com/f.pdf', contentType: 'application/pdf', name: 'evil\r\n;name.pdf' },
+      ],
+    }
+
+    const req = makeIncomingMessage(activity)
+    const res = new MockServerResponse() as unknown as ServerResponse
+    await adapter.handleRequest(req, res)
+
+    expect(envelopes).toHaveLength(1)
+    const summary = envelopes[0]!.attachments![0]!
+    expect(summary).not.toContain('\r')
+    expect(summary).not.toContain('\n')
+    expect(summary).not.toContain(';')
+    expect(summary).toMatch(/^evil___name\.pdf \(application\/pdf, \d+KB\)$/)
+  })
 })
