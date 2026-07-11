@@ -166,6 +166,7 @@ export class TeamsAdapter {
       // Only process message activities with text or attachments
       const hasText = !!activity.text?.trim()
       const hasAttachments = (activity.attachments?.length ?? 0) > 0
+      console.log(`[TeamsAdapter] activity type=${activity.type} hasText=${hasText} hasAttachments=${hasAttachments} attachments=${JSON.stringify(activity.attachments ?? [])}`)
       if (activity.type !== 'message' || (!hasText && !hasAttachments)) {
         sendJson(res, 200, {})
         return
@@ -311,7 +312,13 @@ export class TeamsAdapter {
     const contentType = att.contentType ?? 'unknown'
     const maxMB = (this.maxAttachmentBytes / 1024 / 1024).toFixed(0)
 
-    if (!att.contentUrl) {
+    // Teams file attachments use a pre-signed downloadUrl in att.content instead of contentUrl
+    const isTeamsFile = att.contentType === 'application/vnd.microsoft.teams.file.download.info'
+    const teamsFileContent = isTeamsFile ? (att['content'] as { downloadUrl?: string } | undefined) : undefined
+    const downloadUrl = teamsFileContent?.downloadUrl ?? att.contentUrl
+
+    if (!downloadUrl) {
+      console.error(`[TeamsAdapter] no download URL for ${safeName} (contentType=${contentType}) content=${JSON.stringify(att['content'])}`)
       return `${safeName} (no download URL)`
     }
 
@@ -321,18 +328,24 @@ export class TeamsAdapter {
       return `${safeName} (too large: ${sizeMB}MB, max ${maxMB}MB)`
     }
 
-    let token: string
-    try {
-      token = await this.getAccessToken()
-    } catch (err) {
-      console.error(`[TeamsAdapter] downloadTeamsAttachment: token error for ${safeName}:`, err)
-      return `${safeName} (download failed)`
+    // Teams file pre-signed URLs include SAS token — no auth header needed.
+    // Bot Framework CDN URLs require the Bot Framework bearer token.
+    const fetchHeaders: Record<string, string> = {}
+    if (!isTeamsFile) {
+      let token: string
+      try {
+        token = await this.getAccessToken()
+      } catch (err) {
+        console.error(`[TeamsAdapter] downloadTeamsAttachment: token error for ${safeName}:`, err)
+        return `${safeName} (download failed)`
+      }
+      fetchHeaders['Authorization'] = `Bearer ${token}`
     }
 
     let buf: Buffer
     try {
-      const resp = await fetch(att.contentUrl, {
-        headers: { Authorization: `Bearer ${token}` },
+      const resp = await fetch(downloadUrl, {
+        headers: fetchHeaders,
       })
       if (!resp.ok) {
         console.error(`[TeamsAdapter] downloadTeamsAttachment: CDN returned ${resp.status} for ${safeName}`)
