@@ -77,7 +77,17 @@ open(f'{d}/color.png', 'wb').write(png(192, 192, (88, 101, 242)))
 open(f'{d}/outline.png', 'wb').write(png(32, 32, (255, 255, 255)))
 PYEOF
 
-zip -j "$OUTPUT_ZIP" "$MANIFEST_DIR/manifest.json" "$MANIFEST_DIR/color.png" "$MANIFEST_DIR/outline.png"
+if command -v zip > /dev/null 2>&1; then
+  zip -j "$OUTPUT_ZIP" "$MANIFEST_DIR/manifest.json" "$MANIFEST_DIR/color.png" "$MANIFEST_DIR/outline.png"
+else
+  python3 - "$MANIFEST_DIR" "$OUTPUT_ZIP" << 'PYEOF'
+import sys, zipfile, os
+d, out = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(out, 'w') as z:
+    for name in ('manifest.json', 'color.png', 'outline.png'):
+        z.write(os.path.join(d, name), name)
+PYEOF
+fi
 
 echo "Manifest ZIP: $OUTPUT_ZIP"
 echo "Upload to Teams Admin Center > Manage apps > Upload an app"
