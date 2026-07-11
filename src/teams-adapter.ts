@@ -104,7 +104,7 @@ export class TeamsAdapter {
   private openIdCache: { jwksUri: string; fetchedAt: number } | null = null
   private serviceUrlMap = new Map<string, string>() // chatId → serviceUrl
   private conversationIdMap = new Map<string, string>() // chatId → conversationId
-  private tokenCache: { token: string; expiresAt: number } | null = null
+  protected tokenCache: { token: string; expiresAt: number } | null = null
   private readonly tokenEndpoint: string
   private readonly inboxDir: string
   private readonly maxAttachmentBytes: number
@@ -411,7 +411,7 @@ export class TeamsAdapter {
   // JWT verification (RS256, inline, no external library)
   // -------------------------------------------------------------------------
 
-  private async verifyJwt(token: string): Promise<boolean> {
+  protected async verifyJwt(token: string): Promise<boolean> {
     const parts = token.split('.')
     if (parts.length !== 3) {
       console.error('[TeamsAdapter] JWT does not have 3 parts')
