@@ -317,6 +317,7 @@ export class TeamsAdapter {
     const downloadUrl = teamsFileContent?.downloadUrl ?? att.contentUrl
 
     if (!downloadUrl) {
+      console.error(`[TeamsAdapter] no download URL for ${safeName} (contentType=${contentType}) content=${JSON.stringify(att['content'])}`)
       return `${safeName} (no download URL)`
     }
 
