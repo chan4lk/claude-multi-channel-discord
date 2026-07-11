@@ -295,4 +295,65 @@ describe('TeamsAdapter attachment handling', () => {
     expect(summary).not.toContain(';')
     expect(summary).toMatch(/^evil___name\.pdf \(application\/pdf, \d+KB\)$/)
   })
+
+  // -------------------------------------------------------------------------
+  // Test 7: Teams file attachment (vnd.microsoft.teams.file.download.info)
+  //         uses content.downloadUrl (pre-signed) — no auth header sent
+  // -------------------------------------------------------------------------
+  test('Teams file attachment: downloads via content.downloadUrl without auth header', async () => {
+    const fileContent = Buffer.from('prd content')
+    let capturedHeaders: Record<string, string> = {}
+
+    fetchStub = async (url, init) => {
+      capturedHeaders = Object.fromEntries(
+        Object.entries((init?.headers ?? {}) as Record<string, string>)
+      )
+      const u = typeof url === 'string' ? url : (url instanceof URL ? url.href : (url as Request).url)
+      if (u.includes('sharepoint.com')) {
+        return new Response(fileContent, {
+          status: 200,
+          headers: { 'content-type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+        })
+      }
+      throw new Error(`unexpected fetch: ${u}`)
+    }
+
+    const activity = {
+      type: 'message',
+      id: 'msg7',
+      serviceUrl: 'https://smba.trafficmanager.net/apis',
+      conversation: { id: 'conv1' },
+      from: { id: 'user1', name: 'Alice' },
+      text: 'Here is the PRD',
+      attachments: [
+        {
+          contentType: 'application/vnd.microsoft.teams.file.download.info',
+          name: 'PRD.docx',
+          content: {
+            downloadUrl: 'https://tenant.sharepoint.com/sites/x/_layouts/15/download.aspx?SAS=abc123',
+            uniqueId: 'file-uuid',
+            fileType: 'docx',
+          },
+        },
+      ],
+    }
+
+    const req = makeIncomingMessage(activity)
+    const res = new MockServerResponse() as unknown as ServerResponse
+    await adapter.handleRequest(req, res)
+
+    expect(envelopes).toHaveLength(1)
+    const env = envelopes[0]!
+    expect(env.content).toBe('Here is the PRD')
+    expect(env.attachments).toHaveLength(1)
+    expect(env.attachments![0]).toMatch(/^PRD\.docx \(application\/vnd\.microsoft\.teams\.file\.download\.info, \d+KB\)$/)
+
+    // Pre-signed URL — must NOT send Authorization header
+    expect(capturedHeaders['Authorization']).toBeUndefined()
+    expect(capturedHeaders['authorization']).toBeUndefined()
+
+    const files = readdirSync(inboxDir)
+    expect(files).toHaveLength(1)
+    expect(files[0]).toMatch(/PRD\.docx$/)
+  })
 })
