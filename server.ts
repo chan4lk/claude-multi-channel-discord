@@ -110,6 +110,8 @@ if (teamsAppId && teamsAppSecret) {
     appId: teamsAppId,
     appSecret: teamsAppSecret,
     ...(teamsTenantId ? { tenantId: teamsTenantId } : {}),
+    inboxDir: join(STATE_DIR, 'inbox'),
+    maxAttachmentBytes: 25 * 1024 * 1024,
     onInbound: (chatId, env, _serviceUrl) => {
       handleTeamsInbound(chatId, env)
     },

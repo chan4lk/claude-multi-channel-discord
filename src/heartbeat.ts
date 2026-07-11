@@ -7,7 +7,7 @@ import { projectDir } from './paths.ts'
 export type ChannelState = {
   slug: string
   state: 'idle' | 'stalled'
-  reason: 'active' | 'no-transcript' | 'question-unanswered' | 'tool-incomplete' | 'ok'
+  reason: 'active' | 'no-transcript' | 'question-unanswered' | 'tool-incomplete' | 'schedule-wakeup-loop' | 'ok'
   snippet: string
   ageMins: number
 }
@@ -145,6 +145,38 @@ export function classifyChannel(slug: string, config: ChannelsConfig): ChannelSt
       stalledReason = 'tool-incomplete'
       snippet = `${name} ${id}`.slice(0, 40)
       break
+    }
+  }
+
+  // Check schedule-wakeup-loop: last 3+ tool_use entries all ScheduleWakeup with no mcp__mcd__reply between them
+  if (stalledReason === null) {
+    const toolNames: string[] = []
+    for (const entry of entries) {
+      const content = getContent(entry)
+      for (const item of content) {
+        if (typeof item !== 'object' || item === null) continue
+        const block = item as Record<string, unknown>
+        if (block.type === 'tool_use' && typeof block.name === 'string') {
+          toolNames.push(block.name)
+        }
+      }
+    }
+    // Walk tool names in reverse, count consecutive ScheduleWakeup with no mcp__mcd__reply between
+    let wakeupCount = 0
+    for (let i = toolNames.length - 1; i >= 0; i--) {
+      const name = toolNames[i]
+      if (name === 'ScheduleWakeup') {
+        wakeupCount++
+      } else if (name === 'mcp__mcd__reply') {
+        break
+      } else {
+        wakeupCount = 0
+        break
+      }
+    }
+    if (wakeupCount >= 3 && ageMins >= 120) {
+      stalledReason = 'schedule-wakeup-loop'
+      snippet = `${wakeupCount} consecutive ScheduleWakeup calls`
     }
   }
 

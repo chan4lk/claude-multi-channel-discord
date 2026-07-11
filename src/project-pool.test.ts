@@ -486,6 +486,177 @@ function envelope(content: string): InboundEnvelope {
   await pool.shutdown()
 }
 
+// --- 15. Kill-loop: 3 null kills → pause + master alert ----------------------
+{
+  const config = makeConfig({ idleEvictMinutes: 60 })
+  let now = 1_000_000
+  const events: PoolEvent[] = []
+  const replies: OutboundReply[] = []
+  const created: MockProjectProcess[] = []
+  const pool = new ProjectPool({
+    factory: ({ chatId, project }) => {
+      const p = new MockProjectProcess({ chatId, slug: project.slug, now: () => now, hangs: true })
+      created.push(p)
+      return p
+    },
+    getConfig: () => config,
+    onReply: (r) => replies.push(r),
+    onEvent: (e) => events.push(e),
+    now: () => now,
+  })
+
+  // Three full stuck-kill cycles with no tool progress.
+  for (let cycle = 0; cycle < 3; cycle++) {
+    await pool.deliver('111111111111111111', { ...envelope('hang'), messageId: `ll-msg-${cycle}` })
+    now += 6 * 60_000 // past stuck threshold
+    pool.evictIdle()
+    await sleep(5)
+  }
+
+  check(
+    '15: kill-loop-paused event fired',
+    events.some((e) => e.kind === 'kill-loop-paused' && e.chatId === '111111111111111111' && e.killCount === 3),
+  )
+  check(
+    '15: master alert sent to master chatId',
+    replies.some((r) => r.kind === 'text' && r.chatId === '999999999999999999' && r.text.toLowerCase().includes('kill-loop')),
+  )
+
+  await pool.shutdown()
+}
+
+// --- 16. Kill-loop: tool call resets counter ----------------------------------
+{
+  const config = makeConfig({ idleEvictMinutes: 60 })
+  let now = 1_000_000
+  const events: PoolEvent[] = []
+  const created: MockProjectProcess[] = []
+  const pool = new ProjectPool({
+    factory: ({ chatId, project }) => {
+      const p = new MockProjectProcess({ chatId, slug: project.slug, now: () => now, hangs: true })
+      created.push(p)
+      return p
+    },
+    getConfig: () => config,
+    onReply: () => {},
+    onEvent: (e) => events.push(e),
+    now: () => now,
+  })
+
+  // Two null kills (counter = 2).
+  for (let cycle = 0; cycle < 2; cycle++) {
+    await pool.deliver('111111111111111111', { ...envelope('hang'), messageId: `ll2-msg-${cycle}` })
+    now += 6 * 60_000
+    pool.evictIdle()
+    await sleep(5)
+  }
+  check('16: not paused after 2 kills', !events.some((e) => e.kind === 'kill-loop-paused'))
+
+  // Spawn again, fire tool progress — resets null-kill state.
+  await pool.deliver('111111111111111111', { ...envelope('hang'), messageId: 'll2-msg-2' })
+  created[created.length - 1]!.fireToolProgress()
+  now += 6 * 60_000
+  pool.evictIdle()
+  await sleep(5)
+
+  // One more kill after a reset — counter should be 1, still no pause.
+  await pool.deliver('111111111111111111', { ...envelope('hang'), messageId: 'll2-msg-3' })
+  now += 6 * 60_000
+  pool.evictIdle()
+  await sleep(5)
+  check('16: counter reset by tool progress — no pause after another kill', !events.some((e) => e.kind === 'kill-loop-paused'))
+
+  await pool.shutdown()
+}
+
+// --- 17. Kill-loop: delivers dropped while paused ----------------------------
+{
+  const config = makeConfig({ idleEvictMinutes: 60 })
+  let now = 1_000_000
+  const replies: OutboundReply[] = []
+  const created: MockProjectProcess[] = []
+  let spawnCount = 0
+  const pool = new ProjectPool({
+    factory: ({ chatId, project }) => {
+      spawnCount++
+      const p = new MockProjectProcess({ chatId, slug: project.slug, now: () => now, hangs: true })
+      created.push(p)
+      return p
+    },
+    getConfig: () => config,
+    onReply: (r) => replies.push(r),
+    now: () => now,
+  })
+
+  // Trigger pause.
+  for (let cycle = 0; cycle < 3; cycle++) {
+    await pool.deliver('111111111111111111', { ...envelope('hang'), messageId: `ll3-msg-${cycle}` })
+    now += 6 * 60_000
+    pool.evictIdle()
+    await sleep(5)
+  }
+  const spawnsBeforePause = spawnCount
+  const repliesBeforePause = replies.length
+
+  // Deliver while paused — must be dropped (no new spawn, no mock reply for that chatId).
+  await pool.deliver('111111111111111111', { ...envelope('should be dropped'), messageId: 'll3-dropped' })
+  await sleep(5)
+  check('17: no new spawn while paused', spawnCount === spawnsBeforePause)
+  check(
+    '17: no reply for chatId while paused',
+    replies.slice(repliesBeforePause).every((r) => r.chatId !== '111111111111111111'),
+  )
+
+  await pool.shutdown()
+}
+
+// --- 18. Kill-loop: killChat clears pause ------------------------------------
+{
+  const config = makeConfig({ idleEvictMinutes: 60 })
+  let now = 1_000_000
+  const events: PoolEvent[] = []
+  const created: MockProjectProcess[] = []
+  const pool = new ProjectPool({
+    factory: ({ chatId, project }) => {
+      const p = new MockProjectProcess({ chatId, slug: project.slug, now: () => now, hangs: true })
+      created.push(p)
+      return p
+    },
+    getConfig: () => config,
+    onReply: () => {},
+    onEvent: (e) => events.push(e),
+    now: () => now,
+  })
+
+  // Trigger pause.
+  for (let cycle = 0; cycle < 3; cycle++) {
+    await pool.deliver('111111111111111111', { ...envelope('hang'), messageId: `ll4-msg-${cycle}` })
+    now += 6 * 60_000
+    pool.evictIdle()
+    await sleep(5)
+  }
+  check('18: kill-loop-paused triggered', events.some((e) => e.kind === 'kill-loop-paused'))
+
+  // killChat('requested') — simulates !project start
+  await pool.killChat('111111111111111111', 'requested')
+  await sleep(5)
+  check(
+    '18: kill-loop-resumed event fired',
+    events.some((e) => e.kind === 'kill-loop-resumed' && e.chatId === '111111111111111111'),
+  )
+
+  // Now deliver should work again.
+  const eventsBeforeResume = events.length
+  await pool.deliver('111111111111111111', { ...envelope('after resume'), messageId: 'll4-after' })
+  await sleep(5)
+  check(
+    '18: spawn event after resume (deliver not dropped)',
+    events.slice(eventsBeforeResume).some((e) => e.kind === 'spawn'),
+  )
+
+  await pool.shutdown()
+}
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)
   process.exit(1)

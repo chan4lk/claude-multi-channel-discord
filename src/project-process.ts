@@ -130,6 +130,7 @@ export class MockProjectProcess implements ProjectProcess {
   private hangs: boolean
   private replyHandlers = new Set<(reply: OutboundReply) => void>()
   private exitHandlers = new Set<(info: { code: number | null; signal: NodeJS.Signals | null }) => void>()
+  private toolProgressHandlers = new Set<(ev: ToolProgressEvent) => void>()
   /** Test hook: track every kill() reason. */
   killReasons: string[] = []
   private turnHistory: number[] = []
@@ -210,8 +211,15 @@ export class MockProjectProcess implements ProjectProcess {
     return () => this.exitHandlers.delete(handler)
   }
 
-  onToolProgress(_handler: (ev: ToolProgressEvent) => void): () => void {
-    return () => {}
+  onToolProgress(handler: (ev: ToolProgressEvent) => void): () => void {
+    this.toolProgressHandlers.add(handler)
+    return () => this.toolProgressHandlers.delete(handler)
+  }
+
+  /** Test-only: simulate a tool-use event to update pool's lastToolProgressMs. */
+  fireToolProgress(toolName = 'Bash'): void {
+    const ev: ToolProgressEvent = { phase: 'start', toolId: 'test-id', toolName, inputSummary: '' }
+    for (const h of this.toolProgressHandlers) h(ev)
   }
 
   onLimitHit(_handler: (ev: LimitHitEvent) => void): () => void {

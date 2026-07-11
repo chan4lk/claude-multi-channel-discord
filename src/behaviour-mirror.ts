@@ -210,10 +210,9 @@ export function buildInjectionMessage(
   let msg: string
   if (contextSummary) {
     msg = `Keep going with: ${contextSummary}.`
-    if (encouragement) msg += ` Stay ${encouragement}.`
+    if (encouragement && contextSummary.length >= 20) msg += ` Stay ${encouragement}.`
   } else {
     msg = `Keep making progress.`
-    if (encouragement) msg += ` Stay ${encouragement}.`
   }
 
   if (msg.length > 500) msg = msg.slice(0, 497) + '...'
