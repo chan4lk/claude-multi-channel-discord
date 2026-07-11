@@ -21,7 +21,7 @@ cat > "$MANIFEST_DIR/manifest.json" << EOF
 {
   "\$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
   "manifestVersion": "1.16",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "id": "$APP_ID",
   "packageName": "com.mcd.teamsbot",
   "developer": {
@@ -41,7 +41,7 @@ cat > "$MANIFEST_DIR/manifest.json" << EOF
     "botId": "$APP_ID",
     "scopes": ["team", "personal", "groupChat"],
     "isNotificationOnly": false,
-    "supportsFiles": false
+    "supportsFiles": true
   }],
   "permissions": ["identity", "messageTeamMembers"],
   "webApplicationInfo": {
