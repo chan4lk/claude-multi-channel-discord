@@ -7098,7 +7098,7 @@ Add opt-in `onlyWhenIdle` (+ `idleGraceMinutes`, default 5) to the schedule sche
 
 ## P303 — SpecClaw Status Visibility in Show + Heartbeat
 
-**Status:** `[ ] pending`
+**Status:** `[x] done` (2026-07-12 — specclaw verify PASS, merged to main at da02407)
 **Created:** 2026-07-12
 **SpecClaw change:** `.specclaw/changes/specclaw-status-visibility/`
 
