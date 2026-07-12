@@ -1491,6 +1491,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
       const slug = cfg.projects[chatId]?.slug ?? chatId
       mcEmit('scheduler_fired', { chatId, slug, jobId, scheduledTime })
     },
+    isBusy: (chatId, graceMs) => projectPool!.isBusy(chatId, graceMs),
   })
   scheduler.start()
 
