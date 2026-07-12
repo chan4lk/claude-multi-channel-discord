@@ -63,6 +63,12 @@ const ScheduleSchema = z.object({
   idleGraceMinutes: z.number().int().positive().optional(),
   /** ISO timestamp of the most recent busy-skip; a later successful fire updates lastRunAt past it. */
   lastSkippedAt: z.string().nullable().optional(),
+  /**
+   * Optional auto-pause pattern. After a fire, if the project's outbound
+   * reply matches this regex (case-insensitive), the scheduler disables
+   * the schedule deterministically — no more post-completion fires.
+   */
+  stopOnReply: z.string().refine((p) => { try { new RegExp(p, 'i'); return true } catch { return false } }, 'stopOnReply must be a valid regex').optional(),
 }).refine(
   (s) => [s.at, s.interval, s.cron].filter((v) => v !== undefined).length === 1,
   { message: 'Exactly one of `at`, `interval`, or `cron` must be set' },

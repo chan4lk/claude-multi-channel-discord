@@ -221,8 +221,8 @@ function helpText(prefix: string): string {
     `${prefix} pull   <chat_id-or-slug>                               — git pull --ff-only`,
     `${prefix} usage                         — resource snapshot of running project subprocesses (alias: ps, top)`,
     `${prefix} stop   <chat_id-or-slug>                               — kill the project's subprocess; lazy-respawns on next message`,
-    `${prefix} schedule add <chat_id-or-slug> --at HH:MM|every 30m|every 2h --prompt "..." [--max-runs N] [--only-when-idle [--idle-grace N]]   — daily/interval job`,
-    `${prefix} schedule add <chat_id-or-slug> --cron "*/15 9-18 * * 1-5" --prompt "..." [--only-when-idle [--idle-grace N]]                     — cron-syntax job`,
+    `${prefix} schedule add <chat_id-or-slug> --at HH:MM|every 30m|every 2h --prompt "..." [--max-runs N] [--only-when-idle [--idle-grace N]] [--stop-on-reply "<regex>"]   — daily/interval job`,
+    `${prefix} schedule add <chat_id-or-slug> --cron "*/15 9-18 * * 1-5" --prompt "..." [--only-when-idle [--idle-grace N]] [--stop-on-reply "<regex>"]                     — cron-syntax job`,
     `${prefix} schedule list [<chat_id-or-slug>]      — show all schedules (or just one project's)`,
     `${prefix} schedule pause/resume/rm <id>          — toggle or delete a schedule`,
     `${prefix} provider <chat_id-or-slug> [--set ALIAS | --clear]    — switch a project to a different provider (or back to Claude subscription)`,
@@ -1144,6 +1144,16 @@ async function scheduleAdd(tail: string[]): Promise<string> {
     ? `\n⏸ idle-gated (grace ${idleGraceMinutes !== undefined ? `${idleGraceMinutes}m` : '5m default'})`
     : ''
 
+  // --stop-on-reply validation (shared for both paths)
+  let stopOnReply: string | undefined
+  if (flags['stop-on-reply'] !== undefined) {
+    const pattern = String(flags['stop-on-reply'])
+    try { new RegExp(pattern, 'i') } catch { return '`--stop-on-reply` must be a valid regex' }
+    stopOnReply = pattern
+  }
+  const stopOnReplyFields = stopOnReply !== undefined ? { stopOnReply } : {}
+  const stopOnReplyConfirmLine = stopOnReply !== undefined ? `\n⏹ stop-on-reply /${stopOnReply}/` : ''
+
   if (typeof cronRaw === 'string') {
     const cronErr = validateCron(cronRaw)
     if (cronErr) return `invalid \`--cron\` expression: ${cronErr}`
@@ -1173,6 +1183,7 @@ async function scheduleAdd(tail: string[]): Promise<string> {
       maxRuns,
       runCount: 0,
       ...idleFields,
+      ...stopOnReplyFields,
     }
     const file = loadSchedules()
     file.schedules.push(sched)
@@ -1183,7 +1194,7 @@ async function scheduleAdd(tail: string[]): Promise<string> {
       `cron: \`${cronRaw}\``,
       `prompt: ${prompt.length > 120 ? prompt.slice(0, 120) + '…' : prompt}`,
       maxRuns ? `max runs: ${maxRuns}` : '_no run cap (use `pause`/`rm` to stop)_',
-    ].join('\n') + idleConfirmLine
+    ].join('\n') + idleConfirmLine + stopOnReplyConfirmLine
   }
 
   if (typeof atRaw !== 'string') return '`schedule add` requires `--at HH:MM|every Xm/Xh` or `--cron "* * * * *"`'
@@ -1224,6 +1235,7 @@ async function scheduleAdd(tail: string[]): Promise<string> {
         maxRuns,
         runCount: 0,
         ...idleFields,
+        ...stopOnReplyFields,
       }
     : {
         id,
@@ -1237,6 +1249,7 @@ async function scheduleAdd(tail: string[]): Promise<string> {
         maxRuns,
         runCount: 0,
         ...idleFields,
+        ...stopOnReplyFields,
       }
   file.schedules.push(sched)
   saveSchedules(file)
@@ -1248,7 +1261,7 @@ async function scheduleAdd(tail: string[]): Promise<string> {
     timeLabel,
     `prompt: ${prompt.length > 120 ? prompt.slice(0, 120) + '…' : prompt}`,
     maxRuns ? `max runs: ${maxRuns}` : '_no run cap (use `pause`/`rm` to stop)_',
-  ].join('\n') + idleConfirmLine
+  ].join('\n') + idleConfirmLine + stopOnReplyConfirmLine
 }
 
 /**
@@ -1341,7 +1354,8 @@ function scheduleList(tail: string[]): string {
     const skippedTag = s.lastSkippedAt && (!s.lastRunAt || s.lastSkippedAt > s.lastRunAt)
       ? '  ⏸ skipped (busy)'
       : ''
-    lines.push(`${id}  ${slug}  ${at}  ${en}    ${runs.padStart(5)}  ${last}${idleTag}${skippedTag}`)
+    const stopOnReplyTag = s.stopOnReply ? `  ⏹ stop-on-reply /${s.stopOnReply}/` : ''
+    lines.push(`${id}  ${slug}  ${at}  ${en}    ${runs.padStart(5)}  ${last}${idleTag}${skippedTag}${stopOnReplyTag}`)
   }
   lines.push('```')
   return lines.join('\n')
