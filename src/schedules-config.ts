@@ -69,6 +69,13 @@ const ScheduleSchema = z.object({
    * the schedule deterministically — no more post-completion fires.
    */
   stopOnReply: z.string().refine((p) => { try { new RegExp(p, 'i'); return true } catch { return false } }, 'stopOnReply must be a valid regex').optional(),
+  /**
+   * ISO timestamp set when the scheduler suspended this schedule
+   * because the target project's specclaw loop halted on a guardrail.
+   * Guards against escalating the same halt twice; `schedule resume`
+   * clears it.
+   */
+  escalatedAt: z.string().nullable().optional(),
 }).refine(
   (s) => [s.at, s.interval, s.cron].filter((v) => v !== undefined).length === 1,
   { message: 'Exactly one of `at`, `interval`, or `cron` must be set' },

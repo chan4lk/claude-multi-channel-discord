@@ -11,6 +11,65 @@ export interface SpecclawStatus {
   pendingProposals?: number
 }
 
+export interface SpecclawHalt {
+  halted: boolean
+  change?: string
+  evidence?: string
+}
+
+/**
+ * Detect a specclaw guardrail halt on disk. Conservative by design:
+ * only explicit failure markers count (failed-task count in the
+ * dashboard, 🔴/❌ phase rows, non-empty Issues section). Anything
+ * unreadable or ambiguous is healthy — a false positive would
+ * silently suspend a working loop, a false negative costs one
+ * redundant fire.
+ */
+export function detectSpecclawHalt(projectCwd: string): SpecclawHalt {
+  const ss = readSpecclawStatus(projectCwd)
+  if (!ss.present || ss.activeChange === undefined) return { halted: false }
+
+  if (ss.failedTasks !== undefined && ss.failedTasks > 0) {
+    return { halted: true, change: ss.activeChange, evidence: `${ss.failedTasks} failed task(s)` }
+  }
+
+  const changePath = join(projectCwd, '.specclaw', 'changes', ss.activeChange, 'status.md')
+  let content: string
+  try {
+    content = readFileSync(changePath, 'utf8')
+  } catch {
+    return { halted: false }
+  }
+  const lines = content.split('\n')
+
+  const progressIdx = lines.findIndex((l) => l.trim() === '## Progress')
+  if (progressIdx !== -1) {
+    for (let i = progressIdx + 1; i < lines.length; i++) {
+      const t = lines[i]!.trim()
+      if (!t) continue
+      if (!t.startsWith('|')) break
+      if (t.includes('🔴') || t.includes('❌')) {
+        const phase = t.split('|').map((c) => c.trim()).find((c) => c.length > 0) ?? 'unknown'
+        return { halted: true, change: ss.activeChange, evidence: `phase ${phase} ${t.includes('🔴') ? '🔴' : '❌'}` }
+      }
+    }
+  }
+
+  const issuesIdx = lines.findIndex((l) => l.trim() === '## Issues')
+  if (issuesIdx !== -1) {
+    for (let i = issuesIdx + 1; i < lines.length; i++) {
+      const t = lines[i]!.trim()
+      if (!t) continue
+      if (t.startsWith('## ')) break
+      const bare = t.replace(/^[-*]\s*/, '').replace(/[_*]/g, '').replace(/\.$/, '').toLowerCase()
+      if (bare === 'none') break
+      return { halted: true, change: ss.activeChange, evidence: `open issue: ${t.slice(0, 80)}` }
+    }
+  }
+
+  return { halted: false }
+}
+
 export function readSpecclawStatus(projectCwd: string): SpecclawStatus {
   const dashboardPath = join(projectCwd, '.specclaw', 'STATUS.md')
   let content: string
