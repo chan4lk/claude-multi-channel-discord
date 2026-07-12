@@ -452,6 +452,21 @@ export class ProjectPool {
     return !!p && p.isAlive()
   }
 
+  /**
+   * Busy probe for idle-gated schedules. True when the chat has a live
+   * process AND positive evidence of activity: an in-flight turn
+   * (pendingDeliverAtMs) or a transcript write within the last graceMs.
+   * Everything unknown fails open to "not busy" — a gated schedule must
+   * never be stranded by missing signals.
+   */
+  isBusy(chatId: string, graceMs: number): boolean {
+    const p = this.processes.get(chatId)
+    if (!p?.isAlive()) return false
+    if (p.pendingDeliverAtMs?.() != null) return true
+    const mtime = p.transcriptMtimeMs?.()
+    return mtime != null && Date.now() - mtime < graceMs
+  }
+
   /** Returns circuit-breaker state for each chat. */
   getCircuitStates(): Map<string, { circuitOpen: boolean; backoffUntil?: number }> {
     const out = new Map<string, { circuitOpen: boolean; backoffUntil?: number }>()

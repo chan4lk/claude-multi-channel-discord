@@ -221,8 +221,8 @@ function helpText(prefix: string): string {
     `${prefix} pull   <chat_id-or-slug>                               — git pull --ff-only`,
     `${prefix} usage                         — resource snapshot of running project subprocesses (alias: ps, top)`,
     `${prefix} stop   <chat_id-or-slug>                               — kill the project's subprocess; lazy-respawns on next message`,
-    `${prefix} schedule add <chat_id-or-slug> --at HH:MM|every 30m|every 2h --prompt "..." [--max-runs N]   — daily/interval job`,
-    `${prefix} schedule add <chat_id-or-slug> --cron "*/15 9-18 * * 1-5" --prompt "..."                     — cron-syntax job`,
+    `${prefix} schedule add <chat_id-or-slug> --at HH:MM|every 30m|every 2h --prompt "..." [--max-runs N] [--only-when-idle [--idle-grace N]]   — daily/interval job`,
+    `${prefix} schedule add <chat_id-or-slug> --cron "*/15 9-18 * * 1-5" --prompt "..." [--only-when-idle [--idle-grace N]]                     — cron-syntax job`,
     `${prefix} schedule list [<chat_id-or-slug>]      — show all schedules (or just one project's)`,
     `${prefix} schedule pause/resume/rm <id>          — toggle or delete a schedule`,
     `${prefix} provider <chat_id-or-slug> [--set ALIAS | --clear]    — switch a project to a different provider (or back to Claude subscription)`,
@@ -1127,6 +1127,23 @@ async function scheduleAdd(tail: string[]): Promise<string> {
   const cronRaw = flags.cron
   const atRaw = flags.at
 
+  // --only-when-idle / --idle-grace validation (shared for both cron and at/interval paths)
+  const onlyWhenIdle = flags['only-when-idle'] === true
+  let idleGraceMinutes: number | undefined
+  if (flags['idle-grace'] !== undefined) {
+    if (!onlyWhenIdle) return '`--idle-grace` requires `--only-when-idle`'
+    const n = Number(flags['idle-grace'])
+    if (!Number.isInteger(n) || n <= 0) return `\`--idle-grace\` must be a positive integer; got "${flags['idle-grace']}"`
+    idleGraceMinutes = n
+  }
+
+  const idleFields = onlyWhenIdle
+    ? { onlyWhenIdle: true as const, ...(idleGraceMinutes !== undefined ? { idleGraceMinutes } : {}) }
+    : {}
+  const idleConfirmLine = onlyWhenIdle
+    ? `\n⏸ idle-gated (grace ${idleGraceMinutes !== undefined ? `${idleGraceMinutes}m` : '5m default'})`
+    : ''
+
   if (typeof cronRaw === 'string') {
     const cronErr = validateCron(cronRaw)
     if (cronErr) return `invalid \`--cron\` expression: ${cronErr}`
@@ -1155,6 +1172,7 @@ async function scheduleAdd(tail: string[]): Promise<string> {
       createdAt: new Date().toISOString(),
       maxRuns,
       runCount: 0,
+      ...idleFields,
     }
     const file = loadSchedules()
     file.schedules.push(sched)
@@ -1165,7 +1183,7 @@ async function scheduleAdd(tail: string[]): Promise<string> {
       `cron: \`${cronRaw}\``,
       `prompt: ${prompt.length > 120 ? prompt.slice(0, 120) + '…' : prompt}`,
       maxRuns ? `max runs: ${maxRuns}` : '_no run cap (use `pause`/`rm` to stop)_',
-    ].join('\n')
+    ].join('\n') + idleConfirmLine
   }
 
   if (typeof atRaw !== 'string') return '`schedule add` requires `--at HH:MM|every Xm/Xh` or `--cron "* * * * *"`'
@@ -1205,6 +1223,7 @@ async function scheduleAdd(tail: string[]): Promise<string> {
         createdAt: new Date().toISOString(),
         maxRuns,
         runCount: 0,
+        ...idleFields,
       }
     : {
         id,
@@ -1217,6 +1236,7 @@ async function scheduleAdd(tail: string[]): Promise<string> {
         createdAt: new Date().toISOString(),
         maxRuns,
         runCount: 0,
+        ...idleFields,
       }
   file.schedules.push(sched)
   saveSchedules(file)
@@ -1228,7 +1248,7 @@ async function scheduleAdd(tail: string[]): Promise<string> {
     timeLabel,
     `prompt: ${prompt.length > 120 ? prompt.slice(0, 120) + '…' : prompt}`,
     maxRuns ? `max runs: ${maxRuns}` : '_no run cap (use `pause`/`rm` to stop)_',
-  ].join('\n')
+  ].join('\n') + idleConfirmLine
 }
 
 /**
@@ -1317,7 +1337,11 @@ function scheduleList(tail: string[]): string {
     const en = s.enabled ? 'yes' : 'no '
     const runs = s.maxRuns ? `${s.runCount}/${s.maxRuns}` : `${s.runCount}`
     const last = s.lastRunAt ?? '(never)'
-    lines.push(`${id}  ${slug}  ${at}  ${en}    ${runs.padStart(5)}  ${last}`)
+    const idleTag = s.onlyWhenIdle ? '  ⏸ idle-gated' : ''
+    const skippedTag = s.lastSkippedAt && (!s.lastRunAt || s.lastSkippedAt > s.lastRunAt)
+      ? '  ⏸ skipped (busy)'
+      : ''
+    lines.push(`${id}  ${slug}  ${at}  ${en}    ${runs.padStart(5)}  ${last}${idleTag}${skippedTag}`)
   }
   lines.push('```')
   return lines.join('\n')
