@@ -31,6 +31,7 @@ import type { ClaudeArgs } from './channels-config.ts'
 import type { MasterMcpServer } from './master-mcp-server.ts'
 import { projectDir, projectGoalFile, projectSessionFile } from './paths.ts'
 import { runDistillation } from './distillation.ts'
+import { buildSpecclawResumeBlock } from './specclaw-status.ts'
 import { parseLimitMessage, type LimitHitEvent } from './limit-offer.ts'
 import { buildGitEnv, type GitResult as _GitResultUnused } from './git-ops.ts'
 import { getCredential, loadCredentials, type Credential } from './git-credentials.ts'
@@ -1393,7 +1394,8 @@ export class ClaudeProjectProcess implements ProjectProcess {
           }
         } catch { /* skip malformed line */ }
       }
-      if (userMsgs.length === 0 && assistantSnippets.length === 0) return
+      const resumeBlock = this.projectCwd ? buildSpecclawResumeBlock(this.projectCwd) : ''
+      if (userMsgs.length === 0 && assistantSnippets.length === 0 && !resumeBlock) return
       const parts = [
         `[auto] Prior session context (rotated at ${Math.round(sizeBytes / 1024)} KB):`,
         '',
@@ -1403,7 +1405,10 @@ export class ClaudeProjectProcess implements ProjectProcess {
         'Last assistant replies:',
         ...assistantSnippets.map(s => `- ${s}`),
       ]
-      const snapshot = parts.join('\n').slice(0, 2000)
+      // Resume block goes after the 2000-char truncation so disk-state
+      // instructions are never cut mid-sentence by a long prose snapshot.
+      let snapshot = parts.join('\n').slice(0, 2000)
+      if (resumeBlock) snapshot += `\n\n${resumeBlock}`
       const snapshotPath = join(projectDir(this.slug), '.session-context.md')
       writeFileSync(snapshotPath, snapshot)
       this.rotatedContextText = snapshot
