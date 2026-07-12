@@ -1,15 +1,24 @@
 # 🦞 SpecClaw Dashboard
 
 **Project:** claude-mcd
-**Last Updated:** 2026-07-02 10:27 UTC
+**Last Updated:** 2026-07-12 07:13 UTC
 
 ## Active Changes
 
-_No active changes._
+
+- ✅ **idle-gated-schedules** — 4/4 tasks (100%) | 0 failed
+- ✅ **mcd-reliability-fixes** — 5/5 tasks (100%) | 0 failed
+- ✅ **specclaw-status-visibility** — 4/4 tasks (100%) | 0 failed
+- ✅ **teams-file-attachments** — 3/3 tasks (100%) | 0 failed
 
 ## Pending Proposals
 
-_None._
+
+- 📋 **loop-halt-escalation** — proposal ready, awaiting planning
+- 📋 **pr-credential-store** — proposal ready, awaiting planning
+- 📋 **progress-mode-phases** — proposal ready, awaiting planning
+- 📋 **rotation-specclaw-resume** — proposal ready, awaiting planning
+- 📋 **schedule-stop-on-reply** — proposal ready, awaiting planning
 
 ## Recently Completed
 
@@ -17,6 +26,6 @@ _None._
 
 ## Stats
 
-- **Total changes:** 0
-- **Active:** 0
+- **Total changes:** 4
+- **Active:** 4
 - **Completed:** 0

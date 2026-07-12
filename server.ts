@@ -1304,6 +1304,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
     },
     getConfig: loadChannelsConfig,
     onReply: (reply) => {
+      if (reply.kind === 'text') scheduler?.noteReply(reply.chatId, reply.text)
       const cfg = loadChannelsConfig()
       const platform = cfg.projects[reply.chatId]?.platform ?? 'discord'
       if (platform === 'teams' && teamsAdapter) {
@@ -1490,6 +1491,18 @@ async function maybeInitProjectsBackend(): Promise<void> {
       const cfg = loadChannelsConfig()
       const slug = cfg.projects[chatId]?.slug ?? chatId
       mcEmit('scheduler_fired', { chatId, slug, jobId, scheduledTime })
+    },
+    isBusy: (chatId, graceMs) => projectPool!.isBusy(chatId, graceMs),
+    onAutoPause: (sched, pattern) => {
+      const cfg = loadChannelsConfig()
+      const slug = cfg.projects[sched.chatId]?.slug ?? sched.chatId
+      const masterChatId = cfg.master?.chatId ?? sched.chatId
+      const notice: OutboundReply = {
+        kind: 'text',
+        chatId: masterChatId,
+        text: `⏸ schedule **${sched.id}** (${slug}) auto-paused — reply matched \`/${pattern}/\``,
+      }
+      routeNotification(cfg, notice, 'schedule-autopaused notify')
     },
   })
   scheduler.start()

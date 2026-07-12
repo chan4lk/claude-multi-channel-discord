@@ -657,6 +657,156 @@ function envelope(content: string): InboundEnvelope {
   await pool.shutdown()
 }
 
+// --- 19. isBusy: no process for chatId → false ----------------------------------
+{
+  const config = makeConfig()
+  const pool = new ProjectPool({
+    factory: ({ chatId, project }) => new MockProjectProcess({ chatId, slug: project.slug }),
+    getConfig: () => config,
+    onReply: () => {},
+  })
+
+  // Never delivered — no process spawned.
+  check('19: isBusy false when no process', pool.isBusy('111111111111111111', 5 * 60_000) === false)
+
+  await pool.shutdown()
+}
+
+// --- 20. isBusy: live process, no pending deliver, stale transcript → false ----
+{
+  const config = makeConfig()
+  let now = 1_000_000
+  const created: MockProjectProcess[] = []
+  const pool = new ProjectPool({
+    factory: ({ chatId, project }) => {
+      const p = new MockProjectProcess({ chatId, slug: project.slug, now: () => now })
+      created.push(p)
+      return p
+    },
+    getConfig: () => config,
+    onReply: () => {},
+    now: () => now,
+  })
+
+  await pool.deliver('111111111111111111', envelope('hello'))
+  await sleep(5) // let reply land (clears pendingDeliverAtMs)
+
+  // Transcript mtime older than grace.
+  const graceMs = 5 * 60_000
+  created[0]!.setTranscriptMtimeMs(now - graceMs - 1_000)
+
+  check('20: isBusy false with stale transcript and no pending deliver', pool.isBusy('111111111111111111', graceMs) === false)
+
+  await pool.shutdown()
+}
+
+// --- 21. isBusy: live process, fresh transcript (mtime within grace) → true ----
+{
+  const config = makeConfig()
+  let now = 1_000_000
+  const created: MockProjectProcess[] = []
+  const pool = new ProjectPool({
+    factory: ({ chatId, project }) => {
+      const p = new MockProjectProcess({ chatId, slug: project.slug, now: () => now, hangs: true })
+      created.push(p)
+      return p
+    },
+    getConfig: () => config,
+    onReply: () => {},
+    now: () => now,
+  })
+
+  await pool.deliver('111111111111111111', envelope('hang'))
+
+  // Transcript written 30 s ago — within grace (5 min).
+  const graceMs = 5 * 60_000
+  created[0]!.setTranscriptMtimeMs(now - 30_000)
+
+  check('21: isBusy true with fresh transcript', pool.isBusy('111111111111111111', graceMs) === true)
+
+  await pool.shutdown()
+}
+
+// --- 22. isBusy: live process, pendingDeliverAtMs returns a number → true ------
+{
+  const config = makeConfig()
+  const created: MockProjectProcess[] = []
+  const pool = new ProjectPool({
+    factory: ({ chatId, project }) => {
+      const p = new MockProjectProcess({ chatId, slug: project.slug, hangs: true })
+      created.push(p)
+      return p
+    },
+    getConfig: () => config,
+    onReply: () => {},
+  })
+
+  await pool.deliver('111111111111111111', envelope('hang'))
+  // hangs=true means pendingDeliverAtMs() is set and never cleared; transcript is null.
+
+  const graceMs = 5 * 60_000
+  check('22: isBusy true when pending deliver in-flight', pool.isBusy('111111111111111111', graceMs) === true)
+
+  await pool.shutdown()
+}
+
+// --- 23. isBusy: boundary — mtime exactly graceMs old → false (strict <) -------
+{
+  const config = makeConfig()
+  let now = 1_000_000
+  const created: MockProjectProcess[] = []
+  const pool = new ProjectPool({
+    factory: ({ chatId, project }) => {
+      const p = new MockProjectProcess({ chatId, slug: project.slug, now: () => now, hangs: true })
+      created.push(p)
+      return p
+    },
+    getConfig: () => config,
+    onReply: () => {},
+    now: () => now,
+  })
+
+  await pool.deliver('111111111111111111', envelope('hang'))
+
+  const graceMs = 5 * 60_000
+  // Mtime is exactly graceMs ago — Date.now() - mtime === graceMs (not strictly <).
+  // isBusy uses strict < so this must return false.
+  // We need real Date.now() to match the mtime calculation inside isBusy.
+  const realNow = Date.now()
+  created[0]!.setTranscriptMtimeMs(realNow - graceMs)
+  // pendingDeliverAtMs is set (hangs=true), so zero it out by patching internal state.
+  // Can't clear it without a test hook, so instead test with a non-hanging process
+  // whose reply has cleared pendingDeliver, then we set the mtime boundary exactly.
+  // Use a fresh pool for the exact-boundary test.
+  await pool.shutdown()
+}
+// Boundary test (fresh pool, no pending deliver):
+{
+  const config = makeConfig()
+  const created: MockProjectProcess[] = []
+  const pool = new ProjectPool({
+    factory: ({ chatId, project }) => {
+      const p = new MockProjectProcess({ chatId, slug: project.slug })
+      created.push(p)
+      return p
+    },
+    getConfig: () => config,
+    onReply: () => {},
+  })
+
+  await pool.deliver('111111111111111111', envelope('hello'))
+  await sleep(5) // let reply land — clears pendingDeliverAtMs
+
+  const graceMs = 5 * 60_000
+  // Set mtime exactly graceMs ago relative to real Date.now().
+  const realNow = Date.now()
+  created[0]!.setTranscriptMtimeMs(realNow - graceMs)
+
+  check('23: isBusy false at exact grace boundary (strict <)', pool.isBusy('111111111111111111', graceMs) === false)
+
+  await pool.shutdown()
+}
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)
   process.exit(1)
