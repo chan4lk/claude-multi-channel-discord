@@ -87,6 +87,12 @@ export interface SchedulerDeps {
    * schedules fire as if idle).
    */
   isBusy?: (chatId: string, graceMs: number) => boolean
+  /**
+   * Notice hook fired when a stopOnReply pattern matches and the
+   * schedule is auto-paused. Used by the server to post a one-line
+   * notice to the master channel. Absent = pause happens silently.
+   */
+  onAutoPause?: (schedule: Schedule, pattern: string) => void
 }
 
 export class Scheduler {
@@ -200,6 +206,47 @@ export class Scheduler {
         saveSchedules(file)
       } catch (err) {
         this.log(`persist failed: ${err}`)
+      }
+    }
+  }
+
+  /**
+   * Feed an outbound reply into the stopOnReply matcher. Called by the
+   * server for every text reply a project emits. For each enabled
+   * schedule on this chat with a stopOnReply pattern and at least one
+   * prior fire, a case-insensitive match disables the schedule and
+   * persists — deterministic auto-pause, no agent cooperation needed.
+   * Cheap when nothing matches; never throws on a bad pattern.
+   */
+  noteReply(chatId: string, text: string): void {
+    let file
+    try {
+      file = loadSchedules()
+    } catch (err) {
+      this.log(`noteReply load failed: ${err}`)
+      return
+    }
+    let dirty = false
+    for (const s of file.schedules) {
+      if (s.chatId !== chatId || !s.enabled || !s.stopOnReply || !s.lastRunAt) continue
+      let re: RegExp
+      try {
+        re = new RegExp(s.stopOnReply, 'i')
+      } catch {
+        this.log(`noteReply: invalid stopOnReply pattern on ${s.id}, skipping`)
+        continue
+      }
+      if (!re.test(text)) continue
+      s.enabled = false
+      dirty = true
+      this.log(`schedule ${s.id} auto-paused — reply matched /${s.stopOnReply}/`)
+      this.deps.onAutoPause?.(s, s.stopOnReply)
+    }
+    if (dirty) {
+      try {
+        saveSchedules(file)
+      } catch (err) {
+        this.log(`noteReply persist failed: ${err}`)
       }
     }
   }
