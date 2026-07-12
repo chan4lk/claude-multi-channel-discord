@@ -7119,7 +7119,7 @@ Extract `readSpecclawStatus(projectCwd)` (extend `src/specclaw-guard.ts` parsing
 
 ## P304 — Schedule Auto-Pause on Reply Pattern (stopOnReply)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done` — verify 🟢 2026-07-12, shipped in PR #301
 **Created:** 2026-07-12
 **SpecClaw change:** `.specclaw/changes/schedule-stop-on-reply/`
 
@@ -7141,7 +7141,7 @@ Optional `stopOnReply` regex per schedule. A reply tap on the outbound `mcp__mcd
 
 ## P305 — Loop Guardrail-Halt Escalation to Master
 
-**Status:** `[ ] pending`
+**Status:** `[x] done` — verified 🟢 2026-07-12, specclaw/loop-halt-escalation
 **Created:** 2026-07-12
 **SpecClaw change:** `.specclaw/changes/loop-halt-escalation/`
 

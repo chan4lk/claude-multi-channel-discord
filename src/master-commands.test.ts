@@ -661,6 +661,51 @@ check('set: heartbeat accepted', setHb.kind === 'reply' && setHb.text.includes('
   }
 }
 
+// --- loop-halt-escalation AC3: schedule resume clears escalatedAt; list shows 🛑 ---
+{
+  const schedFilePath = join(stateDir, 'schedules.json')
+  const { saveSchedules: saveSched, loadSchedules: loadSched } = await import('./schedules-config.ts')
+  const existing = loadSched(schedFilePath).schedules
+  saveSched({
+    version: 1,
+    schedules: [...existing, {
+      id: 's_escalated',
+      chatId: existing[0]?.chatId ?? '111111111111111111',
+      interval: 'every 30m' as const,
+      prompt: 'run loop',
+      type: 'prompt' as const,
+      enabled: false,
+      lastRunAt: null,
+      createdAt: new Date().toISOString(),
+      maxRuns: null,
+      runCount: 3,
+      escalatedAt: '2026-07-12T08:00:00.000Z',
+    }],
+  }, schedFilePath)
+
+  const escList = await handleMasterCommand('!project schedule list master-test', mctx())
+  check(
+    'halt-escalation: list shows 🛑 escalated marker',
+    escList.kind === 'reply' && escList.text.includes('🛑 escalated'),
+    escList.kind === 'reply' ? escList.text : escList.kind,
+  )
+
+  const resume = await handleMasterCommand('!project schedule resume s_escalated', mctx())
+  check(
+    'halt-escalation AC3: resume accepted',
+    resume.kind === 'reply' && resume.text.includes('resumed'),
+    resume.kind === 'reply' ? resume.text : resume.kind,
+  )
+  const after = loadSched(schedFilePath).schedules.find(s => s.id === 's_escalated')
+  check('halt-escalation AC3: resume re-enables', after?.enabled === true)
+  check('halt-escalation AC3: resume clears escalatedAt', after?.escalatedAt === null, `got: ${after?.escalatedAt}`)
+
+  const pause = await handleMasterCommand('!project schedule pause s_escalated', mctx())
+  check('halt-escalation AC3: pause still works', pause.kind === 'reply' && pause.text.includes('paused'))
+  const afterPause = loadSched(schedFilePath).schedules.find(s => s.id === 's_escalated')
+  check('halt-escalation AC3: pause leaves escalatedAt cleared', afterPause?.escalatedAt === null)
+}
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)
   process.exit(1)

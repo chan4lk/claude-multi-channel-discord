@@ -1355,7 +1355,8 @@ function scheduleList(tail: string[]): string {
       ? '  ⏸ skipped (busy)'
       : ''
     const stopOnReplyTag = s.stopOnReply ? `  ⏹ stop-on-reply /${s.stopOnReply}/` : ''
-    lines.push(`${id}  ${slug}  ${at}  ${en}    ${runs.padStart(5)}  ${last}${idleTag}${skippedTag}${stopOnReplyTag}`)
+    const escalatedTag = s.escalatedAt ? '  🛑 escalated' : ''
+    lines.push(`${id}  ${slug}  ${at}  ${en}    ${runs.padStart(5)}  ${last}${idleTag}${skippedTag}${stopOnReplyTag}${escalatedTag}`)
   }
   lines.push('```')
   return lines.join('\n')
@@ -1368,6 +1369,7 @@ function scheduleSetEnabled(tail: string[], enabled: boolean): string {
   const s = file.schedules.find((x) => x.id === id)
   if (!s) return `no schedule with id \`${id}\``
   s.enabled = enabled
+  if (enabled) s.escalatedAt = null
   saveSchedules(file)
   return `✅ schedule **${id}** ${enabled ? 'resumed' : 'paused'}`
 }

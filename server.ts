@@ -49,6 +49,7 @@ import { MasterMcpServer } from './src/master-mcp-server.ts'
 import { ProjectPool } from './src/project-pool.ts'
 import type { OutboundReply, ToolProgressEvent } from './src/project-process.ts'
 import { projectDir, memoryDbFile, channelsDir } from './src/paths.ts'
+import { detectSpecclawHalt } from './src/specclaw-status.ts'
 import { MemoryStore } from './src/memory-store.ts'
 import { backupMemory, type R2Config } from './src/memory-backup.ts'
 import { Scheduler } from './src/scheduler.ts'
@@ -1503,6 +1504,26 @@ async function maybeInitProjectsBackend(): Promise<void> {
         text: `⏸ schedule **${sched.id}** (${slug}) auto-paused — reply matched \`/${pattern}/\``,
       }
       routeNotification(cfg, notice, 'schedule-autopaused notify')
+    },
+    checkHalt: (chatId) => {
+      const slug = loadChannelsConfig().projects[chatId]?.slug
+      if (!slug) return { halted: false }
+      try {
+        return detectSpecclawHalt(projectDir(slug))
+      } catch {
+        return { halted: false }
+      }
+    },
+    onEscalate: (sched, change, evidence) => {
+      const cfg = loadChannelsConfig()
+      const slug = cfg.projects[sched.chatId]?.slug ?? sched.chatId
+      const masterChatId = cfg.master?.chatId ?? sched.chatId
+      const notice: OutboundReply = {
+        kind: 'text',
+        chatId: masterChatId,
+        text: `🛑 **${slug}**: specclaw loop halted on **${change}** — ${evidence}. schedule **${sched.id}** suspended; \`schedule resume ${sched.id}\` after fixing.`,
+      }
+      routeNotification(cfg, notice, 'specclaw-halt escalate')
     },
   })
   scheduler.start()

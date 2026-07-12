@@ -569,6 +569,187 @@ function makeScheduler(opts: {
 }
 
 // ============================================================
+// halt escalation (loop-halt-escalation) — schema round-trip
+// ============================================================
+
+// halt-schema: escalatedAt survives save/load; legacy entry parses without it
+{
+  const dir = mkdtempSync(join(tmpdir(), 'mcd-sched-test-'))
+  const prev = process.env.MCD_CHANNELS_DIR
+  process.env.MCD_CHANNELS_DIR = dir
+  try {
+    const schedPath = join(dir, 'schedules.json')
+    saveSchedules({
+      version: 1,
+      schedules: [{
+        id: 's_esc_roundtrip',
+        chatId: '111111111111111111',
+        interval: 'every 30m',
+        prompt: 'p',
+        type: 'prompt',
+        enabled: false,
+        lastRunAt: null,
+        createdAt: new Date().toISOString(),
+        maxRuns: null,
+        runCount: 0,
+        escalatedAt: '2026-07-12T09:00:00.000Z',
+      }],
+    }, schedPath)
+    const loaded = loadSchedules(schedPath)
+    check('halt-schema: escalatedAt round-trips', loaded.schedules[0]!.escalatedAt === '2026-07-12T09:00:00.000Z')
+
+    const schedPath2 = join(dir, 'schedules2.json')
+    writeFileSync(schedPath2, JSON.stringify({ version: 1, schedules: [makeSchedule()] }))
+    const loaded2 = loadSchedules(schedPath2)
+    check('halt-schema: legacy entry without escalatedAt parses', loaded2.schedules[0]!.escalatedAt === undefined)
+  } finally {
+    process.env.MCD_CHANNELS_DIR = prev
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// ============================================================
+// halt escalation — AC1 blocked → suspend + escalate once; healthy → fire
+// ============================================================
+
+// halt-AC1a: due schedule + halted project → no deliver, enabled false, escalatedAt set, onEscalate once with change+evidence
+{
+  const dir = mkdtempSync(join(tmpdir(), 'mcd-sched-test-'))
+  const prev = process.env.MCD_CHANNELS_DIR
+  process.env.MCD_CHANNELS_DIR = dir
+  try {
+    writeSchedulesFile(dir, [makeSchedule()])
+    const delivered: Array<unknown> = []
+    const escalations: Array<{ id: string; change: string; evidence: string }> = []
+    const scheduler = new Scheduler({
+      deliver: async (chatId, envelope) => { delivered.push({ chatId, envelope }) },
+      log: () => {},
+      checkHalt: () => ({ halted: true, change: 'foo', evidence: 'phase Verify 🔴' }),
+      onEscalate: (s, change, evidence) => { escalations.push({ id: s.id, change, evidence }) },
+    })
+    await scheduler.tick()
+    check('halt-AC1a: no deliver when halted', delivered.length === 0)
+    check('halt-AC1a: onEscalate called once', escalations.length === 1)
+    check('halt-AC1a: escalation names change', escalations[0]?.change === 'foo')
+    check('halt-AC1a: escalation carries evidence', escalations[0]?.evidence === 'phase Verify 🔴')
+    const after = readSchedulesFile(dir)
+    const s = after.schedules[0]!
+    check('halt-AC1a: schedule disabled', s.enabled === false)
+    check('halt-AC1a: escalatedAt persisted', typeof s.escalatedAt === 'string' && s.escalatedAt.length > 0)
+    check('halt-AC1a: lastRunAt still null (never fired)', s.lastRunAt === null)
+
+    // Second tick: schedule now disabled → no second escalation (AC2 via disable path)
+    await scheduler.tick()
+    check('halt-AC1a: second tick → no second escalation', escalations.length === 1)
+    check('halt-AC1a: second tick → still no deliver', delivered.length === 0)
+  } finally {
+    process.env.MCD_CHANNELS_DIR = prev
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// halt-AC1b: healthy project → fires normally, no escalation, escalatedAt untouched
+{
+  const dir = mkdtempSync(join(tmpdir(), 'mcd-sched-test-'))
+  const prev = process.env.MCD_CHANNELS_DIR
+  process.env.MCD_CHANNELS_DIR = dir
+  try {
+    writeSchedulesFile(dir, [makeSchedule()])
+    const delivered: Array<unknown> = []
+    const escalations: Array<unknown> = []
+    const scheduler = new Scheduler({
+      deliver: async (chatId, envelope) => { delivered.push({ chatId, envelope }) },
+      log: () => {},
+      checkHalt: () => ({ halted: false }),
+      onEscalate: (s, c, e) => { escalations.push({ s, c, e }) },
+    })
+    await scheduler.tick()
+    check('halt-AC1b: healthy → deliver called', delivered.length === 1)
+    check('halt-AC1b: healthy → no escalation', escalations.length === 0)
+    const after = readSchedulesFile(dir)
+    check('halt-AC1b: escalatedAt not set', after.schedules[0]!.escalatedAt === undefined || after.schedules[0]!.escalatedAt === null)
+    check('halt-AC1b: still enabled', after.schedules[0]!.enabled === true)
+  } finally {
+    process.env.MCD_CHANNELS_DIR = prev
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// ============================================================
+// halt escalation — AC2 escalatedAt guard: re-enabled without clearing → no second post, no fire
+// ============================================================
+
+{
+  const dir = mkdtempSync(join(tmpdir(), 'mcd-sched-test-'))
+  const prev = process.env.MCD_CHANNELS_DIR
+  process.env.MCD_CHANNELS_DIR = dir
+  try {
+    writeSchedulesFile(dir, [makeSchedule({ enabled: true, escalatedAt: '2026-07-12T08:00:00.000Z' })])
+    const delivered: Array<unknown> = []
+    const escalations: Array<unknown> = []
+    const scheduler = new Scheduler({
+      deliver: async (chatId, envelope) => { delivered.push({ chatId, envelope }) },
+      log: () => {},
+      checkHalt: () => ({ halted: true, change: 'foo', evidence: 'phase Verify 🔴' }),
+      onEscalate: (s, c, e) => { escalations.push({ s, c, e }) },
+    })
+    await scheduler.tick()
+    check('halt-AC2: guard → no second escalation', escalations.length === 0)
+    check('halt-AC2: guard → no fire into halted loop', delivered.length === 0)
+    const after = readSchedulesFile(dir)
+    check('halt-AC2: escalatedAt unchanged', after.schedules[0]!.escalatedAt === '2026-07-12T08:00:00.000Z')
+  } finally {
+    process.env.MCD_CHANNELS_DIR = prev
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// ============================================================
+// halt escalation — fail-open without dep; halt gate precedes idle gate
+// ============================================================
+
+// halt-open: no checkHalt dep → fires exactly as before
+{
+  const dir = mkdtempSync(join(tmpdir(), 'mcd-sched-test-'))
+  const prev = process.env.MCD_CHANNELS_DIR
+  process.env.MCD_CHANNELS_DIR = dir
+  try {
+    writeSchedulesFile(dir, [makeSchedule()])
+    const { scheduler, delivered } = makeScheduler({ dir })
+    await scheduler.tick()
+    check('halt-open: no dep → deliver called', delivered.length === 1)
+  } finally {
+    process.env.MCD_CHANNELS_DIR = prev
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// halt-order: halted + gated-busy schedule → escalation wins, isBusy never consulted
+{
+  const dir = mkdtempSync(join(tmpdir(), 'mcd-sched-test-'))
+  const prev = process.env.MCD_CHANNELS_DIR
+  process.env.MCD_CHANNELS_DIR = dir
+  try {
+    writeSchedulesFile(dir, [makeSchedule({ onlyWhenIdle: true })])
+    let isBusyCalls = 0
+    const escalations: Array<unknown> = []
+    const scheduler = new Scheduler({
+      deliver: async () => {},
+      log: () => {},
+      isBusy: () => { isBusyCalls++; return true },
+      checkHalt: () => ({ halted: true, change: 'foo', evidence: 'open issue: x' }),
+      onEscalate: (s, c, e) => { escalations.push({ s, c, e }) },
+    })
+    await scheduler.tick()
+    check('halt-order: escalation fires', escalations.length === 1)
+    check('halt-order: idle gate not consulted', isBusyCalls === 0)
+  } finally {
+    process.env.MCD_CHANNELS_DIR = prev
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// ============================================================
 // Final result
 // ============================================================
 

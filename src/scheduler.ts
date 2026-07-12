@@ -93,6 +93,18 @@ export interface SchedulerDeps {
    * notice to the master channel. Absent = pause happens silently.
    */
   onAutoPause?: (schedule: Schedule, pattern: string) => void
+  /**
+   * Specclaw halt probe. Returns halted state for the target chat's
+   * project (guardrail halt: verify red, open issues, failed tasks).
+   * Absent = fail-open (schedules fire as before).
+   */
+  checkHalt?: (chatId: string) => { halted: boolean; change?: string; evidence?: string }
+  /**
+   * Escalation hook fired once per halt when a due schedule is
+   * suspended because its target project's specclaw loop halted.
+   * Used by the server to post a 🛑 notice to the master channel.
+   */
+  onEscalate?: (schedule: Schedule, change: string, evidence: string) => void
 }
 
 export class Scheduler {
@@ -167,6 +179,21 @@ export class Scheduler {
         }
       }
       if (!isDue(effectiveSchedule, now)) continue
+
+      if (this.deps.checkHalt) {
+        const halt = this.deps.checkHalt(s.chatId)
+        if (halt.halted) {
+          if (!s.escalatedAt) {
+            s.escalatedAt = now.toISOString()
+            s.enabled = false
+            dirty = true
+            this.log(`schedule ${s.id} suspended — specclaw loop halted on ${halt.change ?? 'unknown'}`)
+            appendScheduleLog(s.chatId, s.at ?? s.interval ?? 'unknown', now.toISOString(), 'skipped', 0, 'specclaw-halted')
+            this.deps.onEscalate?.(s, halt.change ?? 'unknown', halt.evidence ?? 'unknown')
+          }
+          continue
+        }
+      }
 
       if (effectiveSchedule.onlyWhenIdle && this.deps.isBusy) {
         const graceMs = (effectiveSchedule.idleGraceMinutes ?? 5) * 60_000
