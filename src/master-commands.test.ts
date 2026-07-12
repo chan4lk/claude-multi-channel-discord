@@ -487,6 +487,124 @@ check('set: heartbeat accepted', setHb.kind === 'reply' && setHb.text.includes('
   )
 }
 
+// --- AC5/AC6: idle-gated schedules (idle-gated-schedules change) ---
+
+// AC5: schedule add with --only-when-idle --idle-grace 10
+{
+  const idleAdd = await handleMasterCommand(
+    '!project schedule add master-test --at "every 30m" --prompt "idle gated job" --only-when-idle --idle-grace 10',
+    mctx(),
+  )
+  check(
+    'idle-gated schedule add: accepted',
+    idleAdd.kind === 'reply' && idleAdd.text.includes('every 30m'),
+    idleAdd.kind === 'reply' ? idleAdd.text : idleAdd.kind,
+  )
+  check(
+    'idle-gated schedule add: confirmation contains idle-gated',
+    idleAdd.kind === 'reply' && idleAdd.text.includes('idle-gated'),
+    idleAdd.kind === 'reply' ? idleAdd.text : idleAdd.kind,
+  )
+  check(
+    'idle-gated schedule add: confirmation mentions grace 10m',
+    idleAdd.kind === 'reply' && idleAdd.text.includes('10m'),
+    idleAdd.kind === 'reply' ? idleAdd.text : idleAdd.kind,
+  )
+  {
+    const scheds = loadSchedules(join(stateDir, 'schedules.json'))
+    const entry = scheds.schedules.find(s => s.prompt === 'idle gated job')
+    check('idle-gated schedule add: onlyWhenIdle persisted', entry?.onlyWhenIdle === true)
+    check('idle-gated schedule add: idleGraceMinutes persisted', entry?.idleGraceMinutes === 10)
+  }
+
+  // schedule list output should contain idle-gated for this entry
+  const idleList = await handleMasterCommand('!project schedule list master-test', mctx())
+  check(
+    'idle-gated schedule list: shows idle-gated marker',
+    idleList.kind === 'reply' && idleList.text.includes('idle-gated'),
+    idleList.kind === 'reply' ? idleList.text : idleList.kind,
+  )
+}
+
+// AC5: --idle-grace alone (without --only-when-idle) should error
+{
+  const graceAlone = await handleMasterCommand(
+    '!project schedule add master-test --at "every 30m" --prompt "x" --idle-grace 5',
+    mctx(),
+  )
+  check(
+    'idle-gated schedule add: --idle-grace alone returns error',
+    graceAlone.kind === 'reply' && graceAlone.text.includes('requires') && graceAlone.text.includes('only-when-idle'),
+    graceAlone.kind === 'reply' ? graceAlone.text : graceAlone.kind,
+  )
+  // Nothing extra should have been persisted
+  {
+    const scheds = loadSchedules(join(stateDir, 'schedules.json'))
+    const count = scheds.schedules.filter(s => s.prompt === 'x').length
+    check('idle-gated schedule add: --idle-grace alone persists nothing', count === 0)
+  }
+}
+
+// AC6: lastSkippedAt newer than lastRunAt → shows skipped (busy); lastRunAt newer → does not
+{
+  const schedFilePath = join(stateDir, 'schedules.json')
+  const { schedules: existing } = loadSchedules(schedFilePath)
+  const now = new Date()
+  const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000).toISOString()
+  const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString()
+
+  // Entry A: lastSkippedAt is newer than lastRunAt → should show skipped (busy)
+  const entryA = {
+    id: 's_ac6_busy',
+    chatId: '123456789012345678',
+    interval: 'every 30m',
+    prompt: 'ac6-busy-test',
+    type: 'prompt' as const,
+    enabled: true,
+    lastRunAt: twoHoursAgo,
+    lastSkippedAt: oneHourAgo,
+    createdAt: twoHoursAgo,
+    maxRuns: null,
+    runCount: 1,
+    onlyWhenIdle: true,
+  }
+  // Entry B: lastRunAt is newer than lastSkippedAt → should NOT show skipped (busy)
+  const entryB = {
+    id: 's_ac6_fired',
+    chatId: '123456789012345678',
+    interval: 'every 30m',
+    prompt: 'ac6-fired-test',
+    type: 'prompt' as const,
+    enabled: true,
+    lastRunAt: oneHourAgo,
+    lastSkippedAt: twoHoursAgo,
+    createdAt: twoHoursAgo,
+    maxRuns: null,
+    runCount: 2,
+    onlyWhenIdle: true,
+  }
+
+  const { saveSchedules: saveSched, loadSchedules: loadSched } = await import('./schedules-config.ts')
+  saveSched({ version: 1, schedules: [...existing, entryA, entryB] }, schedFilePath)
+
+  const ac6List = await handleMasterCommand('!project schedule list master-test', mctx())
+  check(
+    'AC6: lastSkippedAt newer → row contains skipped (busy)',
+    ac6List.kind === 'reply' && ac6List.text.includes('skipped (busy)'),
+    ac6List.kind === 'reply' ? ac6List.text : ac6List.kind,
+  )
+
+  // Verify entryB row does NOT show skipped (busy) — check by searching for entryB's id
+  // Since both entries are for the same project, we check the text does NOT have two "skipped (busy)" lines
+  // (entryA has it, entryB should not)
+  const skippedCount = (ac6List.kind === 'reply' ? ac6List.text : '').split('skipped (busy)').length - 1
+  check(
+    'AC6: only the busy-skipped entry shows skipped (busy), not the fired entry',
+    skippedCount === 1,
+    `skipped (busy) count: ${skippedCount}`,
+  )
+}
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)
   process.exit(1)
