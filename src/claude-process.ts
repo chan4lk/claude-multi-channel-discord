@@ -34,7 +34,7 @@ import { runDistillation } from './distillation.ts'
 import { buildSpecclawResumeBlock } from './specclaw-status.ts'
 import { parseLimitMessage, type LimitHitEvent } from './limit-offer.ts'
 import { buildGitEnv, type GitResult as _GitResultUnused } from './git-ops.ts'
-import { getCredential, loadCredentials, type Credential } from './git-credentials.ts'
+import { getCredential, loadCredentials, resolvePrApiEnv, type Credential } from './git-credentials.ts'
 import { loadUserEnv, UserEnvError } from './user-env.ts'
 import type {
   InboundEnvelope,
@@ -498,6 +498,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
           // against process.env's value — diff-only.
           if (process.env[k] !== v) addEnv(k, v)
         }
+        for (const [k, v] of Object.entries(resolvePrApiEnv(cred))) addEnv(k, v)
         this.gitCredentialCleanup = built.cleanup
       } catch (err) {
         this.log(`gitCredential resolve failed: ${(err as Error).message}`)
