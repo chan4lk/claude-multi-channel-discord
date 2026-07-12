@@ -8,7 +8,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { splitArgv, parseFlags } from './argv.ts'
-import { handleMasterCommand, type MasterContext, type MasterMutator } from './master-commands.ts'
+import { handleMasterCommand, HEARTBEAT_OK, type MasterContext, type MasterMutator } from './master-commands.ts'
 import { ChannelsConfigSchema, loadConfig, resolveClaudeArgs, saveConfig } from './channels-config.ts'
 import { loadSchedules } from './schedules-config.ts'
 import { classifyChannel } from './heartbeat.ts'
@@ -458,31 +458,33 @@ check('set: heartbeat accepted', setHb.kind === 'reply' && setHb.text.includes('
   )
 }
 
-// AC6a: heartbeat full-scan output contains 🦞 specclaw: block when active change present
+// AC6a: heartbeat with fresh transcript (specclaw-idle needs stale transcript) → quiet output
 {
-  // newproj still has the .specclaw/STATUS.md fixture from AC5a
+  // newproj still has the .specclaw/STATUS.md fixture from AC5a.
+  // The transcript written at the classifyChannel tests above has a fresh mtime,
+  // so specclaw-idle does NOT fire (reason=active). Heartbeat returns "all quiet".
   const hbSpecclaw = await handleMasterCommand('!project heartbeat', mctx())
   check(
-    'AC6a: heartbeat output contains 🦞 specclaw: header',
-    hbSpecclaw.kind === 'reply' && hbSpecclaw.text.includes('🦞 specclaw:'),
+    'AC6a: heartbeat with fresh transcript (no stale items) returns all-quiet line',
+    hbSpecclaw.kind === 'reply' && hbSpecclaw.text.startsWith('✅ all quiet —'),
     hbSpecclaw.kind === 'reply' ? hbSpecclaw.text : hbSpecclaw.kind,
   )
   check(
-    'AC6a: heartbeat output contains slug and active change name',
-    hbSpecclaw.kind === 'reply' && hbSpecclaw.text.includes('• newproj:') && hbSpecclaw.text.includes('foo'),
+    'AC6a: heartbeat all-quiet contains scanned count',
+    hbSpecclaw.kind === 'reply' && hbSpecclaw.text.includes('channel'),
     hbSpecclaw.kind === 'reply' ? hbSpecclaw.text : hbSpecclaw.kind,
   )
 }
 
-// AC6b: no active change → heartbeat output has no 🦞 specclaw: block
+// AC6b: no active change → heartbeat still returns all-quiet (no items of any kind)
 {
   // Remove the .specclaw fixture so no project has an active change
   rmSync(join(stateDir, 'projects', 'newproj', '.specclaw'), { recursive: true, force: true })
 
   const hbNoSpecclaw = await handleMasterCommand('!project heartbeat', mctx())
   check(
-    'AC6b: heartbeat with no active change has no 🦞 specclaw: block',
-    hbNoSpecclaw.kind === 'reply' && !hbNoSpecclaw.text.includes('🦞 specclaw:'),
+    'AC6b: heartbeat with no active change returns all-quiet line',
+    hbNoSpecclaw.kind === 'reply' && hbNoSpecclaw.text.startsWith('✅ all quiet —'),
     hbNoSpecclaw.kind === 'reply' ? hbNoSpecclaw.text : hbNoSpecclaw.kind,
   )
 }
@@ -704,6 +706,121 @@ check('set: heartbeat accepted', setHb.kind === 'reply' && setHb.text.includes('
   check('halt-escalation AC3: pause still works', pause.kind === 'reply' && pause.text.includes('paused'))
   const afterPause = loadSched(schedFilePath).schedules.find(s => s.id === 's_escalated')
   check('halt-escalation AC3: pause leaves escalatedAt cleared', afterPause?.escalatedAt === null)
+}
+
+// --- new heartbeat-attention-report AC5 / AC6 tests -------------------------
+
+// AC5: --quiet with no attention items → exactly HEARTBEAT_OK
+// AC5 (no-quiet): without --quiet → starts "✅ all quiet —" with scanned count
+{
+  // All projects have fresh or no transcripts at this point → no attention items
+  const quietResult = await handleMasterCommand('!project heartbeat --quiet', mctx())
+  check(
+    'AC5: heartbeat --quiet with no items returns exactly HEARTBEAT_OK',
+    quietResult.kind === 'reply' && quietResult.text === HEARTBEAT_OK,
+    quietResult.kind === 'reply' ? JSON.stringify(quietResult.text) : quietResult.kind,
+  )
+
+  const noQuietResult = await handleMasterCommand('!project heartbeat', mctx())
+  check(
+    'AC5: heartbeat without --quiet returns line starting ✅ all quiet —',
+    noQuietResult.kind === 'reply' && noQuietResult.text.startsWith('✅ all quiet —'),
+    noQuietResult.kind === 'reply' ? noQuietResult.text : noQuietResult.kind,
+  )
+  check(
+    'AC5: heartbeat all-quiet contains channels scanned count',
+    noQuietResult.kind === 'reply' && /\d+ channels? scanned/.test(noQuietResult.text),
+    noQuietResult.kind === 'reply' ? noQuietResult.text : noQuietResult.kind,
+  )
+}
+
+// AC6: circuit-open item → 🔴, <#chatId>, slug, ↳ action
+{
+  const circuitChatId = '999888777666555444' // 'support' project
+  const circuitCtx: MasterContext = {
+    ...mctx(),
+    config: loadConfig(),
+    getCircuitStates: () => {
+      const m = new Map<string, { circuitOpen: boolean; backoffUntil?: number }>()
+      m.set(circuitChatId, { circuitOpen: true })
+      return m
+    },
+  }
+  const circuitResult = await handleMasterCommand('!project heartbeat', circuitCtx)
+  check(
+    'AC6: circuit-open item produces 🔴 in output',
+    circuitResult.kind === 'reply' && circuitResult.text.includes('🔴'),
+    circuitResult.kind === 'reply' ? circuitResult.text : circuitResult.kind,
+  )
+  check(
+    'AC6: circuit-open item mentions <#chatId>',
+    circuitResult.kind === 'reply' && circuitResult.text.includes(`<#${circuitChatId}>`),
+    circuitResult.kind === 'reply' ? circuitResult.text : circuitResult.kind,
+  )
+  check(
+    'AC6: circuit-open item mentions slug',
+    circuitResult.kind === 'reply' && circuitResult.text.includes('support'),
+    circuitResult.kind === 'reply' ? circuitResult.text : circuitResult.kind,
+  )
+  check(
+    'AC6: circuit-open item has ↳ action line',
+    circuitResult.kind === 'reply' && circuitResult.text.includes('↳'),
+    circuitResult.kind === 'reply' ? circuitResult.text : circuitResult.kind,
+  )
+}
+
+// AC6 (15-cap): 17 circuit-open projects → output contains "(+2 more)" and only 15 item lines
+{
+  // Build a config with 17 fake projects, all circuit-open
+  const bigProjects: Record<string, { slug: string }> = {}
+  const bigCircuitMap = new Map<string, { circuitOpen: boolean }>()
+  for (let i = 1; i <= 17; i++) {
+    const chatId = `${String(i).padStart(18, '0')}`
+    const slug = `proj${i}`
+    bigProjects[chatId] = { slug }
+    bigCircuitMap.set(chatId, { circuitOpen: true })
+    // Create minimal project dir so scanOne doesn't throw
+    mkdirSync(join(stateDir, 'projects', slug), { recursive: true })
+  }
+  const bigConfig = ChannelsConfigSchema.parse({
+    master: { chatId: '000000000000000001' },
+    projects: bigProjects,
+  })
+  saveConfig(bigConfig)
+
+  const bigCtx: MasterContext = {
+    chatId: '000000000000000001',
+    userId: '797184740293476362',
+    config: bigConfig,
+    authorizedUsers: ['797184740293476362'],
+    getCircuitStates: () => bigCircuitMap,
+  }
+  const bigResult = await handleMasterCommand('!project heartbeat', bigCtx)
+  check(
+    'AC6 15-cap: output contains (+2 more)',
+    bigResult.kind === 'reply' && bigResult.text.includes('(+2 more)'),
+    bigResult.kind === 'reply' ? bigResult.text : bigResult.kind,
+  )
+  // Count 🔴 lines — should be exactly 15
+  const redLines = (bigResult.kind === 'reply' ? bigResult.text : '').split('\n').filter(l => l.startsWith('🔴'))
+  check(
+    'AC6 15-cap: exactly 15 🔴 item lines shown',
+    redLines.length === 15,
+    `got ${redLines.length}`,
+  )
+
+  // Restore the original config for subsequent tests
+  saveConfig(config)
+}
+
+// help text contains --quiet
+{
+  const helpResult = await handleMasterCommand('!project help', mctx())
+  check(
+    'help text contains --quiet for heartbeat',
+    helpResult.kind === 'reply' && helpResult.text.includes('--quiet'),
+    helpResult.kind === 'reply' ? helpResult.text : helpResult.kind,
+  )
 }
 
 if (failed > 0) {
