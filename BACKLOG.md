@@ -7184,7 +7184,7 @@ At rotation, if `readSpecclawStatus()` finds an active change, append a determin
 
 ## P307 — Per-Project PR Credential Store
 
-**Status:** `[ ] pending`
+**Status:** `[x] done` — verified 🟢 2026-07-12, specclaw/pr-credential-store
 **Created:** 2026-07-12
 **SpecClaw change:** `.specclaw/changes/pr-credential-store/`
 
