@@ -70,6 +70,34 @@ export function detectSpecclawHalt(projectCwd: string): SpecclawHalt {
   return { halted: false }
 }
 
+/**
+ * Build the SPECCLAW RESUME block appended to a rotation context brief.
+ * Disk state under .specclaw/ is authoritative after rotation — the block
+ * steers a fresh session to read it instead of re-planning from lossy prose.
+ * Returns '' when the project has no .specclaw/, so callers can append
+ * unconditionally-when-non-empty and keep non-specclaw briefs byte-identical.
+ */
+export function buildSpecclawResumeBlock(projectCwd: string): string {
+  const ss = readSpecclawStatus(projectCwd)
+  if (!ss.present) return ''
+
+  if (ss.activeChange === undefined) {
+    return 'SPECCLAW: no active change. Check BACKLOG.md and .specclaw/STATUS.md for pending work before starting anything new.'
+  }
+
+  const phase = ss.phase ?? 'unknown phase'
+  const counts = ss.tasksDone !== undefined && ss.tasksTotal !== undefined
+    ? `, ${ss.tasksDone}/${ss.tasksTotal} tasks done`
+    : ''
+  return [
+    'SPECCLAW RESUME: This project uses specclaw. Authoritative state is on disk, not in this brief.',
+    `Active change: ${ss.activeChange} (${phase}${counts}).`,
+    `Before doing anything else: read .specclaw/changes/${ss.activeChange}/status.md and tasks.md,`,
+    'then continue from the first non-completed task via /specclaw:build.',
+    'Do not re-run /specclaw:propose or /specclaw:plan for this change.',
+  ].join('\n')
+}
+
 export function readSpecclawStatus(projectCwd: string): SpecclawStatus {
   const dashboardPath = join(projectCwd, '.specclaw', 'STATUS.md')
   let content: string
