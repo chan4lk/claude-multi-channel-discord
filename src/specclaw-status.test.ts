@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
-import { detectSpecclawHalt, readSpecclawStatus } from './specclaw-status.ts'
+import { buildSpecclawResumeBlock, detectSpecclawHalt, readSpecclawStatus } from './specclaw-status.ts'
 
 let failed = 0
 function check(label: string, cond: boolean, detail?: string) {
@@ -366,6 +366,75 @@ function writeHaltFixture(dir: string, opts: {
     check('halt-missing: no active change → false', detectSpecclawHalt(dir).halted === false)
     writeHaltFixture(dir, { activeLine: '- 🔨 **foo** — 3/8 tasks (38%)' })
     check('halt-missing: change status.md absent → false', detectSpecclawHalt(dir).halted === false)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// ── resume block: AC1 active change → full block ─────────────────────────────
+
+{
+  const dir = makeTmpDir()
+  try {
+    mkdirSync(join(dir, '.specclaw', 'changes', 'my-feature'), { recursive: true })
+    writeFile(
+      join(dir, '.specclaw', 'STATUS.md'),
+      buildDashboard({ activeChanges: ['- 🔨 **my-feature** — 3/8 tasks (38%)'] }),
+    )
+    writeFile(
+      join(dir, '.specclaw', 'changes', 'my-feature', 'status.md'),
+      buildChangeStatus('my-feature', { Spec: '✅ Done', Build: '🔨 In Progress' }),
+    )
+    const block = buildSpecclawResumeBlock(dir)
+    check('resume AC1: block starts with SPECCLAW RESUME', block.startsWith('SPECCLAW RESUME:'))
+    check('resume AC1: names change + phase + counts', block.includes('Active change: my-feature (build, 3/8 tasks done).'), block)
+    check('resume AC1: points at change status.md + tasks.md', block.includes('.specclaw/changes/my-feature/status.md and tasks.md,'))
+    check('resume AC1: instructs /specclaw:build', block.includes('via /specclaw:build.'))
+    check('resume AC1: forbids re-propose/re-plan', block.includes('Do not re-run /specclaw:propose or /specclaw:plan'))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// ── resume block: active change, change status.md missing → fallback phase ───
+
+{
+  const dir = makeTmpDir()
+  try {
+    mkdirSync(join(dir, '.specclaw'), { recursive: true })
+    writeFile(
+      join(dir, '.specclaw', 'STATUS.md'),
+      buildDashboard({ activeChanges: ['- 🔨 **orphan** — 1/2 tasks (50%)'] }),
+    )
+    const block = buildSpecclawResumeBlock(dir)
+    check('resume fallback: unknown phase when change status.md absent', block.includes('Active change: orphan (unknown phase, 1/2 tasks done).'), block)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// ── resume block: AC2 no active change → one-liner ───────────────────────────
+
+{
+  const dir = makeTmpDir()
+  try {
+    mkdirSync(join(dir, '.specclaw'), { recursive: true })
+    writeFile(join(dir, '.specclaw', 'STATUS.md'), buildDashboard({}))
+    const block = buildSpecclawResumeBlock(dir)
+    check('resume AC2: one-liner (no RESUME header)', block.startsWith('SPECCLAW: no active change.'), block)
+    check('resume AC2: points at BACKLOG + STATUS', block.includes('BACKLOG.md') && block.includes('.specclaw/STATUS.md'))
+    check('resume AC2: single line', !block.includes('\n'))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// ── resume block: AC3 no .specclaw → empty string ────────────────────────────
+
+{
+  const dir = makeTmpDir()
+  try {
+    check('resume AC3: no .specclaw → empty string', buildSpecclawResumeBlock(dir) === '')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
