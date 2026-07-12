@@ -30,6 +30,14 @@ export type ToolProgressEvent =
   | { phase: 'start'; toolId: string; toolName: string; inputSummary: string }
   | { phase: 'done'; toolId: string; toolName: string; durationMs: number; isError: boolean }
 
+/** progressMode "phases": specclaw lifecycle transitions observed on disk. */
+export interface SpecclawProgressEvent {
+  /** Active specclaw change the lines belong to. */
+  change: string
+  /** Timeline lines (no timestamps — the dispatcher stamps observation time). */
+  lines: string[]
+}
+
 import type { LimitHitEvent } from './limit-offer.ts'
 export type { LimitHitEvent } from './limit-offer.ts'
 
@@ -105,6 +113,8 @@ export interface ProjectProcess {
   /** Subscribe to tool-call progress events (optional — not all backends emit these). */
   onToolProgress?(handler: (ev: ToolProgressEvent) => void): () => void
   onLimitHit?(handler: (ev: LimitHitEvent) => void): () => void
+  /** Subscribe to specclaw phase transitions (optional — progressMode "phases" only). */
+  onSpecclawProgress?(handler: (ev: SpecclawProgressEvent) => void): () => void
   /**
    * Tear down the process. Idempotent. Returns once exit handlers have fired.
    */
