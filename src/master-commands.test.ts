@@ -3,7 +3,7 @@
  * Exits 0 on pass, 1 on first failure. Keeps phase 2 tight without pulling
  * in a test framework.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -402,6 +402,89 @@ check('set: heartbeat accepted', setHb.kind === 'reply' && setHb.text.includes('
   const result3 = classifyChannel('newproj', loadConfig())
   check('heartbeat: fresh transcript classified as idle/active', result3.state === 'idle')
   check('heartbeat: reason is active', result3.reason === 'active')
+}
+
+// --- AC5/AC6: specclaw status rendering in show + heartbeat --------------------
+
+// We use the 'newproj' project (chat_id 444444444444444444) which was re-created
+// above via mctx(). Its projectDir is stateDir/projects/newproj.
+
+// AC5a: project with .specclaw/STATUS.md having an active 🔨 change + 1 pending proposal
+{
+  const specclawDir = join(stateDir, 'projects', 'newproj', '.specclaw')
+  mkdirSync(specclawDir, { recursive: true })
+  const dashboard = [
+    '# 🦞 SpecClaw Dashboard',
+    '',
+    '## Active Changes',
+    '',
+    '- 🔨 **foo** — 3/8 tasks (38%) | 1 failed',
+    '',
+    '## Pending Proposals',
+    '',
+    '- 📋 **bar-proposal** — awaiting planning',
+    '',
+    '## Completed Changes',
+    '',
+    '_None_',
+  ].join('\n')
+  writeFileSync(join(specclawDir, 'STATUS.md'), dashboard, 'utf8')
+
+  const showSpecclaw = await handleMasterCommand('!project show newproj', mctx())
+  check(
+    'AC5a: show output contains specclaw active change name',
+    showSpecclaw.kind === 'reply' && showSpecclaw.text.includes('specclaw: 🔨 foo'),
+    showSpecclaw.kind === 'reply' ? showSpecclaw.text : showSpecclaw.kind,
+  )
+  check(
+    'AC5a: show output contains task counts',
+    showSpecclaw.kind === 'reply' && showSpecclaw.text.includes('3/8 tasks'),
+    showSpecclaw.kind === 'reply' ? showSpecclaw.text : showSpecclaw.kind,
+  )
+  check(
+    'AC5a: show output contains pending proposals count',
+    showSpecclaw.kind === 'reply' && showSpecclaw.text.includes('1 proposals pending'),
+    showSpecclaw.kind === 'reply' ? showSpecclaw.text : showSpecclaw.kind,
+  )
+}
+
+// AC5b: project without .specclaw → show output contains no 'specclaw:' line
+{
+  const showNoSpecclaw = await handleMasterCommand('!project show support', mctx())
+  check(
+    'AC5b: show with no .specclaw contains no specclaw: line',
+    showNoSpecclaw.kind === 'reply' && !showNoSpecclaw.text.includes('specclaw:'),
+    showNoSpecclaw.kind === 'reply' ? showNoSpecclaw.text : showNoSpecclaw.kind,
+  )
+}
+
+// AC6a: heartbeat full-scan output contains 🦞 specclaw: block when active change present
+{
+  // newproj still has the .specclaw/STATUS.md fixture from AC5a
+  const hbSpecclaw = await handleMasterCommand('!project heartbeat', mctx())
+  check(
+    'AC6a: heartbeat output contains 🦞 specclaw: header',
+    hbSpecclaw.kind === 'reply' && hbSpecclaw.text.includes('🦞 specclaw:'),
+    hbSpecclaw.kind === 'reply' ? hbSpecclaw.text : hbSpecclaw.kind,
+  )
+  check(
+    'AC6a: heartbeat output contains slug and active change name',
+    hbSpecclaw.kind === 'reply' && hbSpecclaw.text.includes('• newproj:') && hbSpecclaw.text.includes('foo'),
+    hbSpecclaw.kind === 'reply' ? hbSpecclaw.text : hbSpecclaw.kind,
+  )
+}
+
+// AC6b: no active change → heartbeat output has no 🦞 specclaw: block
+{
+  // Remove the .specclaw fixture so no project has an active change
+  rmSync(join(stateDir, 'projects', 'newproj', '.specclaw'), { recursive: true, force: true })
+
+  const hbNoSpecclaw = await handleMasterCommand('!project heartbeat', mctx())
+  check(
+    'AC6b: heartbeat with no active change has no 🦞 specclaw: block',
+    hbNoSpecclaw.kind === 'reply' && !hbNoSpecclaw.text.includes('🦞 specclaw:'),
+    hbNoSpecclaw.kind === 'reply' ? hbNoSpecclaw.text : hbNoSpecclaw.kind,
+  )
 }
 
 if (failed > 0) {

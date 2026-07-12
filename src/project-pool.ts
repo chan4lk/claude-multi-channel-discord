@@ -644,7 +644,8 @@ export class ProjectPool {
       try { fs.writeFileSync(sentinel, new Date().toISOString(), 'utf-8') } catch { /* non-critical */ }
     }
     this.fireEvent({ kind: 'kill-loop-paused', chatId, slug, killCount })
-    const masterChatId = this.opts.getConfig().master.chatId
+    const masterChatId = this.opts.getConfig().master?.chatId
+    if (!masterChatId) return
     this.opts.onReply({
       kind: 'text',
       chatId: masterChatId,

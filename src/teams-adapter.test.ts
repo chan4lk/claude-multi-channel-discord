@@ -10,8 +10,8 @@ import type { InboundEnvelope } from './project-process.ts'
 // Stub global fetch before importing TeamsAdapter
 // ---------------------------------------------------------------------------
 
-let fetchStub: typeof globalThis.fetch = globalThis.fetch
-globalThis.fetch = (url, init) => fetchStub(url, init)
+let fetchStub: (url: string | URL | Request, init?: RequestInit) => Promise<Response> = globalThis.fetch
+globalThis.fetch = ((url, init) => fetchStub(url, init)) as typeof fetch
 
 const { TeamsAdapter } = await import('./teams-adapter.ts')
 
