@@ -32,11 +32,11 @@ function resolveInjectVars(template: string, slug: string): string {
     // turnsToday and contextPct require fleet data — left as-is per spec
 }
 
-function appendScheduleLog(chatId: string, scheduledAt: string, firedAt: string, status: 'ok' | 'stalled' | 'skipped', durationMs: number): void {
+function appendScheduleLog(chatId: string, scheduledAt: string, firedAt: string, status: 'ok' | 'stalled' | 'skipped', durationMs: number, reason?: string): void {
   const mcdDir = process.env.MCD_CHANNELS_DIR
   if (!mcdDir) return
   try {
-    const entry = JSON.stringify({ chatId, scheduledAt, firedAt, status, durationMs }) + '\n'
+    const entry = JSON.stringify({ chatId, scheduledAt, firedAt, status, durationMs, ...(reason ? { reason } : {}) }) + '\n'
     fs.appendFileSync(path.join(mcdDir, 'schedule-log.jsonl'), entry)
   } catch {
     // Non-fatal — don't break scheduler on log failure
@@ -80,6 +80,13 @@ export interface SchedulerDeps {
   onFire?: (chatId: string, jobId: string, scheduledTime: string) => void
   /** Resolve chatId → slug (for inject variable substitution). */
   slugForChatId?: (chatId: string) => string | undefined
+  /**
+   * Busy probe for idle-gated schedules. Returns true when the target
+   * project has a live process doing work (in-flight turn or fresh
+   * transcript write within graceMs). Absent = fail-open (gated
+   * schedules fire as if idle).
+   */
+  isBusy?: (chatId: string, graceMs: number) => boolean
 }
 
 export class Scheduler {
@@ -154,6 +161,17 @@ export class Scheduler {
         }
       }
       if (!isDue(effectiveSchedule, now)) continue
+
+      if (effectiveSchedule.onlyWhenIdle && this.deps.isBusy) {
+        const graceMs = (effectiveSchedule.idleGraceMinutes ?? 5) * 60_000
+        if (this.deps.isBusy(s.chatId, graceMs)) {
+          this.log(`skipping schedule ${s.id} → chat ${s.chatId} (busy)`)
+          appendScheduleLog(s.chatId, s.at ?? s.interval ?? 'unknown', now.toISOString(), 'skipped', 0, 'busy')
+          s.lastSkippedAt = now.toISOString()
+          dirty = true
+          continue
+        }
+      }
 
       this.log(`firing schedule ${s.id} → chat ${s.chatId}`)
       const fireStart = Date.now()
