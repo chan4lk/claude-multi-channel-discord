@@ -20,7 +20,7 @@ import { assertSafeGitRef, buildGitEnv, gitClone, gitPullFastForward, gitSetRemo
 import { describePrAuth, getCredential, loadCredentials, saveCredentials, type PrApi } from './git-credentials.ts'
 import { accessFile, archiveDir, channelsDir, projectClaudeMd, projectDir, projectGoalFile } from './paths.ts'
 import { IntervalSchema, loadSchedules, newScheduleId, saveSchedules, validateCron, type Schedule } from './schedules-config.ts'
-import { scanChannels, classifyChannel } from './heartbeat.ts'
+import { buildAttentionReport } from './heartbeat.ts'
 import { readSpecclawStatus } from './specclaw-status.ts'
 
 export type MasterCommandResult =
@@ -41,6 +41,7 @@ export interface MasterContext {
    */
   mutator?: MasterMutator
   memoryStore?: MemoryStore
+  getCircuitStates?: () => Map<string, { circuitOpen: boolean; backoffUntil?: number }>
 }
 
 export interface MasterMutator {
@@ -234,6 +235,7 @@ function helpText(prefix: string): string {
     `${prefix} memory stats                     — show memory counts by type and channel`,
     `${prefix} memory backup                    — trigger immediate R2 backup`,
     `${prefix} memory clear [--slug S] [--type T] --yes — delete matching memories`,
+    `${prefix} heartbeat [--channel <slug>] [--quiet]        — attention report (quiet: HEARTBEAT_OK sentinel when healthy)`,
     `${prefix} rm     <chat_id-or-slug> --yes                         — archive + remove`,
     `${prefix} help                          — this message`,
     '```',
@@ -1744,86 +1746,59 @@ async function handleMemory(rest: string[], ctx: MasterContext): Promise<string>
   return `unknown memory subverb \`${sub}\`. valid: stats, backup, clear`
 }
 
-function handleHeartbeat(rest: string[], _ctx: MasterContext): string {
-  const { positional, flags } = parseFlags(rest)
+export const HEARTBEAT_OK = 'HEARTBEAT_OK'
+
+function handleHeartbeat(rest: string[], ctx: MasterContext): string {
+  const { flags } = parseFlags(rest)
   const channelSlug = typeof flags.channel === 'string' ? flags.channel : null
+  const quiet = flags.quiet === true
 
   const config = loadConfig()
-  const ts = new Date().toISOString()
+
+  // Build the full attention report
+  const deps = {
+    getCircuitStates: ctx.getCircuitStates,
+    loadSchedules: () => loadSchedules(),
+    readSpecclawStatus,
+  }
+  let allItems = buildAttentionReport(config, deps)
+
+  // Count projects scanned (affected by --channel filter)
+  let scannedCount = Object.keys(config.projects).length
 
   if (channelSlug !== null) {
-    const state = classifyChannel(channelSlug, config)
-    const lines = [`Heartbeat scan — ${ts}`]
-    if (state.state === 'idle') {
-      lines.push(`✅ idle (1): ${state.slug}`)
-    } else {
-      const age = fmtAge(state.ageMins)
-      lines.push(`⏰ stalled (1):`)
-      lines.push(`  • ${state.slug} — ${state.reason}, ${age} ago`)
-      if (state.snippet) lines.push(`    snippet: "${state.snippet}"`)
-    }
-    try {
-      const ss = readSpecclawStatus(projectDir(state.slug))
-      if (ss.present && ss.activeChange) {
-        lines.push(`🦞 specclaw:`)
-        lines.push(`  • ${state.slug}: ${fmtSpecclawActiveLine(ss)}`)
-      }
-    } catch {}
-    return lines.join('\n')
+    // Validate slug exists
+    const found = Object.values(config.projects).find(p => p.slug === channelSlug)
+    if (!found) return `unknown channel \`${channelSlug}\``
+    allItems = allItems.filter(i => i.slug === channelSlug)
+    scannedCount = 1
   }
 
-  const report = scanChannels(config)
-  const lines = [`Heartbeat scan — ${ts}`]
-
-  if (report.idle.length > 0) {
-    lines.push(`✅ idle (${report.idle.length}): ${report.idle.join(', ')}`)
+  // Zero items: quiet → sentinel; non-quiet → summary
+  if (allItems.length === 0) {
+    if (quiet) return HEARTBEAT_OK
+    return `✅ all quiet — ${scannedCount} channel${scannedCount === 1 ? '' : 's'} scanned`
   }
 
-  if (report.stalled.length > 0) {
-    lines.push(`⏰ stalled (${report.stalled.length}):`)
-    for (const s of report.stalled) {
-      const age = fmtAge(s.ageMins)
-      lines.push(`  • ${s.slug} — ${s.reason}, ${age} ago`)
-      if (s.snippet) lines.push(`    snippet: "${s.snippet}"`)
-    }
+  // Has items: render report (same with or without --quiet per FR7)
+  const ts = new Date().toISOString()
+  const lines: string[] = [`Heartbeat — ${ts}`]
+
+  const sevEmoji: Record<string, string> = { blocked: '🔴', review: '🟡', info: '🔵' }
+  const CAP = 15
+  const displayed = allItems.slice(0, CAP)
+  const overflow = allItems.length - displayed.length
+
+  for (const item of displayed) {
+    const emoji = sevEmoji[item.severity] ?? '⚪'
+    lines.push(`${emoji} <#${item.chatId}> **${item.slug}** — ${item.summary}`)
+    if (item.action) lines.push(`  ↳ ${item.action}`)
+    if (item.detail) lines.push(`  > ${item.detail}`)
   }
 
-  const specclawActive: Array<{ slug: string; line: string }> = []
-  for (const [, project] of Object.entries(config.projects)) {
-    try {
-      const ss = readSpecclawStatus(projectDir(project.slug))
-      if (ss.present && ss.activeChange) {
-        specclawActive.push({ slug: project.slug, line: fmtSpecclawActiveLine(ss) })
-      }
-    } catch {}
-  }
-  if (specclawActive.length > 0) {
-    lines.push(`🦞 specclaw:`)
-    for (const { slug, line } of specclawActive) {
-      lines.push(`  • ${slug}: ${line}`)
-    }
-  }
+  if (overflow > 0) lines.push(`(+${overflow} more)`)
 
   return lines.join('\n')
-}
-
-function fmtSpecclawActiveLine(ss: { activeChange?: string; phase?: string; tasksDone?: number; tasksTotal?: number }): string {
-  let line = ss.activeChange ?? ''
-  let taskPart = ''
-  if (ss.phase !== undefined) taskPart += `${ss.phase} `
-  if (ss.tasksDone !== undefined && ss.tasksTotal !== undefined) taskPart += `${ss.tasksDone}/${ss.tasksTotal}`
-  else if (ss.phase !== undefined) taskPart = taskPart.trimEnd()
-  if (taskPart.trim()) line += ` — ${taskPart.trim()}`
-  return line
-}
-
-function fmtAge(ageMins: number): string {
-  if (ageMins >= 60) {
-    const h = Math.floor(ageMins / 60)
-    const m = ageMins % 60
-    return `${h}h ${m}m`
-  }
-  return `${ageMins}m`
 }
 
 function removeChannelFromAccessGroups(chatId: string): void {
