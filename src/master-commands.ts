@@ -21,6 +21,7 @@ import { getCredential, loadCredentials } from './git-credentials.ts'
 import { accessFile, archiveDir, channelsDir, projectClaudeMd, projectDir, projectGoalFile } from './paths.ts'
 import { IntervalSchema, loadSchedules, newScheduleId, saveSchedules, validateCron, type Schedule } from './schedules-config.ts'
 import { scanChannels, classifyChannel } from './heartbeat.ts'
+import { readSpecclawStatus } from './specclaw-status.ts'
 
 export type MasterCommandResult =
   | { kind: 'no-master-configured' }
@@ -301,6 +302,27 @@ function handleShow(config: ChannelsConfig, rest: string[]): string {
       else lines.push('git: (no remote configured)')
     } else {
       lines.push('git: (no remote configured)')
+    }
+  }
+  // Specclaw status (FR4)
+  {
+    const ss = readSpecclawStatus(projectDir(project.slug))
+    if (ss.present) {
+      if (ss.activeChange) {
+        let part = `specclaw: 🔨 ${ss.activeChange}`
+        const detail: string[] = []
+        let taskPart = ''
+        if (ss.phase !== undefined) taskPart += `${ss.phase} `
+        if (ss.tasksDone !== undefined && ss.tasksTotal !== undefined) taskPart += `${ss.tasksDone}/${ss.tasksTotal} tasks`
+        else if (ss.phase !== undefined) taskPart = taskPart.trimEnd()
+        if (taskPart.trim()) detail.push(taskPart.trim())
+        if (ss.pendingProposals) detail.push(`${ss.pendingProposals} proposals pending`)
+        if (detail.length > 0) part += ` — ${detail.join(', ')}`
+        lines.push(part)
+      } else {
+        if (ss.pendingProposals) lines.push(`specclaw: idle — ${ss.pendingProposals} proposals pending`)
+        else lines.push('specclaw: idle')
+      }
     }
   }
   // Goal (P39)
@@ -1660,6 +1682,13 @@ function handleHeartbeat(rest: string[], _ctx: MasterContext): string {
       lines.push(`  • ${state.slug} — ${state.reason}, ${age} ago`)
       if (state.snippet) lines.push(`    snippet: "${state.snippet}"`)
     }
+    try {
+      const ss = readSpecclawStatus(projectDir(state.slug))
+      if (ss.present && ss.activeChange) {
+        lines.push(`🦞 specclaw:`)
+        lines.push(`  • ${state.slug}: ${fmtSpecclawActiveLine(ss)}`)
+      }
+    } catch {}
     return lines.join('\n')
   }
 
@@ -1679,7 +1708,33 @@ function handleHeartbeat(rest: string[], _ctx: MasterContext): string {
     }
   }
 
+  const specclawActive: Array<{ slug: string; line: string }> = []
+  for (const [, project] of Object.entries(config.projects)) {
+    try {
+      const ss = readSpecclawStatus(projectDir(project.slug))
+      if (ss.present && ss.activeChange) {
+        specclawActive.push({ slug: project.slug, line: fmtSpecclawActiveLine(ss) })
+      }
+    } catch {}
+  }
+  if (specclawActive.length > 0) {
+    lines.push(`🦞 specclaw:`)
+    for (const { slug, line } of specclawActive) {
+      lines.push(`  • ${slug}: ${line}`)
+    }
+  }
+
   return lines.join('\n')
+}
+
+function fmtSpecclawActiveLine(ss: { activeChange?: string; phase?: string; tasksDone?: number; tasksTotal?: number }): string {
+  let line = ss.activeChange ?? ''
+  let taskPart = ''
+  if (ss.phase !== undefined) taskPart += `${ss.phase} `
+  if (ss.tasksDone !== undefined && ss.tasksTotal !== undefined) taskPart += `${ss.tasksDone}/${ss.tasksTotal}`
+  else if (ss.phase !== undefined) taskPart = taskPart.trimEnd()
+  if (taskPart.trim()) line += ` — ${taskPart.trim()}`
+  return line
 }
 
 function fmtAge(ageMins: number): string {
