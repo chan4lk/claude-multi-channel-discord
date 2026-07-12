@@ -7206,7 +7206,7 @@ Extend `git-credentials.json` aliases with optional `prApi` (github/azdo token +
 
 ## P308 — progressMode "phases" — SpecClaw Phase-Level Progress
 
-**Status:** `[ ] pending`
+**Status:** `[x] done` — verified 🟢 2026-07-12, specclaw/progress-mode-phases
 **Created:** 2026-07-12
 **SpecClaw change:** `.specclaw/changes/progress-mode-phases/`
 

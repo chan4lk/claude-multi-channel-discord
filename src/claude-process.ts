@@ -40,8 +40,10 @@ import type {
   InboundEnvelope,
   OutboundReply,
   ProjectProcess,
+  SpecclawProgressEvent,
   ToolProgressEvent,
 } from './project-process.ts'
+import { classifySpecclawTransitions, takeSpecclawProgressSnapshot, type SpecclawProgressSnapshot } from './specclaw-progress.ts'
 
 const TMUX_POLL_INTERVAL_MS = 5_000
 const MAX_TURN_HISTORY = 5
@@ -297,6 +299,11 @@ export interface ClaudeProjectProcessOptions {
   sessionRotateThresholdBytes?: number
   /** Called when session is auto-rotated due to oversized transcript. */
   onSessionRotated?: (info: { slug: string; chatId: string; transcriptBytes: number }) => void
+  /**
+   * Resolved progressMode for this project. Only 'phases' matters here —
+   * it enables the specclaw snapshot/diff on the transcript-watcher poll.
+   */
+  progressMode?: string
 }
 
 function summarizeToolInput(name: string, input: Record<string, unknown>): string {
@@ -346,6 +353,8 @@ export class ClaudeProjectProcess implements ProjectProcess {
   private observedSessionId: string | null = null
   private replyHandlers = new Set<(reply: OutboundReply) => void>()
   private toolProgressHandlers = new Set<(ev: ToolProgressEvent) => void>()
+  private specclawProgressHandlers = new Set<(ev: SpecclawProgressEvent) => void>()
+  private lastSpecclawSnapshot: SpecclawProgressSnapshot | null = null
   private limitHitHandlers = new Set<(ev: LimitHitEvent) => void>()
   private lastLimitRaw: string | null = null
   private _lastContextWarnAt = 0
@@ -1077,6 +1086,35 @@ export class ClaudeProjectProcess implements ProjectProcess {
     return () => this.limitHitHandlers.delete(handler)
   }
 
+  onSpecclawProgress(handler: (ev: SpecclawProgressEvent) => void): () => void {
+    this.specclawProgressHandlers.add(handler)
+    return () => this.specclawProgressHandlers.delete(handler)
+  }
+
+  private fireSpecclawProgress(ev: SpecclawProgressEvent): void {
+    for (const h of this.specclawProgressHandlers) {
+      try { h(ev) } catch {}
+    }
+  }
+
+  /**
+   * progressMode "phases": diff .specclaw/ state on the poll cycle and emit
+   * lifecycle transitions. First snapshot is baseline only — emitting it
+   * would replay the current state as fake transitions on every respawn.
+   */
+  private pollSpecclawProgress(): void {
+    if (this.opts.progressMode !== 'phases') return
+    if (this.specclawProgressHandlers.size === 0 || !this.projectCwd) return
+    const next = takeSpecclawProgressSnapshot(this.projectCwd)
+    const prev = this.lastSpecclawSnapshot
+    this.lastSpecclawSnapshot = next
+    if (!prev) return
+    const lines = classifySpecclawTransitions(prev, next)
+    if (lines.length > 0 && next.activeChange !== undefined) {
+      this.fireSpecclawProgress({ change: next.activeChange, lines })
+    }
+  }
+
   private fireLimitHit(ev: LimitHitEvent): void {
     for (const h of this.limitHitHandlers) {
       try { h(ev) } catch {}
@@ -1086,7 +1124,9 @@ export class ClaudeProjectProcess implements ProjectProcess {
   private startTranscriptWatcher(): void {
     if (this.transcriptWatcherTimer) return
     const poll = () => {
-      if (!this._alive || (this.toolProgressHandlers.size === 0 && this.limitHitHandlers.size === 0)) return
+      if (!this._alive) return
+      this.pollSpecclawProgress()
+      if (this.toolProgressHandlers.size === 0 && this.limitHitHandlers.size === 0) return
       const sessionId = this.resolveSessionId()
       if (!sessionId || !this.projectCwd) return
       const path = join(homedir(), '.claude', 'projects', encodeProjectCwd(this.projectCwd), `${sessionId}.jsonl`)

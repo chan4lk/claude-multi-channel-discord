@@ -1288,6 +1288,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
         onSessionRotated: (info) => {
           projectPool?.emitSessionRotated(info)
         },
+        progressMode: project.progressMode ?? config.defaults.progressMode,
       })
       // Fire-and-forget; the pool may call deliver() before start() resolves
       // for the very first message — ClaudeProjectProcess deliver() awaits
@@ -1473,6 +1474,11 @@ async function maybeInitProjectsBackend(): Promise<void> {
       if (evt.kind === 'tool-progress') {
         void handleToolProgressEvent(evt.chatId, evt.slug, evt.event).catch((err) => {
           process.stderr.write(`discord: tool-progress dispatch failed: ${err}\n`)
+        })
+      }
+      if (evt.kind === 'specclaw-progress') {
+        void handleSpecclawProgressEvent(evt.chatId, evt.event).catch((err) => {
+          process.stderr.write(`discord: specclaw-progress dispatch failed: ${err}\n`)
         })
       }
     },
@@ -1706,6 +1712,46 @@ function detachSpecclawWatcher(chatId: string): void {
 const editProgressState = new Map<string, { msgId: string; lines: string[] }>()
 /** 'post' mode: one message per tool_use, tracked by toolId. */
 const postProgressMsgIds = new Map<string, string>()
+/** 'phases' mode: one message per specclaw change, keyed `chatId:change`. */
+const phasesProgressState = new Map<string, { msgId: string; lines: string[] }>()
+
+/** progressMode 'phases': edit-in-place timeline, one Discord message per change. */
+async function handleSpecclawProgressEvent(
+  chatId: string,
+  ev: { change: string; lines: string[] },
+): Promise<void> {
+  const config = loadChannelsConfig()
+  const project = config.projects[chatId]
+  const mode = project?.progressMode ?? config.defaults.progressMode ?? 'off'
+  if (mode !== 'phases') return
+  // Discord only in v1 — teams/whatsapp message-edit semantics differ.
+  if ((project?.platform ?? 'discord') !== 'discord') return
+
+  const channel = await fetchTextChannel(chatId).catch(() => null)
+  if (!channel) return
+
+  const now = new Date()
+  const stamp = `${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}`
+  const key = `${chatId}:${ev.change}`
+  const state = phasesProgressState.get(key) ?? { msgId: '', lines: [] }
+  state.lines.push(...ev.lines.map((l) => `${stamp} ${l}`))
+
+  const shown = state.lines.slice(-15)
+  const content = [
+    `🦞 ${ev.change}`,
+    ...shown.map((l, i) => `${i === shown.length - 1 ? '└' : '├'} ${l}`),
+  ].join('\n').slice(0, 1900)
+
+  const existing = state.msgId ? await channel.messages.fetch(state.msgId).catch(() => null) : null
+  if (existing) {
+    await existing.edit(content).catch(() => {})
+  } else {
+    const sent = await (channel as { send: (o: { content: string }) => Promise<{ id: string }> })
+      .send({ content }).catch(() => null)
+    if (sent) state.msgId = sent.id
+  }
+  phasesProgressState.set(key, state)
+}
 
 function formatProgressLine(ev: ToolProgressEvent): string {
   if (ev.phase === 'start') {
@@ -1726,7 +1772,8 @@ async function handleToolProgressEvent(
   const config = loadChannelsConfig()
   const project = config.projects[chatId]
   const mode = project?.progressMode ?? config.defaults.progressMode ?? 'off'
-  if (mode === 'off') return
+  // 'phases' renders specclaw transitions only — raw tool activity stays silent.
+  if (mode === 'off' || mode === 'phases') return
 
   const platform = project?.platform ?? 'discord'
 
