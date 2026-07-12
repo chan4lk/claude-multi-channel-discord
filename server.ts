@@ -1245,6 +1245,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
         authorizedUsers: ['__mcd_master_self__'],
         mutator: projectPool ? buildMutator() : undefined,
         memoryStore: memoryStore ?? undefined,
+        getCircuitStates: projectPool ? () => projectPool!.getCircuitStates() : undefined,
       })
       if (result.kind === 'reply') return result.text
       return `[${result.kind}]`
@@ -1998,6 +1999,7 @@ async function tryMasterCommand(msg: Message, access: Access): Promise<boolean> 
     authorizedUsers: access.allowFrom,
     mutator: projectPool ? buildMutator() : undefined,
     memoryStore: memoryStore ?? undefined,
+    getCircuitStates: projectPool ? () => projectPool!.getCircuitStates() : undefined,
   })
 
   switch (result.kind) {

@@ -179,16 +179,30 @@ To check adapter status, look for `whatsapp:` lines in the MCD tmux pane.
 
 # Heartbeat
 
-The heartbeat watchdog monitors all project channels for stalled agents (agents blocked on a question or incomplete tool call). Run it manually or on a schedule.
+The heartbeat command scans all project channels and returns a severity-sorted **attention report** — items that need the operator's eye, grouped by urgency.
 
 ## Manual scan
 
 ```
 !project heartbeat
 !project heartbeat --channel <slug>
+!project heartbeat --quiet
 ```
 
-Returns a report of idle and stalled channels with last-activity age and a snippet.
+Output format: one line per item with a severity emoji, Discord channel mention, slug, one-line explanation, and an indented `↳` suggested action. Unanswered questions also include the full question text in a quote block. Zero items → `✅ all quiet — N channels scanned`.
+
+Severity levels:
+- 🔴 **blocked** — agent needs operator input now (unanswered question, circuit open)
+- 🟡 **review** — agent is doing something suspicious (tool call stuck, schedule firing into a done backlog, schedule wakeup loop)
+- 🔵 **info** — low-urgency signal (active specclaw change with a stale transcript)
+
+Detectors (one item per matching condition per channel):
+- `question-unanswered` 🔴 — agent asked a question and no reply has arrived within the stale window; includes full question text
+- `tool-incomplete` 🟡 — a tool call was started but no result arrived; action: `!project stop <slug>`
+- `schedule-wakeup-loop` 🟡 — the scheduler keeps waking an already-active agent; action: `!project stop <slug>`
+- `circuit-open` 🔴 — channel's circuit breaker is open (repeated errors); action: `!project stop <slug>` then send a message to re-open
+- `schedule-noop-loop` 🟡 — ≥ 5 consecutive scheduler-originated messages with no operator reply (schedule firing into a completed backlog); action: `!project schedule pause <id>`
+- `specclaw-idle` 🔵 — project has an active specclaw change but the transcript has not advanced in the stale window
 
 ## Configure per-channel heartbeat settings
 
@@ -199,18 +213,20 @@ Returns a report of idle and stalled channels with last-activity age and a snipp
 ```
 
 Modes:
-- `supervised` (default): heartbeat only reports stalled channels to you
+- `supervised` (default): heartbeat only reports items to you
 - `autonomous`: heartbeat injects a continuation prompt into stalled channels (within the configured window)
 
 `--heartbeat-window` is UTC, format `HH:MM-HH:MM`. Midnight-spanning windows (e.g. `22:00-06:00`) are supported. If omitted in autonomous mode, the inject fires 24/7.
 
 ## Automated heartbeat via scheduler
 
-Set up a recurring heartbeat by adding an interval schedule to the master project:
+Set up a recurring heartbeat on the master project. **Use `--quiet`** so the scheduled run posts nothing when everything is healthy:
 
 ```
-!project schedule add master every 30m "Memory-aware heartbeat scan: Step 1 — recall prior context by calling mcp__mcd__recall with query 'channel summary stall coordination' and limit 20 before doing anything else. Step 2 — run the heartbeat by calling run_master_command with command 'heartbeat' to get the stalled-channel report. Step 3 — for each stalled channel in supervised mode, summarise it in a reply. Step 4 — for each stalled channel in autonomous mode within its configured window, call mcp__mcd__inject with a context-aware continuation prompt based on the stall reason and prior memories. Step 5 — after each inject, save a coordination memory via mcp__mcd__remember with type 'coordination', the project slug, and content describing what was injected and why. Step 6 — after all channels are scanned, save a channel_summary memory for each channel via mcp__mcd__remember with type 'channel_summary', the project slug, and content describing current state, any blockers, and last activity."
+!project schedule add master every 30m "Run the heartbeat attention scan: call run_master_command({command:'heartbeat --quiet'}). If the output is exactly HEARTBEAT_OK, do not post anything to the channel — end the turn silently. Otherwise post the report as-is, then for each 🔴 item consider injecting a continuation prompt via mcp__mcd__inject and save a coordination memory via mcp__mcd__remember."
 ```
+
+**`--quiet` sentinel contract:** when zero attention items are found, `heartbeat --quiet` returns exactly `HEARTBEAT_OK` (no timestamp, no other text). The scheduled prompt must check for this exact token and suppress posting if it matches. When items are present, `--quiet` has no effect — the full report is returned as normal.
 
 ## `mcp__mcd__inject` tool
 
