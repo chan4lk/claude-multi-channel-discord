@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
-import { readSpecclawStatus } from './specclaw-status.ts'
+import { detectSpecclawHalt, readSpecclawStatus } from './specclaw-status.ts'
 
 let failed = 0
 function check(label: string, cond: boolean, detail?: string) {
@@ -254,6 +254,118 @@ ${rows}
     check('Edge (no counts): activeChange = "bare"', result.activeChange === 'bare', `got: ${result.activeChange}`)
     check('Edge (no counts): tasksDone undefined', result.tasksDone === undefined, `got: ${result.tasksDone}`)
     check('Edge (no counts): tasksTotal undefined', result.tasksTotal === undefined, `got: ${result.tasksTotal}`)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// ── detectSpecclawHalt (loop-halt-escalation) ────────────────────────────────
+
+// Helper — set up a project dir with a dashboard + optional change status.md
+function writeHaltFixture(dir: string, opts: {
+  activeLine?: string
+  changeName?: string
+  changeStatus?: string
+}): void {
+  mkdirSync(join(dir, '.specclaw'), { recursive: true })
+  const dashboard = buildDashboard({
+    activeChanges: opts.activeLine ? [opts.activeLine] : [],
+  })
+  writeFileSync(join(dir, '.specclaw', 'STATUS.md'), dashboard, 'utf8')
+  if (opts.changeName && opts.changeStatus !== undefined) {
+    const changeDir = join(dir, '.specclaw', 'changes', opts.changeName)
+    mkdirSync(changeDir, { recursive: true })
+    writeFileSync(join(changeDir, 'status.md'), opts.changeStatus, 'utf8')
+  }
+}
+
+// halt-healthy: active change, no failed tasks, all-green rows, placeholder Issues → halted:false
+{
+  const dir = makeTmpDir()
+  try {
+    writeHaltFixture(dir, {
+      activeLine: '- 🔨 **foo** — 3/8 tasks (38%)',
+      changeName: 'foo',
+      changeStatus: buildChangeStatus('foo', { Spec: '🟢 Done', Build: '🔨 In Progress' }) + '\n## Issues\n\n_None._\n',
+    })
+    const halt = detectSpecclawHalt(dir)
+    check('halt-healthy: halted false', halt.halted === false)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// halt-S1: dashboard reports failed tasks → halted with count evidence
+{
+  const dir = makeTmpDir()
+  try {
+    writeHaltFixture(dir, { activeLine: '- 🔨 **foo** — 3/8 tasks (38%) | 2 failed' })
+    const halt = detectSpecclawHalt(dir)
+    check('halt-S1: halted true on failed tasks', halt.halted === true)
+    check('halt-S1: change named', halt.change === 'foo', `got: ${halt.change}`)
+    check('halt-S1: evidence has count', halt.evidence === '2 failed task(s)', `got: ${halt.evidence}`)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// halt-S2: 🔴 phase row → halted with phase evidence; ❌ also counts
+{
+  const dir = makeTmpDir()
+  try {
+    writeHaltFixture(dir, {
+      activeLine: '- 🔨 **foo** — 3/8 tasks (38%)',
+      changeName: 'foo',
+      changeStatus: buildChangeStatus('foo', { Spec: '🟢 Done', Verify: '🔴 Failed' }),
+    })
+    const halt = detectSpecclawHalt(dir)
+    check('halt-S2: halted true on 🔴 row', halt.halted === true)
+    check('halt-S2: evidence names phase', halt.evidence !== undefined && halt.evidence.includes('Verify') && halt.evidence.includes('🔴'), `got: ${halt.evidence}`)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+{
+  const dir = makeTmpDir()
+  try {
+    writeHaltFixture(dir, {
+      activeLine: '- 🔨 **foo** — 3/8 tasks (38%)',
+      changeName: 'foo',
+      changeStatus: buildChangeStatus('foo', { Build: '❌ Blocked' }),
+    })
+    const halt = detectSpecclawHalt(dir)
+    check('halt-S2: halted true on ❌ row', halt.halted === true)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// halt-S3: non-empty Issues section → halted with issue evidence
+{
+  const dir = makeTmpDir()
+  try {
+    writeHaltFixture(dir, {
+      activeLine: '- 🔨 **foo** — 3/8 tasks (38%)',
+      changeName: 'foo',
+      changeStatus: buildChangeStatus('foo', { Build: '🔨 In Progress' }) + '\n## Issues\n\n- verify red 3× on T2\n',
+    })
+    const halt = detectSpecclawHalt(dir)
+    check('halt-S3: halted true on open issue', halt.halted === true)
+    check('halt-S3: evidence quotes issue', halt.evidence !== undefined && halt.evidence.startsWith('open issue:') && halt.evidence.includes('verify red'), `got: ${halt.evidence}`)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// halt-missing: no .specclaw / no active change / missing change status.md → halted:false, no throw
+{
+  const dir = makeTmpDir()
+  try {
+    check('halt-missing: no .specclaw → false', detectSpecclawHalt(dir).halted === false)
+    writeHaltFixture(dir, {})
+    check('halt-missing: no active change → false', detectSpecclawHalt(dir).halted === false)
+    writeHaltFixture(dir, { activeLine: '- 🔨 **foo** — 3/8 tasks (38%)' })
+    check('halt-missing: change status.md absent → false', detectSpecclawHalt(dir).halted === false)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
