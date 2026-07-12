@@ -605,6 +605,62 @@ check('set: heartbeat accepted', setHb.kind === 'reply' && setHb.text.includes('
   )
 }
 
+// --- AC6: --stop-on-reply flag (schedule-stop-on-reply change) ---
+
+// AC6a: add with --stop-on-reply "backlog complete" → persisted; confirmation mentions stop-on-reply
+{
+  const stopAdd = await handleMasterCommand(
+    '!project schedule add master-test --at "every 30m" --prompt "stop-reply-test" --stop-on-reply "backlog complete"',
+    mctx(),
+  )
+  check(
+    'stop-on-reply schedule add: accepted',
+    stopAdd.kind === 'reply' && stopAdd.text.includes('every 30m'),
+    stopAdd.kind === 'reply' ? stopAdd.text : stopAdd.kind,
+  )
+  check(
+    'stop-on-reply schedule add: confirmation contains stop-on-reply',
+    stopAdd.kind === 'reply' && stopAdd.text.includes('stop-on-reply'),
+    stopAdd.kind === 'reply' ? stopAdd.text : stopAdd.kind,
+  )
+  {
+    const scheds = loadSchedules(join(stateDir, 'schedules.json'))
+    const entry = scheds.schedules.find(s => s.prompt === 'stop-reply-test')
+    check('stop-on-reply schedule add: stopOnReply persisted', entry?.stopOnReply === 'backlog complete')
+  }
+}
+
+// AC6b: schedule list shows stop-on-reply for the entry we just added
+{
+  const listReply = await handleMasterCommand('!project schedule list master-test', mctx())
+  check(
+    'stop-on-reply schedule list: shows stop-on-reply marker',
+    listReply.kind === 'reply' && listReply.text.includes('stop-on-reply') && listReply.text.includes('backlog complete'),
+    listReply.kind === 'reply' ? listReply.text : listReply.kind,
+  )
+}
+
+// AC6c: invalid regex returns error, nothing persisted
+{
+  const schedsBefore = loadSchedules(join(stateDir, 'schedules.json'))
+  const countBefore = schedsBefore.schedules.filter(s => s.prompt === 'bad-regex-test').length
+
+  const badRegex = await handleMasterCommand(
+    '!project schedule add master-test --at "every 30m" --prompt "bad-regex-test" --stop-on-reply "("',
+    mctx(),
+  )
+  check(
+    'stop-on-reply schedule add: invalid regex returns error',
+    badRegex.kind === 'reply' && badRegex.text.includes('stop-on-reply') && badRegex.text.includes('valid regex'),
+    badRegex.kind === 'reply' ? badRegex.text : badRegex.kind,
+  )
+  {
+    const schedsAfter = loadSchedules(join(stateDir, 'schedules.json'))
+    const countAfter = schedsAfter.schedules.filter(s => s.prompt === 'bad-regex-test').length
+    check('stop-on-reply schedule add: invalid regex persists nothing', countAfter === countBefore)
+  }
+}
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)
   process.exit(1)
