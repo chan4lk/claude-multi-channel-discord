@@ -17,7 +17,7 @@ import {
   type Project,
 } from './channels-config.ts'
 import { assertSafeGitRef, buildGitEnv, gitClone, gitPullFastForward, gitSetRemote, gitStatusSummary } from './git-ops.ts'
-import { getCredential, loadCredentials } from './git-credentials.ts'
+import { describePrAuth, getCredential, loadCredentials, saveCredentials, type PrApi } from './git-credentials.ts'
 import { accessFile, archiveDir, channelsDir, projectClaudeMd, projectDir, projectGoalFile } from './paths.ts'
 import { IntervalSchema, loadSchedules, newScheduleId, saveSchedules, validateCron, type Schedule } from './schedules-config.ts'
 import { scanChannels, classifyChannel } from './heartbeat.ts'
@@ -216,6 +216,8 @@ function helpText(prefix: string): string {
     `${prefix} set    <chat_id-or-slug> --heartbeat-stale-minutes N               — set stale threshold`,
     `${prefix} set    <chat_id-or-slug> --goal "..."                 — set persistent goal (injected at session start; "" to clear)`,
     `${prefix} set    <chat_id-or-slug> --distill-on-stop            — enable memory distillation after session stops`,
+    `${prefix} set    <chat_id-or-slug> --pr-token-github <token>    — store PR-API token on the project's credential alias (delete the message after!)`,
+    `${prefix} set    <chat_id-or-slug> --pr-token-azdo <token> --azdo-org X --azdo-project Y — store ADO PAT + org/project`,
     `${prefix} rename <chat_id-or-slug> --slug NEW                    — rename slug + dir`,
     `${prefix} remote <chat_id-or-slug> [--set URL] [--creds NAME]    — show/set git remote`,
     `${prefix} pull   <chat_id-or-slug>                               — git pull --ff-only`,
@@ -286,6 +288,11 @@ function handleShow(config: ChannelsConfig, rest: string[]): string {
     lines.push(`remote: ${project.git.remote}`)
     lines.push(`branch: ${project.git.branch}`)
     lines.push(`creds:  ${project.git.credentials}`)
+    // Presence only — describePrAuth never includes the token value.
+    try {
+      const prAuth = describePrAuth(getCredential(loadCredentials(), project.git.credentials))
+      if (prAuth) lines.push(`pr auth: ${prAuth}`)
+    } catch { /* unreadable creds file must not break show */ }
     // If the project dir is a git working tree, show live git status too.
     const dir = projectDir(project.slug)
     if (existsSync(dir)) {
@@ -596,8 +603,23 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
   }
   const developBranch = developBranchRaw === 'on' ? true : developBranchRaw === 'off' ? false : null
 
-  if (prompt === null && stuckMinutes === null && heartbeatMode === null && heartbeatWindow === null && heartbeatStale === null && goalRaw === null && distillOnStop === null && developBranch === null) {
-    return '`set` requires `--prompt "..."`, `--stuck-threshold-minutes N`, `--heartbeat-mode <supervised|autonomous>`, `--heartbeat-window <HH:MM-HH:MM>`, `--heartbeat-stale-minutes N`, `--goal "..."`, `--distill-on-stop`, or `--develop-branch on|off`'
+  const prTokenGithub = typeof flags['pr-token-github'] === 'string' ? flags['pr-token-github'] : null
+  const prTokenAzdo = typeof flags['pr-token-azdo'] === 'string' ? flags['pr-token-azdo'] : null
+  if (prTokenGithub !== null && prTokenAzdo !== null) {
+    return '`--pr-token-github` and `--pr-token-azdo` are mutually exclusive'
+  }
+  let prApi: PrApi | null = null
+  if (prTokenGithub !== null) {
+    prApi = { kind: 'github', token: prTokenGithub }
+  } else if (prTokenAzdo !== null) {
+    const org = typeof flags['azdo-org'] === 'string' ? flags['azdo-org'] : null
+    const project = typeof flags['azdo-project'] === 'string' ? flags['azdo-project'] : null
+    if (!org || !project) return '`--pr-token-azdo` requires `--azdo-org <org>` and `--azdo-project <project>`'
+    prApi = { kind: 'azdo', token: prTokenAzdo, org, project }
+  }
+
+  if (prompt === null && stuckMinutes === null && heartbeatMode === null && heartbeatWindow === null && heartbeatStale === null && goalRaw === null && distillOnStop === null && developBranch === null && prApi === null) {
+    return '`set` requires `--prompt "..."`, `--stuck-threshold-minutes N`, `--heartbeat-mode <supervised|autonomous>`, `--heartbeat-window <HH:MM-HH:MM>`, `--heartbeat-stale-minutes N`, `--goal "..."`, `--distill-on-stop`, `--develop-branch on|off`, `--pr-token-github <token>`, or `--pr-token-azdo <token> --azdo-org X --azdo-project Y`'
   }
 
   const results: string[] = []
@@ -658,6 +680,24 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
     const latestEntry = latestConfig.projects[entry.chatId] ?? entry.project
     saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: { ...latestEntry, developBranch } } })
     results.push(`✅ set \`developBranch\` = ${developBranch} for **${entry.project.slug}**.`)
+  }
+
+  if (prApi !== null) {
+    const alias = entry.project.git?.credentials
+    if (!alias) {
+      return 'project has no `git.credentials` alias — PR tokens are stored on the transport alias. Configure git first (`remote`/`clone`).'
+    }
+    try {
+      const creds = loadCredentials()
+      const cred = getCredential(creds, alias)
+      saveCredentials({ ...creds, [alias]: { ...cred, prApi } })
+    } catch (err) {
+      return `PR token store failed: ${(err as Error).message}`
+    }
+    results.push(
+      `✅ stored ${prApi.kind} PR token on alias \`${alias}\` for **${entry.project.slug}**.`,
+      '⚠️ Delete the Discord message containing the token now — it is in channel history.',
+    )
   }
 
   // Respawn only needed when prompt changed (CLAUDE.md is read at session start).
