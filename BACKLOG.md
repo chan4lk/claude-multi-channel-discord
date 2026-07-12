@@ -7073,3 +7073,155 @@ In `persistSessionAndRename()`, add a retry loop: if the snapshot diff yields no
 - AC4: On exhaustion, warning logged; process continues without `.session-id` (non-fatal)
 - AC5: Test simulates 2-retry-delay scenario and asserts `.session-id` written on 3rd attempt
 - AC6: `bun tsc --noEmit` clean; existing tests pass
+
+## P302 — Idle-Gated Schedules
+
+**Status:** `[x] done` (2026-07-12 — specclaw verify PASS, merged to main)
+**Created:** 2026-07-12
+**SpecClaw change:** `.specclaw/changes/idle-gated-schedules/`
+
+### Problem
+
+Interval schedules fire blindly. The dstm-apps every-30m `/specclaw:loop` job injected a new loop prompt into tmux mid-build, queuing a duplicate iteration on top of in-flight state (duplicate backlog pick-up, wasted tokens).
+
+### Proposed Solution
+
+Add opt-in `onlyWhenIdle` (+ `idleGraceMinutes`, default 5) to the schedule schema. Before firing, the scheduler checks the pool: if the project's transcript was written within the grace window, log `skipped (busy)` without incrementing `runCount`, and re-evaluate next tick. Expose `--only-when-idle` on `schedule add`; surface skip state in `schedule list`.
+
+### Acceptance Criteria
+
+- AC1: Busy project → fire skipped, `runCount` unchanged, `skipped` logged with reason `busy`
+- AC2: Idle project / no live process → fires normally
+- AC3: `at:` daily jobs retry each tick until fired or day window closes
+- AC4: `--only-when-idle` flag on `schedule add`; `schedule list` shows the flag and last skip
+- AC5: Decision-matrix tests (idle/busy/no-process/grace boundary); `bun tsc --noEmit` clean
+
+## P303 — SpecClaw Status Visibility in Show + Heartbeat
+
+**Status:** `[ ] pending`
+**Created:** 2026-07-12
+**SpecClaw change:** `.specclaw/changes/specclaw-status-visibility/`
+
+### Problem
+
+MCD is specclaw-blind: `!project show` and the master heartbeat report process/git state only. The operator cannot see which change a loop is building or task progress without scrolling the channel.
+
+### Proposed Solution
+
+Extract `readSpecclawStatus(projectCwd)` (extend `src/specclaw-guard.ts` parsing) returning active change, phase, task counts, pending proposals. Render a `specclaw:` line in `!project show` and a per-channel one-liner in the master heartbeat report. Read-only; omitted when no `.specclaw/`.
+
+### Acceptance Criteria
+
+- AC1: Parser returns `{present:false}` for missing/malformed `.specclaw` without throwing
+- AC2: `show` displays change, phase, tasks done/total, pending proposal count
+- AC3: Heartbeat report includes specclaw one-liner for channels with an active change
+- AC4: Fixture-file tests for parser and both render paths; `bun tsc --noEmit` clean
+
+## P304 — Schedule Auto-Pause on Reply Pattern (stopOnReply)
+
+**Status:** `[ ] pending`
+**Created:** 2026-07-12
+**SpecClaw change:** `.specclaw/changes/schedule-stop-on-reply/`
+
+### Problem
+
+Backlog loops keep firing after the goal is met (74/107/200 post-completion runs observed across keyflow, agent-nexus, claude-mcd), each burning a full Claude turn to reply "backlog complete". `maxRuns` caps count, not goal state.
+
+### Proposed Solution
+
+Optional `stopOnReply` regex per schedule. A reply tap on the outbound `mcp__mcd__reply` path notifies the scheduler; a match between fires disables the schedule, persists, and posts a one-line auto-pause notice to master. `--stop-on-reply` flag on `schedule add`; invalid regex rejected at add time.
+
+### Acceptance Criteria
+
+- AC1: Reply matching pattern (case-insensitive) → schedule `enabled:false` persisted + master notice
+- AC2: Non-matching replies leave the schedule untouched
+- AC3: Match window = any reply from that channel until the next fire
+- AC4: Invalid regex rejected with usage error at `schedule add`
+- AC5: Tests for match/no-match/window/invalid-regex; `bun tsc --noEmit` clean
+
+## P305 — Loop Guardrail-Halt Escalation to Master
+
+**Status:** `[ ] pending`
+**Created:** 2026-07-12
+**SpecClaw change:** `.specclaw/changes/loop-halt-escalation/`
+
+### Problem
+
+When the specclaw loop halts on a guardrail (verify red, review blocked), the channel goes idle and the schedule re-fires into the same blocked state every 30m — silent thrash the heartbeat can't see because process liveness looks healthy.
+
+### Proposed Solution
+
+Extend the specclaw status parser (P303) with blocked-state detection (🔴/❌ phase rows, non-empty Issues, persistent failed-task count). Master heartbeat escalates once: posts `🛑 <slug>: specclaw loop halted on <change> — <evidence>`, suspends the loop schedule, records `escalatedAt`; `schedule resume` clears it.
+
+### Acceptance Criteria
+
+- AC1: Blocked fixture → one master post + schedule disabled; healthy fixture → no action
+- AC2: Same halt never escalates twice (`escalatedAt` guard)
+- AC3: `schedule resume` clears `escalatedAt`
+- AC4: Escalation message names the change and the evidence marker
+- AC5: Tests for detection + single-escalation invariant; `bun tsc --noEmit` clean
+
+## P306 — Rotation-Aware SpecClaw Resume Prompt
+
+**Status:** `[ ] pending`
+**Created:** 2026-07-12
+**SpecClaw change:** `.specclaw/changes/rotation-specclaw-resume/`
+
+### Problem
+
+Session rotation briefs a fresh session with lossy distilled prose. For specclaw projects the authoritative state is on disk; a prose-briefed session can re-plan finished work (dstm-apps rotated at 2.8 MB mid-build on 2026-07-12).
+
+### Proposed Solution
+
+At rotation, if `readSpecclawStatus()` finds an active change, append a deterministic SPECCLAW RESUME block to the brief: name the change/phase/task counts and instruct the session to read `status.md` + `tasks.md` and continue via `/specclaw:build` — never re-propose/re-plan. No `.specclaw/` → unchanged brief.
+
+### Acceptance Criteria
+
+- AC1: Active change → resume block appended with change name, phase, task counts
+- AC2: `.specclaw/` present but no active change → one-liner pointing at BACKLOG/STATUS
+- AC3: No `.specclaw/` → brief byte-identical to current behavior
+- AC4: Brief-assembly tests for all three cases; `bun tsc --noEmit` clean
+
+## P307 — Per-Project PR Credential Store
+
+**Status:** `[ ] pending`
+**Created:** 2026-07-12
+**SpecClaw change:** `.specclaw/changes/pr-credential-store/`
+
+### Problem
+
+The lifecycle's PR phase hard-blocks on missing API tokens: dstm-apps pushed fine over SSH but had no ADO PAT, and the operator ended up pasting a PAT in plaintext into Discord, stored in an ad-hoc per-project `.env`.
+
+### Proposed Solution
+
+Extend `git-credentials.json` aliases with optional `prApi` (github/azdo token + org/project), 0600-enforced. At spawn, export conventional env vars (`GH_TOKEN`, `AZDO_TOKEN`/`AZURE_DEVOPS_EXT_PAT`, org/project) into the subprocess so `gh` and `/specclaw:pr-azdo` work headless. `!project set` gains token flags; storage confirmation reminds the operator to delete the Discord message; tokens never printed.
+
+### Acceptance Criteria
+
+- AC1: Alias with `prApi.github` → subprocess env contains `GH_TOKEN`
+- AC2: Alias with `prApi.azdo` → subprocess env contains PAT + org/project vars
+- AC3: Credentials file mode 0600 enforced on write
+- AC4: `show` displays token presence only, never values
+- AC5: Tests for env assembly + redaction; `bun tsc --noEmit` clean
+
+## P308 — progressMode "phases" — SpecClaw Phase-Level Progress
+
+**Status:** `[ ] pending`
+**Created:** 2026-07-12
+**SpecClaw change:** `.specclaw/changes/progress-mode-phases/`
+
+### Problem
+
+`edit` progress mode streams raw tool calls (walls of `🔧 Bash …` in dstm-apps); `off` is silent for 20-minute turns. Neither shows lifecycle position — the thing an operator actually wants from a 24/7 loop.
+
+### Proposed Solution
+
+New `progressMode: "phases"`: on the existing 2s poll cycle, snapshot/diff `.specclaw/STATUS.md` + active-change `status.md`/`tasks.md`; classify transitions (phase change, task count, verify verdict, PR); maintain one edit-in-place Discord message per change growing a compact timeline. No `.specclaw/` → behaves as `off`.
+
+### Acceptance Criteria
+
+- AC1: `"phases"` accepted by the channels-config schema
+- AC2: Phase/task/verify transitions each append exactly one timeline line
+- AC3: One Discord message per change, edited in place
+- AC4: `mcp__mcd__*` and non-transition tool activity produce no output
+- AC5: Fixture-sequence classification tests; `bun tsc --noEmit` clean
