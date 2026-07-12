@@ -119,6 +119,16 @@ Or clone a repo into a channel:
 !project clone --new-channel my-repo --slug my-repo --repo https://github.com/owner/repo.git --creds github-pat --prompt "You work in the my-repo repository."
 ```
 
+**Monitor channel health** with the heartbeat attention report:
+
+```
+!project heartbeat                   — severity-sorted report (🔴 blocked / 🟡 review / 🔵 info)
+!project heartbeat --channel <slug>  — scan a single channel
+!project heartbeat --quiet           — returns HEARTBEAT_OK when healthy (for scheduled runs)
+```
+
+Detects: unanswered questions (🔴), stuck tool calls (🟡), schedule-noop loops (🟡), circuit-open channels (🔴), idle specclaw changes (🔵). Each item shows the channel mention, a one-line summary, and a `↳` suggested action. See [templates/master.CLAUDE.md](./templates/master.CLAUDE.md) for scheduled-run setup.
+
 ---
 
 ## WhatsApp setup (optional)
@@ -218,7 +228,7 @@ All phases complete and running in production (as of 2026-05-16).
 | 5.5 | `--repo-dir` symlink mode for existing local repos |
 | 6 | Cross-platform deploy (systemd, launchd, Windows PS1) |
 | 7 | Full MCP tool surface (`react`, `edit_message`, `download_attachment`, `fetch_messages`) |
-| 8 | Natural-language master, provider routing, scheduler, session resume, watchdog |
+| 8 | Natural-language master, provider routing, scheduler, session resume, watchdog, heartbeat attention report |
 
 See [ROADMAP.md](./ROADMAP.md) for remaining work.
 
