@@ -7141,7 +7141,7 @@ Optional `stopOnReply` regex per schedule. A reply tap on the outbound `mcp__mcd
 
 ## P305 — Loop Guardrail-Halt Escalation to Master
 
-**Status:** `[ ] pending`
+**Status:** `[x] done` — verified 🟢 2026-07-12, specclaw/loop-halt-escalation
 **Created:** 2026-07-12
 **SpecClaw change:** `.specclaw/changes/loop-halt-escalation/`
 
