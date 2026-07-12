@@ -7163,7 +7163,7 @@ Extend the specclaw status parser (P303) with blocked-state detection (🔴/❌ 
 
 ## P306 — Rotation-Aware SpecClaw Resume Prompt
 
-**Status:** `[ ] pending`
+**Status:** `[x] done` — verified 🟢 2026-07-12, specclaw/rotation-specclaw-resume
 **Created:** 2026-07-12
 **SpecClaw change:** `.specclaw/changes/rotation-specclaw-resume/`
 
