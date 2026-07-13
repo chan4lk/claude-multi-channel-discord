@@ -46,6 +46,7 @@ function makeConfig(): ChannelsConfig {
       claude: { permissionMode: 'auto' },
       providers: {},
       progressMode: 'off',
+      handoff: false,
       contextWarningThresholdPct: 80,
     },
     projects: {

@@ -98,6 +98,13 @@ const ProjectSchema = z.object({
    */
   progressMode: ProgressModeSchema.optional(),
   /**
+   * Allow this project's Claude to call `mcp__mcd__handoff` — sending a
+   * task message into another project's session by slug. Off by default:
+   * handoff grants lateral reach across project boundaries, so the
+   * operator must opt each source project in (or flip defaults.handoff).
+   */
+  handoff: z.boolean().optional(),
+  /**
    * Override the watchdog base threshold for this project. Default is 5 min.
    * Set higher for channels that run long pipelines (TTS, video rendering).
    */
@@ -191,6 +198,8 @@ const DefaultsSchema = z.object({
   provider: z.string().optional(),
   /** Global default for progressMode. Projects can override per-channel. */
   progressMode: ProgressModeSchema.default('off'),
+  /** Global default for per-project `handoff`. Off unless opted in. */
+  handoff: z.boolean().default(false),
   /** Default context-warning threshold % (0–100). Default 80. */
   contextWarningThresholdPct: z.number().int().min(1).max(100).default(80),
   memory: MemoryConfigSchema,
@@ -318,6 +327,11 @@ export function findProjectBySlug(config: ChannelsConfig, slug: string): { chatI
     if (project.slug === slug) return { chatId, project }
   }
   return undefined
+}
+
+/** Whether a project may initiate cross-project handoff (project override, else defaults). */
+export function handoffEnabled(config: ChannelsConfig, project: Project): boolean {
+  return project.handoff ?? config.defaults.handoff
 }
 
 export function isMasterChannel(config: ChannelsConfig, chatId: string): boolean {

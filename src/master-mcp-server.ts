@@ -26,6 +26,7 @@ import { join } from 'node:path'
 import { z } from 'zod'
 
 import { channelsDir } from './paths.ts'
+import { findProjectBySlug, handoffEnabled, type ChannelsConfig } from './channels-config.ts'
 import type { InboundEnvelope, OutboundReply } from './project-process.ts'
 import type { ProjectPool } from './project-pool.ts'
 import { MemoryStore, type MemoryType } from './memory-store.ts'
@@ -64,6 +65,12 @@ export interface MasterMcpServerOptions {
    * absent the `inject` tool is not exposed.
    */
   getPool?: () => ProjectPool | null
+  /**
+   * Live read of channels.json. Required for the `handoff` tool (slug
+   * resolution + per-project opt-in check). Optional — when absent the
+   * `handoff` tool is not exposed.
+   */
+  getConfig?: () => ChannelsConfig | null
   /** Diagnostics. Defaults to stderr. */
   log?: (msg: string) => void
   /**
@@ -97,6 +104,7 @@ export class MasterMcpServer {
   private readonly log: (msg: string) => void
   private readonly teamsAdapter: { handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> } | undefined
   private readonly getPool: (() => ProjectPool | null) | undefined
+  private readonly getConfig: (() => ChannelsConfig | null) | undefined
   private readonly memoryStore: MemoryStore | null
   private readonly getProjectPlatform: ((chatId: string) => string | undefined) | null
   /**
@@ -118,6 +126,7 @@ export class MasterMcpServer {
     this.log = opts.log ?? ((m) => process.stderr.write(`[mcp-master] ${m}\n`))
     this.teamsAdapter = opts.teamsAdapter
     this.getPool = opts.getPool
+    this.getConfig = opts.getConfig
     this.memoryStore = opts.memoryStore ?? null
     this.getProjectPlatform = opts.getProjectPlatform ?? null
   }
@@ -305,6 +314,25 @@ export class MasterMcpServer {
           },
         })
       }
+      // Cross-project handoff: exposed to the master session always, and to
+      // project sessions the operator has opted in (project.handoff or
+      // defaults.handoff). Off by default — handoff grants lateral reach
+      // across project boundaries.
+      if (this.handoffSource(chatId) !== null) {
+        tools.push({
+          name: 'handoff',
+          description: 'Hand a task off to another project\'s Claude session by slug. Use when the operator asks to delegate work to another project (e.g. "@backend please finish this"). The message is delivered into that project\'s session as an inbound handoff message; its reply goes to its own channel, not here.',
+          inputSchema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              target_slug: { type: 'string', description: 'Slug of the target project (as shown by `list`).' },
+              message: { type: 'string', description: 'The task or request to deliver to the target project.' },
+            },
+            required: ['target_slug', 'message'],
+          },
+        })
+      }
       if (this.executeMasterCommand && this.getMasterChatId() === chatId) {
         tools.push({
           name: 'run_master_command',
@@ -474,6 +502,43 @@ export class MasterMcpServer {
             }
             return okResult(JSON.stringify({ ok: true }))
           }
+          case 'handoff': {
+            const sourceSlug = this.handoffSource(chatId)
+            if (sourceSlug === null) {
+              return errorResult('handoff is not enabled for this project (set `handoff: true` on the project or defaults in channels.json)')
+            }
+            const targetSlug = String(args.target_slug ?? '').trim()
+            const message = String(args.message ?? '').trim()
+            if (!targetSlug) return errorResult('target_slug is required')
+            if (!message) return errorResult('message is required')
+            const config = this.getConfig!()
+            if (!config) return errorResult('config not available')
+            const target = findProjectBySlug(config, targetSlug)
+            if (!target) return errorResult(`no project with slug "${targetSlug}"`)
+            if (target.chatId === chatId) return errorResult('cannot hand off to the same project')
+            const pool = this.getPool!()
+            if (!pool) return errorResult('pool not available')
+            const envelope: InboundEnvelope = {
+              messageId: `handoff-${Date.now()}-${randomBytes(4).toString('hex')}`,
+              userId: `handoff:${sourceSlug}`,
+              username: `handoff:${sourceSlug}`,
+              content: `[Cross-project handoff from "${sourceSlug}"] ${message}`,
+              ts: new Date().toISOString(),
+            }
+            this.log(`handoff tool: ${sourceSlug} → ${targetSlug} (${target.chatId}): ${JSON.stringify(message).slice(0, 60)}`)
+            await pool.deliver(target.chatId, envelope)
+            // Post the handoff to the target channel so its operator sees
+            // what arrived without reading tmux logs (same as inject).
+            if (this.client) {
+              try {
+                const ch = await this.fetchTextChannel(target.chatId)
+                await (ch as any).send({ content: `🔀 **Handoff from \`${sourceSlug}\`:**\n> ${message.replace(/\n/g, '\n> ')}` })
+              } catch (err) {
+                this.log(`handoff tool: failed to post visibility message: ${(err as Error).message}`)
+              }
+            }
+            return okResult(JSON.stringify({ ok: true, target_slug: targetSlug, target_chat_id: target.chatId }))
+          }
           case 'run_master_command': {
             if (!this.executeMasterCommand) return errorResult('run_master_command not configured')
             if (this.getMasterChatId() !== chatId) {
@@ -539,6 +604,22 @@ export class MasterMcpServer {
     })
 
     return server
+  }
+
+  /**
+   * Whether the session for `chatId` may initiate a cross-project handoff.
+   * Returns the source slug to attribute the handoff to ('master' for the
+   * master channel, the project slug otherwise), or null when handoff is
+   * unavailable (not wired, unknown project, or not opted in).
+   */
+  private handoffSource(chatId: string): string | null {
+    if (!this.getPool || !this.getConfig) return null
+    const config = this.getConfig()
+    if (!config) return null
+    if (this.getMasterChatId() === chatId) return 'master'
+    const project = config.projects[chatId]
+    if (!project) return null
+    return handoffEnabled(config, project) ? project.slug : null
   }
 
   // ─── upstream-parity tools (require this.client) ────────────────────────

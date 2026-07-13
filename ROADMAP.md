@@ -125,10 +125,10 @@ Done:
 - ✅ `.mcp.json` discovery dialog + workspace-trust dialog auto-dismissed by `waitForTuiReady` so cloned repos with their own MCP configs don't block the TUI.
 - ✅ Per-project provider routing: `defaults.providers` catalog + per-project `provider` field. Set `ANTHROPIC_BASE_URL` + `ANTHROPIC_API_KEY` in spawn env to route specific projects to MiniMax / Bedrock / Vertex / etc. while others stay on the operator's Claude subscription.
 - ✅ `bin/setup-new-instance.sh` deploys `templates/master.CLAUDE.md` so fresh installs ship with the natural-language → command table baked in.
+- ✅ Cross-project handoff: `mcp__mcd__handoff { target_slug, message }` delivers a task into another project's session with source attribution. Master always has it; project sessions need per-project `handoff: true` (or `defaults.handoff`) in channels.json — off by default. See `src/handoff.test.ts`.
 
 Remaining:
 - Per-channel allowlists beyond what `access.json groups[].allowFrom` covers (e.g. role-based)
-- Cross-project handoff (`@<slug> please finish this`)
 - `/discord:project` skill verbs that proxy to the master via the Gateway's RPC (so a terminal user can drive `create/clone` without typing in Discord)
 - Explicit auto-respawn on `claude` crash inside the tmux session (currently lazy-respawns on next message; a watchdog would respawn proactively)
 - Resume-broken-PR support (when the bot died mid-push)
