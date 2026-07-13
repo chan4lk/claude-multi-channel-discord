@@ -34,6 +34,14 @@ else
 fi
 [[ -z "$BUN" ]] && { echo "bun not found — set BUN_BIN=/path/to/bun" >&2; exit 1; }
 
+# Self-heal dependencies before restart. After a `git pull` that touched
+# package.json, `node_modules/` is stale and the next bun startup will crash
+# with "Cannot find module" — the runner then enters a tight 5s respawn loop
+# and the script's 4s post-spawn probe can confirm the session but the gateway
+# never connects. Running `bin/install-deps.sh` here guarantees a clean build
+# before we kill the running process. Idempotent — no-op on a fresh tree.
+"$SCRIPT_DIR/install-deps.sh"
+
 echo "[mcd] killing tmux session '${SESSION}'…"
 tmux kill-session -t "$SESSION" 2>/dev/null || true
 for _ in 1 2 3 4 5 6 7 8; do

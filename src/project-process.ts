@@ -30,6 +30,14 @@ export type ToolProgressEvent =
   | { phase: 'start'; toolId: string; toolName: string; inputSummary: string }
   | { phase: 'done'; toolId: string; toolName: string; durationMs: number; isError: boolean }
 
+/** progressMode "phases": specclaw lifecycle transitions observed on disk. */
+export interface SpecclawProgressEvent {
+  /** Active specclaw change the lines belong to. */
+  change: string
+  /** Timeline lines (no timestamps — the dispatcher stamps observation time). */
+  lines: string[]
+}
+
 import type { LimitHitEvent } from './limit-offer.ts'
 export type { LimitHitEvent } from './limit-offer.ts'
 
@@ -105,6 +113,8 @@ export interface ProjectProcess {
   /** Subscribe to tool-call progress events (optional — not all backends emit these). */
   onToolProgress?(handler: (ev: ToolProgressEvent) => void): () => void
   onLimitHit?(handler: (ev: LimitHitEvent) => void): () => void
+  /** Subscribe to specclaw phase transitions (optional — progressMode "phases" only). */
+  onSpecclawProgress?(handler: (ev: SpecclawProgressEvent) => void): () => void
   /**
    * Tear down the process. Idempotent. Returns once exit handlers have fired.
    */
@@ -130,6 +140,7 @@ export class MockProjectProcess implements ProjectProcess {
   private hangs: boolean
   private replyHandlers = new Set<(reply: OutboundReply) => void>()
   private exitHandlers = new Set<(info: { code: number | null; signal: NodeJS.Signals | null }) => void>()
+  private toolProgressHandlers = new Set<(ev: ToolProgressEvent) => void>()
   /** Test hook: track every kill() reason. */
   killReasons: string[] = []
   private turnHistory: number[] = []
@@ -210,8 +221,15 @@ export class MockProjectProcess implements ProjectProcess {
     return () => this.exitHandlers.delete(handler)
   }
 
-  onToolProgress(_handler: (ev: ToolProgressEvent) => void): () => void {
-    return () => {}
+  onToolProgress(handler: (ev: ToolProgressEvent) => void): () => void {
+    this.toolProgressHandlers.add(handler)
+    return () => this.toolProgressHandlers.delete(handler)
+  }
+
+  /** Test-only: simulate a tool-use event to update pool's lastToolProgressMs. */
+  fireToolProgress(toolName = 'Bash'): void {
+    const ev: ToolProgressEvent = { phase: 'start', toolId: 'test-id', toolName, inputSummary: '' }
+    for (const h of this.toolProgressHandlers) h(ev)
   }
 
   onLimitHit(_handler: (ev: LimitHitEvent) => void): () => void {

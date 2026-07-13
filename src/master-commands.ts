@@ -17,10 +17,11 @@ import {
   type Project,
 } from './channels-config.ts'
 import { assertSafeGitRef, buildGitEnv, gitClone, gitPullFastForward, gitSetRemote, gitStatusSummary } from './git-ops.ts'
-import { getCredential, loadCredentials } from './git-credentials.ts'
+import { describePrAuth, getCredential, loadCredentials, saveCredentials, type PrApi } from './git-credentials.ts'
 import { accessFile, archiveDir, channelsDir, projectClaudeMd, projectDir, projectGoalFile } from './paths.ts'
 import { IntervalSchema, loadSchedules, newScheduleId, saveSchedules, validateCron, type Schedule } from './schedules-config.ts'
-import { scanChannels, classifyChannel } from './heartbeat.ts'
+import { buildAttentionReport } from './heartbeat.ts'
+import { readSpecclawStatus } from './specclaw-status.ts'
 
 export type MasterCommandResult =
   | { kind: 'no-master-configured' }
@@ -40,6 +41,7 @@ export interface MasterContext {
    */
   mutator?: MasterMutator
   memoryStore?: MemoryStore
+  getCircuitStates?: () => Map<string, { circuitOpen: boolean; backoffUntil?: number }>
 }
 
 export interface MasterMutator {
@@ -215,13 +217,15 @@ function helpText(prefix: string): string {
     `${prefix} set    <chat_id-or-slug> --heartbeat-stale-minutes N               — set stale threshold`,
     `${prefix} set    <chat_id-or-slug> --goal "..."                 — set persistent goal (injected at session start; "" to clear)`,
     `${prefix} set    <chat_id-or-slug> --distill-on-stop            — enable memory distillation after session stops`,
+    `${prefix} set    <chat_id-or-slug> --pr-token-github <token>    — store PR-API token on the project's credential alias (delete the message after!)`,
+    `${prefix} set    <chat_id-or-slug> --pr-token-azdo <token> --azdo-org X --azdo-project Y — store ADO PAT + org/project`,
     `${prefix} rename <chat_id-or-slug> --slug NEW                    — rename slug + dir`,
     `${prefix} remote <chat_id-or-slug> [--set URL] [--creds NAME]    — show/set git remote`,
     `${prefix} pull   <chat_id-or-slug>                               — git pull --ff-only`,
     `${prefix} usage                         — resource snapshot of running project subprocesses (alias: ps, top)`,
     `${prefix} stop   <chat_id-or-slug>                               — kill the project's subprocess; lazy-respawns on next message`,
-    `${prefix} schedule add <chat_id-or-slug> --at HH:MM|every 30m|every 2h --prompt "..." [--max-runs N]   — daily/interval job`,
-    `${prefix} schedule add <chat_id-or-slug> --cron "*/15 9-18 * * 1-5" --prompt "..."                     — cron-syntax job`,
+    `${prefix} schedule add <chat_id-or-slug> --at HH:MM|every 30m|every 2h --prompt "..." [--max-runs N] [--only-when-idle [--idle-grace N]] [--stop-on-reply "<regex>"]   — daily/interval job`,
+    `${prefix} schedule add <chat_id-or-slug> --cron "*/15 9-18 * * 1-5" --prompt "..." [--only-when-idle [--idle-grace N]] [--stop-on-reply "<regex>"]                     — cron-syntax job`,
     `${prefix} schedule list [<chat_id-or-slug>]      — show all schedules (or just one project's)`,
     `${prefix} schedule pause/resume/rm <id>          — toggle or delete a schedule`,
     `${prefix} provider <chat_id-or-slug> [--set ALIAS | --clear]    — switch a project to a different provider (or back to Claude subscription)`,
@@ -231,6 +235,7 @@ function helpText(prefix: string): string {
     `${prefix} memory stats                     — show memory counts by type and channel`,
     `${prefix} memory backup                    — trigger immediate R2 backup`,
     `${prefix} memory clear [--slug S] [--type T] --yes — delete matching memories`,
+    `${prefix} heartbeat [--channel <slug>] [--quiet]        — attention report (quiet: HEARTBEAT_OK sentinel when healthy)`,
     `${prefix} rm     <chat_id-or-slug> --yes                         — archive + remove`,
     `${prefix} help                          — this message`,
     '```',
@@ -285,6 +290,11 @@ function handleShow(config: ChannelsConfig, rest: string[]): string {
     lines.push(`remote: ${project.git.remote}`)
     lines.push(`branch: ${project.git.branch}`)
     lines.push(`creds:  ${project.git.credentials}`)
+    // Presence only — describePrAuth never includes the token value.
+    try {
+      const prAuth = describePrAuth(getCredential(loadCredentials(), project.git.credentials))
+      if (prAuth) lines.push(`pr auth: ${prAuth}`)
+    } catch { /* unreadable creds file must not break show */ }
     // If the project dir is a git working tree, show live git status too.
     const dir = projectDir(project.slug)
     if (existsSync(dir)) {
@@ -301,6 +311,27 @@ function handleShow(config: ChannelsConfig, rest: string[]): string {
       else lines.push('git: (no remote configured)')
     } else {
       lines.push('git: (no remote configured)')
+    }
+  }
+  // Specclaw status (FR4)
+  {
+    const ss = readSpecclawStatus(projectDir(project.slug))
+    if (ss.present) {
+      if (ss.activeChange) {
+        let part = `specclaw: 🔨 ${ss.activeChange}`
+        const detail: string[] = []
+        let taskPart = ''
+        if (ss.phase !== undefined) taskPart += `${ss.phase} `
+        if (ss.tasksDone !== undefined && ss.tasksTotal !== undefined) taskPart += `${ss.tasksDone}/${ss.tasksTotal} tasks`
+        else if (ss.phase !== undefined) taskPart = taskPart.trimEnd()
+        if (taskPart.trim()) detail.push(taskPart.trim())
+        if (ss.pendingProposals) detail.push(`${ss.pendingProposals} proposals pending`)
+        if (detail.length > 0) part += ` — ${detail.join(', ')}`
+        lines.push(part)
+      } else {
+        if (ss.pendingProposals) lines.push(`specclaw: idle — ${ss.pendingProposals} proposals pending`)
+        else lines.push('specclaw: idle')
+      }
     }
   }
   // Goal (P39)
@@ -574,8 +605,23 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
   }
   const developBranch = developBranchRaw === 'on' ? true : developBranchRaw === 'off' ? false : null
 
-  if (prompt === null && stuckMinutes === null && heartbeatMode === null && heartbeatWindow === null && heartbeatStale === null && goalRaw === null && distillOnStop === null && developBranch === null) {
-    return '`set` requires `--prompt "..."`, `--stuck-threshold-minutes N`, `--heartbeat-mode <supervised|autonomous>`, `--heartbeat-window <HH:MM-HH:MM>`, `--heartbeat-stale-minutes N`, `--goal "..."`, `--distill-on-stop`, or `--develop-branch on|off`'
+  const prTokenGithub = typeof flags['pr-token-github'] === 'string' ? flags['pr-token-github'] : null
+  const prTokenAzdo = typeof flags['pr-token-azdo'] === 'string' ? flags['pr-token-azdo'] : null
+  if (prTokenGithub !== null && prTokenAzdo !== null) {
+    return '`--pr-token-github` and `--pr-token-azdo` are mutually exclusive'
+  }
+  let prApi: PrApi | null = null
+  if (prTokenGithub !== null) {
+    prApi = { kind: 'github', token: prTokenGithub }
+  } else if (prTokenAzdo !== null) {
+    const org = typeof flags['azdo-org'] === 'string' ? flags['azdo-org'] : null
+    const project = typeof flags['azdo-project'] === 'string' ? flags['azdo-project'] : null
+    if (!org || !project) return '`--pr-token-azdo` requires `--azdo-org <org>` and `--azdo-project <project>`'
+    prApi = { kind: 'azdo', token: prTokenAzdo, org, project }
+  }
+
+  if (prompt === null && stuckMinutes === null && heartbeatMode === null && heartbeatWindow === null && heartbeatStale === null && goalRaw === null && distillOnStop === null && developBranch === null && prApi === null) {
+    return '`set` requires `--prompt "..."`, `--stuck-threshold-minutes N`, `--heartbeat-mode <supervised|autonomous>`, `--heartbeat-window <HH:MM-HH:MM>`, `--heartbeat-stale-minutes N`, `--goal "..."`, `--distill-on-stop`, `--develop-branch on|off`, `--pr-token-github <token>`, or `--pr-token-azdo <token> --azdo-org X --azdo-project Y`'
   }
 
   const results: string[] = []
@@ -636,6 +682,24 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
     const latestEntry = latestConfig.projects[entry.chatId] ?? entry.project
     saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: { ...latestEntry, developBranch } } })
     results.push(`✅ set \`developBranch\` = ${developBranch} for **${entry.project.slug}**.`)
+  }
+
+  if (prApi !== null) {
+    const alias = entry.project.git?.credentials
+    if (!alias) {
+      return 'project has no `git.credentials` alias — PR tokens are stored on the transport alias. Configure git first (`remote`/`clone`).'
+    }
+    try {
+      const creds = loadCredentials()
+      const cred = getCredential(creds, alias)
+      saveCredentials({ ...creds, [alias]: { ...cred, prApi } })
+    } catch (err) {
+      return `PR token store failed: ${(err as Error).message}`
+    }
+    results.push(
+      `✅ stored ${prApi.kind} PR token on alias \`${alias}\` for **${entry.project.slug}**.`,
+      '⚠️ Delete the Discord message containing the token now — it is in channel history.',
+    )
   }
 
   // Respawn only needed when prompt changed (CLAUDE.md is read at session start).
@@ -1105,6 +1169,33 @@ async function scheduleAdd(tail: string[]): Promise<string> {
   const cronRaw = flags.cron
   const atRaw = flags.at
 
+  // --only-when-idle / --idle-grace validation (shared for both cron and at/interval paths)
+  const onlyWhenIdle = flags['only-when-idle'] === true
+  let idleGraceMinutes: number | undefined
+  if (flags['idle-grace'] !== undefined) {
+    if (!onlyWhenIdle) return '`--idle-grace` requires `--only-when-idle`'
+    const n = Number(flags['idle-grace'])
+    if (!Number.isInteger(n) || n <= 0) return `\`--idle-grace\` must be a positive integer; got "${flags['idle-grace']}"`
+    idleGraceMinutes = n
+  }
+
+  const idleFields = onlyWhenIdle
+    ? { onlyWhenIdle: true as const, ...(idleGraceMinutes !== undefined ? { idleGraceMinutes } : {}) }
+    : {}
+  const idleConfirmLine = onlyWhenIdle
+    ? `\n⏸ idle-gated (grace ${idleGraceMinutes !== undefined ? `${idleGraceMinutes}m` : '5m default'})`
+    : ''
+
+  // --stop-on-reply validation (shared for both paths)
+  let stopOnReply: string | undefined
+  if (flags['stop-on-reply'] !== undefined) {
+    const pattern = String(flags['stop-on-reply'])
+    try { new RegExp(pattern, 'i') } catch { return '`--stop-on-reply` must be a valid regex' }
+    stopOnReply = pattern
+  }
+  const stopOnReplyFields = stopOnReply !== undefined ? { stopOnReply } : {}
+  const stopOnReplyConfirmLine = stopOnReply !== undefined ? `\n⏹ stop-on-reply /${stopOnReply}/` : ''
+
   if (typeof cronRaw === 'string') {
     const cronErr = validateCron(cronRaw)
     if (cronErr) return `invalid \`--cron\` expression: ${cronErr}`
@@ -1133,6 +1224,8 @@ async function scheduleAdd(tail: string[]): Promise<string> {
       createdAt: new Date().toISOString(),
       maxRuns,
       runCount: 0,
+      ...idleFields,
+      ...stopOnReplyFields,
     }
     const file = loadSchedules()
     file.schedules.push(sched)
@@ -1143,7 +1236,7 @@ async function scheduleAdd(tail: string[]): Promise<string> {
       `cron: \`${cronRaw}\``,
       `prompt: ${prompt.length > 120 ? prompt.slice(0, 120) + '…' : prompt}`,
       maxRuns ? `max runs: ${maxRuns}` : '_no run cap (use `pause`/`rm` to stop)_',
-    ].join('\n')
+    ].join('\n') + idleConfirmLine + stopOnReplyConfirmLine
   }
 
   if (typeof atRaw !== 'string') return '`schedule add` requires `--at HH:MM|every Xm/Xh` or `--cron "* * * * *"`'
@@ -1183,6 +1276,8 @@ async function scheduleAdd(tail: string[]): Promise<string> {
         createdAt: new Date().toISOString(),
         maxRuns,
         runCount: 0,
+        ...idleFields,
+        ...stopOnReplyFields,
       }
     : {
         id,
@@ -1195,6 +1290,8 @@ async function scheduleAdd(tail: string[]): Promise<string> {
         createdAt: new Date().toISOString(),
         maxRuns,
         runCount: 0,
+        ...idleFields,
+        ...stopOnReplyFields,
       }
   file.schedules.push(sched)
   saveSchedules(file)
@@ -1206,7 +1303,7 @@ async function scheduleAdd(tail: string[]): Promise<string> {
     timeLabel,
     `prompt: ${prompt.length > 120 ? prompt.slice(0, 120) + '…' : prompt}`,
     maxRuns ? `max runs: ${maxRuns}` : '_no run cap (use `pause`/`rm` to stop)_',
-  ].join('\n')
+  ].join('\n') + idleConfirmLine + stopOnReplyConfirmLine
 }
 
 /**
@@ -1295,7 +1392,13 @@ function scheduleList(tail: string[]): string {
     const en = s.enabled ? 'yes' : 'no '
     const runs = s.maxRuns ? `${s.runCount}/${s.maxRuns}` : `${s.runCount}`
     const last = s.lastRunAt ?? '(never)'
-    lines.push(`${id}  ${slug}  ${at}  ${en}    ${runs.padStart(5)}  ${last}`)
+    const idleTag = s.onlyWhenIdle ? '  ⏸ idle-gated' : ''
+    const skippedTag = s.lastSkippedAt && (!s.lastRunAt || s.lastSkippedAt > s.lastRunAt)
+      ? '  ⏸ skipped (busy)'
+      : ''
+    const stopOnReplyTag = s.stopOnReply ? `  ⏹ stop-on-reply /${s.stopOnReply}/` : ''
+    const escalatedTag = s.escalatedAt ? '  🛑 escalated' : ''
+    lines.push(`${id}  ${slug}  ${at}  ${en}    ${runs.padStart(5)}  ${last}${idleTag}${skippedTag}${stopOnReplyTag}${escalatedTag}`)
   }
   lines.push('```')
   return lines.join('\n')
@@ -1308,6 +1411,7 @@ function scheduleSetEnabled(tail: string[], enabled: boolean): string {
   const s = file.schedules.find((x) => x.id === id)
   if (!s) return `no schedule with id \`${id}\``
   s.enabled = enabled
+  if (enabled) s.escalatedAt = null
   saveSchedules(file)
   return `✅ schedule **${id}** ${enabled ? 'resumed' : 'paused'}`
 }
@@ -1642,53 +1746,59 @@ async function handleMemory(rest: string[], ctx: MasterContext): Promise<string>
   return `unknown memory subverb \`${sub}\`. valid: stats, backup, clear`
 }
 
-function handleHeartbeat(rest: string[], _ctx: MasterContext): string {
-  const { positional, flags } = parseFlags(rest)
+export const HEARTBEAT_OK = 'HEARTBEAT_OK'
+
+function handleHeartbeat(rest: string[], ctx: MasterContext): string {
+  const { flags } = parseFlags(rest)
   const channelSlug = typeof flags.channel === 'string' ? flags.channel : null
+  const quiet = flags.quiet === true
 
   const config = loadConfig()
-  const ts = new Date().toISOString()
+
+  // Build the full attention report
+  const deps = {
+    getCircuitStates: ctx.getCircuitStates,
+    loadSchedules: () => loadSchedules(),
+    readSpecclawStatus,
+  }
+  let allItems = buildAttentionReport(config, deps)
+
+  // Count projects scanned (affected by --channel filter)
+  let scannedCount = Object.keys(config.projects).length
 
   if (channelSlug !== null) {
-    const state = classifyChannel(channelSlug, config)
-    const lines = [`Heartbeat scan — ${ts}`]
-    if (state.state === 'idle') {
-      lines.push(`✅ idle (1): ${state.slug}`)
-    } else {
-      const age = fmtAge(state.ageMins)
-      lines.push(`⏰ stalled (1):`)
-      lines.push(`  • ${state.slug} — ${state.reason}, ${age} ago`)
-      if (state.snippet) lines.push(`    snippet: "${state.snippet}"`)
-    }
-    return lines.join('\n')
+    // Validate slug exists
+    const found = Object.values(config.projects).find(p => p.slug === channelSlug)
+    if (!found) return `unknown channel \`${channelSlug}\``
+    allItems = allItems.filter(i => i.slug === channelSlug)
+    scannedCount = 1
   }
 
-  const report = scanChannels(config)
-  const lines = [`Heartbeat scan — ${ts}`]
-
-  if (report.idle.length > 0) {
-    lines.push(`✅ idle (${report.idle.length}): ${report.idle.join(', ')}`)
+  // Zero items: quiet → sentinel; non-quiet → summary
+  if (allItems.length === 0) {
+    if (quiet) return HEARTBEAT_OK
+    return `✅ all quiet — ${scannedCount} channel${scannedCount === 1 ? '' : 's'} scanned`
   }
 
-  if (report.stalled.length > 0) {
-    lines.push(`⏰ stalled (${report.stalled.length}):`)
-    for (const s of report.stalled) {
-      const age = fmtAge(s.ageMins)
-      lines.push(`  • ${s.slug} — ${s.reason}, ${age} ago`)
-      if (s.snippet) lines.push(`    snippet: "${s.snippet}"`)
-    }
+  // Has items: render report (same with or without --quiet per FR7)
+  const ts = new Date().toISOString()
+  const lines: string[] = [`Heartbeat — ${ts}`]
+
+  const sevEmoji: Record<string, string> = { blocked: '🔴', review: '🟡', info: '🔵' }
+  const CAP = 15
+  const displayed = allItems.slice(0, CAP)
+  const overflow = allItems.length - displayed.length
+
+  for (const item of displayed) {
+    const emoji = sevEmoji[item.severity] ?? '⚪'
+    lines.push(`${emoji} <#${item.chatId}> **${item.slug}** — ${item.summary}`)
+    if (item.action) lines.push(`  ↳ ${item.action}`)
+    if (item.detail) lines.push(`  > ${item.detail}`)
   }
+
+  if (overflow > 0) lines.push(`(+${overflow} more)`)
 
   return lines.join('\n')
-}
-
-function fmtAge(ageMins: number): string {
-  if (ageMins >= 60) {
-    const h = Math.floor(ageMins / 60)
-    const m = ageMins % 60
-    return `${h}h ${m}m`
-  }
-  return `${ageMins}m`
 }
 
 function removeChannelFromAccessGroups(chatId: string): void {

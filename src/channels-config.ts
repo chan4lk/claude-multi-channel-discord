@@ -53,7 +53,7 @@ const ClaudeArgsSchema = z.object({
 })
 export type ClaudeArgs = z.infer<typeof ClaudeArgsSchema>
 
-const ProgressModeSchema = z.enum(['off', 'edit', 'post'])
+const ProgressModeSchema = z.enum(['off', 'edit', 'post', 'phases'])
 export type ProgressMode = z.infer<typeof ProgressModeSchema>
 
 const VoiceProjectConfigSchema = z.object({

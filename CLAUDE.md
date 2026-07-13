@@ -34,7 +34,7 @@ Discord Gateway (WSS)
  │              └─ tmux session "mcd-<slug>-<ts>"                            │
  │                     └─ claude --mcp-config <tmpfile> --strict-mcp-config  │
  ├─ master-channel command parser  (!project ...)                             │
- └─ Scheduler  (ticks every 60s, fires daily HH:MM jobs)                    │
+ └─ Scheduler  (ticks every 60s; daily HH:MM, intervals, 5-field cron)      │
 ```
 
 **Inbound (Discord → Claude):** `tmux send-keys -l <text>` + Enter. Messages are wrapped in `<channel source="discord" chat_id="..." ...>BODY</channel>` before injection so the project's CLAUDE.md guidance applies.
@@ -63,7 +63,7 @@ Discord Gateway (WSS)
 | `src/master-commands.ts` | `!project ...` parser + verb handlers |
 | `src/git-ops.ts` | `buildGitEnv()`, `gitStatusSummary()`, `gitPull()` |
 | `src/git-credentials.ts` | Credential aliases (mode 0600 enforced) |
-| `src/scheduler.ts` | Daily HH:MM cron-lite, reads/writes `schedules.json` |
+| `src/scheduler.ts` | Daily HH:MM / interval / 5-field cron jobs, reads/writes `schedules.json` |
 | `src/init.ts` | Bootstrap CLI (called by setup script + `/discord:project init` skill) |
 | `src/argv.ts` | Bash-like argv splitter + flag parser |
 | `src/discord-chunk.ts` | 2000-char chunker respecting Discord markdown |
@@ -103,7 +103,7 @@ Tests: `src/master-commands.test.ts`, `src/project-pool.test.ts`, `src/master-mc
 
 ## All implemented `!project` verbs
 
-`list`, `show`/`status`, `create`, `clone`, `set`, `rename`, `remote`, `pull`, `usage`/`ps`/`top`, `stop`, `schedule add/list/pause/resume/rm`, `provider`, `rm --yes`, `help`
+`list`, `show`/`status`, `create`, `clone`, `set`, `rename`, `remote`, `pull`, `usage`/`ps`/`top`, `stop`, `schedule add/inject/list/pause/resume/rm`, `provider`, `model`, `progress`, `branch`, `memory`, `heartbeat`, `teams-setup`, `rm --yes`, `help`
 
 Mutation verbs require `userId ∈ access.allowFrom`. Destructive verbs (`rm`, `rename`, `remote --set`) require `--yes`.
 
@@ -229,11 +229,9 @@ bin/setup-new-instance.sh --state-dir ~/.claude/channels/discord-multi \
 - Per-channel allowlists beyond `access.json groups[].allowFrom` (role-based)
 - Cross-project handoff (`@<slug> please finish this`)
 - `/discord:project` skill verbs that proxy `create`/`clone` without typing in Discord
-- Proactive watchdog respawn on `claude` crash (currently lazy-respawns on next message)
 - Resume-broken-PR support (bot died mid-push)
-- Full cron syntax for scheduler (currently daily HH:MM only)
-- Tool tests: HTTP probe → `mcp__mcd__reply` round-trip with mock sink
-- `persistSessionAndRename` retry loop (so `.session-id` lands even if capture path lost the race with claude's first transcript write)
+
+Recently shipped (previously on this list): proactive respawn with backoff + circuit breaker (`ProjectPool.recordFailureAndMaybeRespawn`), 5-field cron scheduler syntax (#291), MCP tool round-trip tests (#295), `persistSessionAndRename` retry loop (6× at TUI-ready + per-deliver re-attempt).
 
 ---
 

@@ -2,7 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import type { ChannelsConfig, Project } from './channels-config.ts'
-import type { InboundEnvelope, OutboundReply, ProjectProcess, ToolProgressEvent, LimitHitEvent } from './project-process.ts'
+import type { InboundEnvelope, OutboundReply, ProjectProcess, SpecclawProgressEvent, ToolProgressEvent, LimitHitEvent } from './project-process.ts'
 
 export type PoolEvent =
   | { kind: 'spawn'; chatId: string; slug: string }
@@ -12,6 +12,7 @@ export type PoolEvent =
   | { kind: 'stuck'; chatId: string; slug: string; sinceLastReplyMs: number; effectiveThresholdMs: number }
   | { kind: 'progress-skip'; chatId: string; slug: string; sinceLastReplyMs: number; sinceTranscriptMs: number; effectiveThresholdMs: number }
   | { kind: 'tool-progress'; chatId: string; slug: string; event: ToolProgressEvent }
+  | { kind: 'specclaw-progress'; chatId: string; slug: string; event: SpecclawProgressEvent }
   | { kind: 'limit-hit'; chatId: string; slug: string; event: LimitHitEvent }
   | { kind: 'respawn-scheduled'; chatId: string; slug: string; backoffMs: number; attempt: number }
   | { kind: 'circuit-open'; chatId: string; slug: string; failureCount: number }
@@ -20,6 +21,8 @@ export type PoolEvent =
   | { kind: 'budget-alert'; chatId: string; slug: string; threshold: 50 | 80 | 100; used: number; budget: number }
   | { kind: 'budget-restored'; chatId: string; slug: string; drained: number }
   | { kind: 'session-rotated'; chatId: string; slug: string; transcriptBytes: number }
+  | { kind: 'kill-loop-paused'; chatId: string; slug: string; killCount: number }
+  | { kind: 'kill-loop-resumed'; chatId: string; slug: string }
 
 interface FailureLedger {
   count: number
@@ -53,6 +56,14 @@ export class ProjectPool {
   private readonly processes = new Map<string, ProjectProcess>()
   private readonly cleanups = new Map<string, () => void>()
   private idleTimer: ReturnType<typeof setInterval> | null = null
+  /** Timestamp of last spawn() call per chatId — for null-kill detection. */
+  private readonly spawnedAtMs = new Map<string, number>()
+  /** Timestamp of last tool-progress event per chatId. */
+  private readonly lastToolProgressMs = new Map<string, number>()
+  /** Rolling counter of consecutive null-kills (no tool progress between spawn→kill) per chatId. */
+  private readonly nullKillTracker = new Map<string, { count: number; windowStart: number }>()
+  /** Channels paused due to kill-loop detection. Delivers are dropped until operator clears. */
+  private readonly killLoopPaused = new Set<string>()
   /**
    * Per-chat dedup cache of recently-delivered Discord message IDs.
    * Discord's gateway can replay events after a reconnect/RESUME — if
@@ -89,8 +100,24 @@ export class ProjectPool {
   static readonly CIRCUIT_RESET_MS = 10 * 60_000     // 10 min
   static readonly BACKOFF_SEQUENCE_MS = [5_000, 10_000, 30_000, 120_000, 300_000]
 
+  static readonly KILL_LOOP_WINDOW_MS = 2 * 60 * 60_000  // 2 hours
+  static readonly KILL_LOOP_THRESHOLD = 3
+
   constructor(opts: ProjectPoolOptions) {
     this.opts = opts
+    this.restoreKillLoopPaused()
+  }
+
+  private restoreKillLoopPaused(): void {
+    const mcdDir = process.env.MCD_CHANNELS_DIR
+    if (!mcdDir) return
+    const config = this.opts.getConfig()
+    for (const [chatId, project] of Object.entries(config.projects)) {
+      const sentinel = path.join(mcdDir, 'projects', project.slug, 'kill-loop-paused')
+      try {
+        if (fs.existsSync(sentinel)) this.killLoopPaused.add(chatId)
+      } catch { /* non-critical */ }
+    }
   }
 
   /** Start background idle eviction. Idempotent. */
@@ -116,6 +143,11 @@ export class ProjectPool {
     const project = config.projects[chatId]
     if (!project) {
       this.fireEvent({ kind: 'rejected', chatId, reason: 'unknown-project' })
+      return
+    }
+
+    if (this.killLoopPaused.has(chatId)) {
+      process.stderr.write(`pool: kill-loop pause active for ${project.slug}, dropping message\n`)
       return
     }
 
@@ -302,6 +334,7 @@ export class ProjectPool {
   async killChat(chatId: string, reason: 'idle-evict' | 'pool-full' | 'shutdown' | 'requested' = 'requested'): Promise<void> {
     const proc = this.processes.get(chatId)
     if (!proc) return
+    this.clearKillLoopPause(chatId)
     await proc.kill(reason)
     // exit handler set in spawn() will remove from this.processes once the
     // child actually exits — we don't need to delete here.
@@ -363,6 +396,26 @@ export class ProjectPool {
             continue
           }
           this.fireEvent({ kind: 'stuck', chatId, slug: proc.slug, sinceLastReplyMs: sincePending, effectiveThresholdMs: effectiveThreshold })
+          // Kill-loop detection: if no tool progress occurred since spawn, this is a null kill.
+          const lastTP = this.lastToolProgressMs.get(chatId)
+          const spawnedAt = this.spawnedAtMs.get(chatId)
+          const isNullKill = lastTP == null || spawnedAt == null || lastTP < spawnedAt
+          if (isNullKill) {
+            let tracker = this.nullKillTracker.get(chatId)
+            if (!tracker || now - tracker.windowStart > ProjectPool.KILL_LOOP_WINDOW_MS) {
+              tracker = { count: 0, windowStart: now }
+              this.nullKillTracker.set(chatId, tracker)
+            }
+            tracker.count++
+            if (tracker.count >= ProjectPool.KILL_LOOP_THRESHOLD) {
+              this.setKillLoopPause(chatId, proc.slug, tracker.count)
+              continue
+            }
+          } else {
+            // Tool activity occurred this spawn — reset null-kill counter so a
+            // single productive spawn breaks the kill-loop accumulation.
+            this.nullKillTracker.delete(chatId)
+          }
           void proc.kill('watchdog')
           continue
         }
@@ -398,6 +451,21 @@ export class ProjectPool {
   has(chatId: string): boolean {
     const p = this.processes.get(chatId)
     return !!p && p.isAlive()
+  }
+
+  /**
+   * Busy probe for idle-gated schedules. True when the chat has a live
+   * process AND positive evidence of activity: an in-flight turn
+   * (pendingDeliverAtMs) or a transcript write within the last graceMs.
+   * Everything unknown fails open to "not busy" — a gated schedule must
+   * never be stranded by missing signals.
+   */
+  isBusy(chatId: string, graceMs: number): boolean {
+    const p = this.processes.get(chatId)
+    if (!p?.isAlive()) return false
+    if (p.pendingDeliverAtMs?.() != null) return true
+    const mtime = p.transcriptMtimeMs?.()
+    return mtime != null && Date.now() - mtime < graceMs
   }
 
   /** Returns circuit-breaker state for each chat. */
@@ -462,6 +530,7 @@ export class ProjectPool {
 
     const proc = this.opts.factory({ chatId, project, config })
     this.processes.set(chatId, proc)
+    this.spawnedAtMs.set(chatId, this.now())
 
     const offReply = proc.onReply((reply) => {
       try {
@@ -484,16 +553,21 @@ export class ProjectPool {
       }
     })
     const offToolProgress = proc.onToolProgress?.((ev) => {
+      this.lastToolProgressMs.set(chatId, this.now())
       this.fireEvent({ kind: 'tool-progress', chatId, slug: project.slug, event: ev })
     })
     const offLimitHit = proc.onLimitHit?.((ev) => {
       this.fireEvent({ kind: 'limit-hit', chatId, slug: project.slug, event: ev })
+    })
+    const offSpecclawProgress = proc.onSpecclawProgress?.((ev) => {
+      this.fireEvent({ kind: 'specclaw-progress', chatId, slug: project.slug, event: ev })
     })
     this.cleanups.set(chatId, () => {
       offReply()
       offExit()
       offToolProgress?.()
       offLimitHit?.()
+      offSpecclawProgress?.()
     })
 
     this.fireEvent({ kind: 'spawn', chatId, slug: project.slug })
@@ -580,6 +654,37 @@ export class ProjectPool {
   /** Called by ClaudeProjectProcess when it auto-rotates to a fresh session. */
   emitSessionRotated(info: { slug: string; chatId: string; transcriptBytes: number }): void {
     this.fireEvent({ kind: 'session-rotated', ...info })
+  }
+
+  private setKillLoopPause(chatId: string, slug: string, killCount: number): void {
+    this.killLoopPaused.add(chatId)
+    const mcdDir = process.env.MCD_CHANNELS_DIR
+    if (mcdDir) {
+      const sentinel = path.join(mcdDir, 'projects', slug, 'kill-loop-paused')
+      try { fs.writeFileSync(sentinel, new Date().toISOString(), 'utf-8') } catch { /* non-critical */ }
+    }
+    this.fireEvent({ kind: 'kill-loop-paused', chatId, slug, killCount })
+    const masterChatId = this.opts.getConfig().master?.chatId
+    if (!masterChatId) return
+    this.opts.onReply({
+      kind: 'text',
+      chatId: masterChatId,
+      text: `⚠️ Kill-loop detected for **${slug}** (${killCount} watchdog kills with no tool progress in 2h window). Delivers to this channel are paused. Run \`!project start ${slug}\` to resume after investigating.`,
+    })
+  }
+
+  private clearKillLoopPause(chatId: string): void {
+    if (!this.killLoopPaused.has(chatId)) return
+    this.killLoopPaused.delete(chatId)
+    this.nullKillTracker.delete(chatId)
+    const config = this.opts.getConfig()
+    const slug = config.projects[chatId]?.slug
+    const mcdDir = process.env.MCD_CHANNELS_DIR
+    if (mcdDir && slug) {
+      const sentinel = path.join(mcdDir, 'projects', slug, 'kill-loop-paused')
+      try { fs.rmSync(sentinel, { force: true }) } catch { /* non-critical */ }
+    }
+    if (slug) this.fireEvent({ kind: 'kill-loop-resumed', chatId, slug })
   }
 
   private fireEvent(evt: PoolEvent): void {

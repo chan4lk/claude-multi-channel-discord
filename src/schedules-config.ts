@@ -57,6 +57,25 @@ const ScheduleSchema = z.object({
    * cache) if one is available for the associated project.
    */
   autoSchedule: z.boolean().optional(),
+  /** When true, the schedule fires only when the target project is idle (no in-flight turn or recent transcript write). */
+  onlyWhenIdle: z.boolean().optional(),
+  /** Grace window in minutes for the idle gate. Defaults to 5 when `onlyWhenIdle` is true and this is unset. */
+  idleGraceMinutes: z.number().int().positive().optional(),
+  /** ISO timestamp of the most recent busy-skip; a later successful fire updates lastRunAt past it. */
+  lastSkippedAt: z.string().nullable().optional(),
+  /**
+   * Optional auto-pause pattern. After a fire, if the project's outbound
+   * reply matches this regex (case-insensitive), the scheduler disables
+   * the schedule deterministically — no more post-completion fires.
+   */
+  stopOnReply: z.string().refine((p) => { try { new RegExp(p, 'i'); return true } catch { return false } }, 'stopOnReply must be a valid regex').optional(),
+  /**
+   * ISO timestamp set when the scheduler suspended this schedule
+   * because the target project's specclaw loop halted on a guardrail.
+   * Guards against escalating the same halt twice; `schedule resume`
+   * clears it.
+   */
+  escalatedAt: z.string().nullable().optional(),
 }).refine(
   (s) => [s.at, s.interval, s.cron].filter((v) => v !== undefined).length === 1,
   { message: 'Exactly one of `at`, `interval`, or `cron` must be set' },

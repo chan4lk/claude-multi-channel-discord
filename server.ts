@@ -49,6 +49,7 @@ import { MasterMcpServer } from './src/master-mcp-server.ts'
 import { ProjectPool } from './src/project-pool.ts'
 import type { OutboundReply, ToolProgressEvent } from './src/project-process.ts'
 import { projectDir, memoryDbFile, channelsDir } from './src/paths.ts'
+import { detectSpecclawHalt } from './src/specclaw-status.ts'
 import { MemoryStore } from './src/memory-store.ts'
 import { backupMemory, type R2Config } from './src/memory-backup.ts'
 import { Scheduler } from './src/scheduler.ts'
@@ -110,6 +111,8 @@ if (teamsAppId && teamsAppSecret) {
     appId: teamsAppId,
     appSecret: teamsAppSecret,
     ...(teamsTenantId ? { tenantId: teamsTenantId } : {}),
+    inboxDir: join(STATE_DIR, 'inbox'),
+    maxAttachmentBytes: 25 * 1024 * 1024,
     onInbound: (chatId, env, _serviceUrl) => {
       handleTeamsInbound(chatId, env)
     },
@@ -1223,6 +1226,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
     getPool: () => projectPool,
     // Reread channels.json each call — handoff opt-ins can change at runtime.
     getConfig: () => loadChannelsConfig(),
+    getProjectPlatform: (chatId) => loadChannelsConfig().projects[chatId]?.platform,
     memoryStore: memoryStore ?? undefined,
     // Master-only privileged path. Claude in the master channel can
     // execute the same `!project ...` verbs the operator would type, so
@@ -1243,6 +1247,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
         authorizedUsers: ['__mcd_master_self__'],
         mutator: projectPool ? buildMutator() : undefined,
         memoryStore: memoryStore ?? undefined,
+        getCircuitStates: projectPool ? () => projectPool!.getCircuitStates() : undefined,
       })
       if (result.kind === 'reply') return result.text
       return `[${result.kind}]`
@@ -1266,6 +1271,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
       const proc = new ClaudeProjectProcess({
         chatId,
         slug: project.slug,
+        platform: project.platform as 'discord' | 'teams' | 'whatsapp' | undefined,
         master,
         model: project.model ?? config.defaults.model,
         claudeArgs: resolveClaudeArgs(config, project),
@@ -1285,6 +1291,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
         onSessionRotated: (info) => {
           projectPool?.emitSessionRotated(info)
         },
+        progressMode: project.progressMode ?? config.defaults.progressMode,
       })
       // Fire-and-forget; the pool may call deliver() before start() resolves
       // for the very first message — ClaudeProjectProcess deliver() awaits
@@ -1302,6 +1309,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
     },
     getConfig: loadChannelsConfig,
     onReply: (reply) => {
+      if (reply.kind === 'text') scheduler?.noteReply(reply.chatId, reply.text)
       const cfg = loadChannelsConfig()
       const platform = cfg.projects[reply.chatId]?.platform ?? 'discord'
       if (platform === 'teams' && teamsAdapter) {
@@ -1471,6 +1479,11 @@ async function maybeInitProjectsBackend(): Promise<void> {
           process.stderr.write(`discord: tool-progress dispatch failed: ${err}\n`)
         })
       }
+      if (evt.kind === 'specclaw-progress') {
+        void handleSpecclawProgressEvent(evt.chatId, evt.event).catch((err) => {
+          process.stderr.write(`discord: specclaw-progress dispatch failed: ${err}\n`)
+        })
+      }
     },
   })
   projectPool.start()
@@ -1488,6 +1501,38 @@ async function maybeInitProjectsBackend(): Promise<void> {
       const cfg = loadChannelsConfig()
       const slug = cfg.projects[chatId]?.slug ?? chatId
       mcEmit('scheduler_fired', { chatId, slug, jobId, scheduledTime })
+    },
+    isBusy: (chatId, graceMs) => projectPool!.isBusy(chatId, graceMs),
+    onAutoPause: (sched, pattern) => {
+      const cfg = loadChannelsConfig()
+      const slug = cfg.projects[sched.chatId]?.slug ?? sched.chatId
+      const masterChatId = cfg.master?.chatId ?? sched.chatId
+      const notice: OutboundReply = {
+        kind: 'text',
+        chatId: masterChatId,
+        text: `⏸ schedule **${sched.id}** (${slug}) auto-paused — reply matched \`/${pattern}/\``,
+      }
+      routeNotification(cfg, notice, 'schedule-autopaused notify')
+    },
+    checkHalt: (chatId) => {
+      const slug = loadChannelsConfig().projects[chatId]?.slug
+      if (!slug) return { halted: false }
+      try {
+        return detectSpecclawHalt(projectDir(slug))
+      } catch {
+        return { halted: false }
+      }
+    },
+    onEscalate: (sched, change, evidence) => {
+      const cfg = loadChannelsConfig()
+      const slug = cfg.projects[sched.chatId]?.slug ?? sched.chatId
+      const masterChatId = cfg.master?.chatId ?? sched.chatId
+      const notice: OutboundReply = {
+        kind: 'text',
+        chatId: masterChatId,
+        text: `🛑 **${slug}**: specclaw loop halted on **${change}** — ${evidence}. schedule **${sched.id}** suspended; \`schedule resume ${sched.id}\` after fixing.`,
+      }
+      routeNotification(cfg, notice, 'specclaw-halt escalate')
     },
   })
   scheduler.start()
@@ -1670,6 +1715,46 @@ function detachSpecclawWatcher(chatId: string): void {
 const editProgressState = new Map<string, { msgId: string; lines: string[] }>()
 /** 'post' mode: one message per tool_use, tracked by toolId. */
 const postProgressMsgIds = new Map<string, string>()
+/** 'phases' mode: one message per specclaw change, keyed `chatId:change`. */
+const phasesProgressState = new Map<string, { msgId: string; lines: string[] }>()
+
+/** progressMode 'phases': edit-in-place timeline, one Discord message per change. */
+async function handleSpecclawProgressEvent(
+  chatId: string,
+  ev: { change: string; lines: string[] },
+): Promise<void> {
+  const config = loadChannelsConfig()
+  const project = config.projects[chatId]
+  const mode = project?.progressMode ?? config.defaults.progressMode ?? 'off'
+  if (mode !== 'phases') return
+  // Discord only in v1 — teams/whatsapp message-edit semantics differ.
+  if ((project?.platform ?? 'discord') !== 'discord') return
+
+  const channel = await fetchTextChannel(chatId).catch(() => null)
+  if (!channel) return
+
+  const now = new Date()
+  const stamp = `${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}`
+  const key = `${chatId}:${ev.change}`
+  const state = phasesProgressState.get(key) ?? { msgId: '', lines: [] }
+  state.lines.push(...ev.lines.map((l) => `${stamp} ${l}`))
+
+  const shown = state.lines.slice(-15)
+  const content = [
+    `🦞 ${ev.change}`,
+    ...shown.map((l, i) => `${i === shown.length - 1 ? '└' : '├'} ${l}`),
+  ].join('\n').slice(0, 1900)
+
+  const existing = state.msgId ? await channel.messages.fetch(state.msgId).catch(() => null) : null
+  if (existing) {
+    await existing.edit(content).catch(() => {})
+  } else {
+    const sent = await (channel as { send: (o: { content: string }) => Promise<{ id: string }> })
+      .send({ content }).catch(() => null)
+    if (sent) state.msgId = sent.id
+  }
+  phasesProgressState.set(key, state)
+}
 
 function formatProgressLine(ev: ToolProgressEvent): string {
   if (ev.phase === 'start') {
@@ -1690,7 +1775,8 @@ async function handleToolProgressEvent(
   const config = loadChannelsConfig()
   const project = config.projects[chatId]
   const mode = project?.progressMode ?? config.defaults.progressMode ?? 'off'
-  if (mode === 'off') return
+  // 'phases' renders specclaw transitions only — raw tool activity stays silent.
+  if (mode === 'off' || mode === 'phases') return
 
   const platform = project?.platform ?? 'discord'
 
@@ -1915,6 +2001,7 @@ async function tryMasterCommand(msg: Message, access: Access): Promise<boolean> 
     authorizedUsers: access.allowFrom,
     mutator: projectPool ? buildMutator() : undefined,
     memoryStore: memoryStore ?? undefined,
+    getCircuitStates: projectPool ? () => projectPool!.getCircuitStates() : undefined,
   })
 
   switch (result.kind) {

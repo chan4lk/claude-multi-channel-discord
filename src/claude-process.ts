@@ -31,16 +31,19 @@ import type { ClaudeArgs } from './channels-config.ts'
 import type { MasterMcpServer } from './master-mcp-server.ts'
 import { projectDir, projectGoalFile, projectSessionFile } from './paths.ts'
 import { runDistillation } from './distillation.ts'
+import { buildSpecclawResumeBlock } from './specclaw-status.ts'
 import { parseLimitMessage, type LimitHitEvent } from './limit-offer.ts'
 import { buildGitEnv, type GitResult as _GitResultUnused } from './git-ops.ts'
-import { getCredential, loadCredentials, type Credential } from './git-credentials.ts'
+import { getCredential, loadCredentials, resolvePrApiEnv, type Credential } from './git-credentials.ts'
 import { loadUserEnv, UserEnvError } from './user-env.ts'
 import type {
   InboundEnvelope,
   OutboundReply,
   ProjectProcess,
+  SpecclawProgressEvent,
   ToolProgressEvent,
 } from './project-process.ts'
+import { classifySpecclawTransitions, takeSpecclawProgressSnapshot, type SpecclawProgressSnapshot } from './specclaw-progress.ts'
 
 const TMUX_POLL_INTERVAL_MS = 5_000
 const MAX_TURN_HISTORY = 5
@@ -247,6 +250,8 @@ function readProcStats(pid: number): { pid: number; cpuTimeMs?: number; memoryMb
 export interface ClaudeProjectProcessOptions {
   chatId: string
   slug: string
+  /** Platform this channel runs on. Affects channel tag source attribute. Defaults to 'discord'. */
+  platform?: 'discord' | 'teams' | 'whatsapp'
   /** Pre-started MasterMcpServer; shared across all ClaudeProjectProcesses. */
   master: MasterMcpServer
   /**
@@ -294,6 +299,11 @@ export interface ClaudeProjectProcessOptions {
   sessionRotateThresholdBytes?: number
   /** Called when session is auto-rotated due to oversized transcript. */
   onSessionRotated?: (info: { slug: string; chatId: string; transcriptBytes: number }) => void
+  /**
+   * Resolved progressMode for this project. Only 'phases' matters here —
+   * it enables the specclaw snapshot/diff on the transcript-watcher poll.
+   */
+  progressMode?: string
 }
 
 function summarizeToolInput(name: string, input: Record<string, unknown>): string {
@@ -343,6 +353,8 @@ export class ClaudeProjectProcess implements ProjectProcess {
   private observedSessionId: string | null = null
   private replyHandlers = new Set<(reply: OutboundReply) => void>()
   private toolProgressHandlers = new Set<(ev: ToolProgressEvent) => void>()
+  private specclawProgressHandlers = new Set<(ev: SpecclawProgressEvent) => void>()
+  private lastSpecclawSnapshot: SpecclawProgressSnapshot | null = null
   private limitHitHandlers = new Set<(ev: LimitHitEvent) => void>()
   private lastLimitRaw: string | null = null
   private _lastContextWarnAt = 0
@@ -495,6 +507,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
           // against process.env's value — diff-only.
           if (process.env[k] !== v) addEnv(k, v)
         }
+        for (const [k, v] of Object.entries(resolvePrApiEnv(cred))) addEnv(k, v)
         this.gitCredentialCleanup = built.cleanup
       } catch (err) {
         this.log(`gitCredential resolve failed: ${(err as Error).message}`)
@@ -1016,7 +1029,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
     // markup/code in messages passes through untouched.
     const body = envelope.content.replace(/<(\/?)channel\b/gi, '&lt;$1channel')
     const meta = [
-      `source="discord"`,
+      `source="${this.opts.platform ?? 'discord'}"`,
       `chat_id="${this.chatId}"`,
       `message_id="${attr(envelope.messageId)}"`,
       `user="${attr(envelope.username)}"`,
@@ -1073,6 +1086,35 @@ export class ClaudeProjectProcess implements ProjectProcess {
     return () => this.limitHitHandlers.delete(handler)
   }
 
+  onSpecclawProgress(handler: (ev: SpecclawProgressEvent) => void): () => void {
+    this.specclawProgressHandlers.add(handler)
+    return () => this.specclawProgressHandlers.delete(handler)
+  }
+
+  private fireSpecclawProgress(ev: SpecclawProgressEvent): void {
+    for (const h of this.specclawProgressHandlers) {
+      try { h(ev) } catch {}
+    }
+  }
+
+  /**
+   * progressMode "phases": diff .specclaw/ state on the poll cycle and emit
+   * lifecycle transitions. First snapshot is baseline only — emitting it
+   * would replay the current state as fake transitions on every respawn.
+   */
+  private pollSpecclawProgress(): void {
+    if (this.opts.progressMode !== 'phases') return
+    if (this.specclawProgressHandlers.size === 0 || !this.projectCwd) return
+    const next = takeSpecclawProgressSnapshot(this.projectCwd)
+    const prev = this.lastSpecclawSnapshot
+    this.lastSpecclawSnapshot = next
+    if (!prev) return
+    const lines = classifySpecclawTransitions(prev, next)
+    if (lines.length > 0 && next.activeChange !== undefined) {
+      this.fireSpecclawProgress({ change: next.activeChange, lines })
+    }
+  }
+
   private fireLimitHit(ev: LimitHitEvent): void {
     for (const h of this.limitHitHandlers) {
       try { h(ev) } catch {}
@@ -1082,7 +1124,9 @@ export class ClaudeProjectProcess implements ProjectProcess {
   private startTranscriptWatcher(): void {
     if (this.transcriptWatcherTimer) return
     const poll = () => {
-      if (!this._alive || (this.toolProgressHandlers.size === 0 && this.limitHitHandlers.size === 0)) return
+      if (!this._alive) return
+      this.pollSpecclawProgress()
+      if (this.toolProgressHandlers.size === 0 && this.limitHitHandlers.size === 0) return
       const sessionId = this.resolveSessionId()
       if (!sessionId || !this.projectCwd) return
       const path = join(homedir(), '.claude', 'projects', encodeProjectCwd(this.projectCwd), `${sessionId}.jsonl`)
@@ -1192,6 +1236,21 @@ export class ClaudeProjectProcess implements ProjectProcess {
     if (!this._alive || !this.tmuxSessionName) return
     const session = this.tmuxSessionName
     this.log(`kill (${reason}) — tmux kill-session -t ${session}`)
+    // Best-effort session-id capture before teardown (FR2).
+    if (reason === 'watchdog' && !this.sessionIdPersisted && this.projectCwd && this.preSpawnSessionIds.size > 0) {
+      const sid = findNewSessionId(this.projectCwd, this.preSpawnSessionIds)
+      if (sid) {
+        const sessionFile = projectSessionFile(this.slug)
+        try {
+          if (!existsSync(sessionFile)) {
+            writeFileSync(sessionFile, sid, { mode: 0o600 })
+            this.log(`session-id captured at kill time: ${sid}`)
+            this.sessionIdPersisted = true
+            this.observedSessionId = sid
+          }
+        } catch { /* non-fatal */ }
+      }
+    }
     const result = spawnSync('tmux', ['kill-session', '-t', session], { stdio: 'ignore' })
     if (result.status !== 0) {
       this.log(`kill-session non-zero (${result.status}) — assuming already dead`)
@@ -1376,7 +1435,8 @@ export class ClaudeProjectProcess implements ProjectProcess {
           }
         } catch { /* skip malformed line */ }
       }
-      if (userMsgs.length === 0 && assistantSnippets.length === 0) return
+      const resumeBlock = this.projectCwd ? buildSpecclawResumeBlock(this.projectCwd) : ''
+      if (userMsgs.length === 0 && assistantSnippets.length === 0 && !resumeBlock) return
       const parts = [
         `[auto] Prior session context (rotated at ${Math.round(sizeBytes / 1024)} KB):`,
         '',
@@ -1386,7 +1446,10 @@ export class ClaudeProjectProcess implements ProjectProcess {
         'Last assistant replies:',
         ...assistantSnippets.map(s => `- ${s}`),
       ]
-      const snapshot = parts.join('\n').slice(0, 2000)
+      // Resume block goes after the 2000-char truncation so disk-state
+      // instructions are never cut mid-sentence by a long prose snapshot.
+      let snapshot = parts.join('\n').slice(0, 2000)
+      if (resumeBlock) snapshot += `\n\n${resumeBlock}`
       const snapshotPath = join(projectDir(this.slug), '.session-context.md')
       writeFileSync(snapshotPath, snapshot)
       this.rotatedContextText = snapshot

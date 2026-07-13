@@ -3,12 +3,12 @@
  * Exits 0 on pass, 1 on first failure. Keeps phase 2 tight without pulling
  * in a test framework.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { splitArgv, parseFlags } from './argv.ts'
-import { handleMasterCommand, type MasterContext, type MasterMutator } from './master-commands.ts'
+import { handleMasterCommand, HEARTBEAT_OK, type MasterContext, type MasterMutator } from './master-commands.ts'
 import { ChannelsConfigSchema, loadConfig, resolveClaudeArgs, saveConfig } from './channels-config.ts'
 import { loadSchedules } from './schedules-config.ts'
 import { classifyChannel } from './heartbeat.ts'
@@ -402,6 +402,425 @@ check('set: heartbeat accepted', setHb.kind === 'reply' && setHb.text.includes('
   const result3 = classifyChannel('newproj', loadConfig())
   check('heartbeat: fresh transcript classified as idle/active', result3.state === 'idle')
   check('heartbeat: reason is active', result3.reason === 'active')
+}
+
+// --- AC5/AC6: specclaw status rendering in show + heartbeat --------------------
+
+// We use the 'newproj' project (chat_id 444444444444444444) which was re-created
+// above via mctx(). Its projectDir is stateDir/projects/newproj.
+
+// AC5a: project with .specclaw/STATUS.md having an active 🔨 change + 1 pending proposal
+{
+  const specclawDir = join(stateDir, 'projects', 'newproj', '.specclaw')
+  mkdirSync(specclawDir, { recursive: true })
+  const dashboard = [
+    '# 🦞 SpecClaw Dashboard',
+    '',
+    '## Active Changes',
+    '',
+    '- 🔨 **foo** — 3/8 tasks (38%) | 1 failed',
+    '',
+    '## Pending Proposals',
+    '',
+    '- 📋 **bar-proposal** — awaiting planning',
+    '',
+    '## Completed Changes',
+    '',
+    '_None_',
+  ].join('\n')
+  writeFileSync(join(specclawDir, 'STATUS.md'), dashboard, 'utf8')
+
+  const showSpecclaw = await handleMasterCommand('!project show newproj', mctx())
+  check(
+    'AC5a: show output contains specclaw active change name',
+    showSpecclaw.kind === 'reply' && showSpecclaw.text.includes('specclaw: 🔨 foo'),
+    showSpecclaw.kind === 'reply' ? showSpecclaw.text : showSpecclaw.kind,
+  )
+  check(
+    'AC5a: show output contains task counts',
+    showSpecclaw.kind === 'reply' && showSpecclaw.text.includes('3/8 tasks'),
+    showSpecclaw.kind === 'reply' ? showSpecclaw.text : showSpecclaw.kind,
+  )
+  check(
+    'AC5a: show output contains pending proposals count',
+    showSpecclaw.kind === 'reply' && showSpecclaw.text.includes('1 proposals pending'),
+    showSpecclaw.kind === 'reply' ? showSpecclaw.text : showSpecclaw.kind,
+  )
+}
+
+// AC5b: project without .specclaw → show output contains no 'specclaw:' line
+{
+  const showNoSpecclaw = await handleMasterCommand('!project show support', mctx())
+  check(
+    'AC5b: show with no .specclaw contains no specclaw: line',
+    showNoSpecclaw.kind === 'reply' && !showNoSpecclaw.text.includes('specclaw:'),
+    showNoSpecclaw.kind === 'reply' ? showNoSpecclaw.text : showNoSpecclaw.kind,
+  )
+}
+
+// AC6a: heartbeat with fresh transcript (specclaw-idle needs stale transcript) → quiet output
+{
+  // newproj still has the .specclaw/STATUS.md fixture from AC5a.
+  // The transcript written at the classifyChannel tests above has a fresh mtime,
+  // so specclaw-idle does NOT fire (reason=active). Heartbeat returns "all quiet".
+  const hbSpecclaw = await handleMasterCommand('!project heartbeat', mctx())
+  check(
+    'AC6a: heartbeat with fresh transcript (no stale items) returns all-quiet line',
+    hbSpecclaw.kind === 'reply' && hbSpecclaw.text.startsWith('✅ all quiet —'),
+    hbSpecclaw.kind === 'reply' ? hbSpecclaw.text : hbSpecclaw.kind,
+  )
+  check(
+    'AC6a: heartbeat all-quiet contains scanned count',
+    hbSpecclaw.kind === 'reply' && hbSpecclaw.text.includes('channel'),
+    hbSpecclaw.kind === 'reply' ? hbSpecclaw.text : hbSpecclaw.kind,
+  )
+}
+
+// AC6b: no active change → heartbeat still returns all-quiet (no items of any kind)
+{
+  // Remove the .specclaw fixture so no project has an active change
+  rmSync(join(stateDir, 'projects', 'newproj', '.specclaw'), { recursive: true, force: true })
+
+  const hbNoSpecclaw = await handleMasterCommand('!project heartbeat', mctx())
+  check(
+    'AC6b: heartbeat with no active change returns all-quiet line',
+    hbNoSpecclaw.kind === 'reply' && hbNoSpecclaw.text.startsWith('✅ all quiet —'),
+    hbNoSpecclaw.kind === 'reply' ? hbNoSpecclaw.text : hbNoSpecclaw.kind,
+  )
+}
+
+// --- AC5/AC6: idle-gated schedules (idle-gated-schedules change) ---
+
+// AC5: schedule add with --only-when-idle --idle-grace 10
+{
+  const idleAdd = await handleMasterCommand(
+    '!project schedule add master-test --at "every 30m" --prompt "idle gated job" --only-when-idle --idle-grace 10',
+    mctx(),
+  )
+  check(
+    'idle-gated schedule add: accepted',
+    idleAdd.kind === 'reply' && idleAdd.text.includes('every 30m'),
+    idleAdd.kind === 'reply' ? idleAdd.text : idleAdd.kind,
+  )
+  check(
+    'idle-gated schedule add: confirmation contains idle-gated',
+    idleAdd.kind === 'reply' && idleAdd.text.includes('idle-gated'),
+    idleAdd.kind === 'reply' ? idleAdd.text : idleAdd.kind,
+  )
+  check(
+    'idle-gated schedule add: confirmation mentions grace 10m',
+    idleAdd.kind === 'reply' && idleAdd.text.includes('10m'),
+    idleAdd.kind === 'reply' ? idleAdd.text : idleAdd.kind,
+  )
+  {
+    const scheds = loadSchedules(join(stateDir, 'schedules.json'))
+    const entry = scheds.schedules.find(s => s.prompt === 'idle gated job')
+    check('idle-gated schedule add: onlyWhenIdle persisted', entry?.onlyWhenIdle === true)
+    check('idle-gated schedule add: idleGraceMinutes persisted', entry?.idleGraceMinutes === 10)
+  }
+
+  // schedule list output should contain idle-gated for this entry
+  const idleList = await handleMasterCommand('!project schedule list master-test', mctx())
+  check(
+    'idle-gated schedule list: shows idle-gated marker',
+    idleList.kind === 'reply' && idleList.text.includes('idle-gated'),
+    idleList.kind === 'reply' ? idleList.text : idleList.kind,
+  )
+}
+
+// AC5: --idle-grace alone (without --only-when-idle) should error
+{
+  const graceAlone = await handleMasterCommand(
+    '!project schedule add master-test --at "every 30m" --prompt "x" --idle-grace 5',
+    mctx(),
+  )
+  check(
+    'idle-gated schedule add: --idle-grace alone returns error',
+    graceAlone.kind === 'reply' && graceAlone.text.includes('requires') && graceAlone.text.includes('only-when-idle'),
+    graceAlone.kind === 'reply' ? graceAlone.text : graceAlone.kind,
+  )
+  // Nothing extra should have been persisted
+  {
+    const scheds = loadSchedules(join(stateDir, 'schedules.json'))
+    const count = scheds.schedules.filter(s => s.prompt === 'x').length
+    check('idle-gated schedule add: --idle-grace alone persists nothing', count === 0)
+  }
+}
+
+// AC6: lastSkippedAt newer than lastRunAt → shows skipped (busy); lastRunAt newer → does not
+{
+  const schedFilePath = join(stateDir, 'schedules.json')
+  const { schedules: existing } = loadSchedules(schedFilePath)
+  const now = new Date()
+  const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000).toISOString()
+  const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString()
+
+  // Entry A: lastSkippedAt is newer than lastRunAt → should show skipped (busy)
+  const entryA = {
+    id: 's_ac6_busy',
+    chatId: '123456789012345678',
+    interval: 'every 30m',
+    prompt: 'ac6-busy-test',
+    type: 'prompt' as const,
+    enabled: true,
+    lastRunAt: twoHoursAgo,
+    lastSkippedAt: oneHourAgo,
+    createdAt: twoHoursAgo,
+    maxRuns: null,
+    runCount: 1,
+    onlyWhenIdle: true,
+  }
+  // Entry B: lastRunAt is newer than lastSkippedAt → should NOT show skipped (busy)
+  const entryB = {
+    id: 's_ac6_fired',
+    chatId: '123456789012345678',
+    interval: 'every 30m',
+    prompt: 'ac6-fired-test',
+    type: 'prompt' as const,
+    enabled: true,
+    lastRunAt: oneHourAgo,
+    lastSkippedAt: twoHoursAgo,
+    createdAt: twoHoursAgo,
+    maxRuns: null,
+    runCount: 2,
+    onlyWhenIdle: true,
+  }
+
+  const { saveSchedules: saveSched, loadSchedules: loadSched } = await import('./schedules-config.ts')
+  saveSched({ version: 1, schedules: [...existing, entryA, entryB] }, schedFilePath)
+
+  const ac6List = await handleMasterCommand('!project schedule list master-test', mctx())
+  check(
+    'AC6: lastSkippedAt newer → row contains skipped (busy)',
+    ac6List.kind === 'reply' && ac6List.text.includes('skipped (busy)'),
+    ac6List.kind === 'reply' ? ac6List.text : ac6List.kind,
+  )
+
+  // Verify entryB row does NOT show skipped (busy) — check by searching for entryB's id
+  // Since both entries are for the same project, we check the text does NOT have two "skipped (busy)" lines
+  // (entryA has it, entryB should not)
+  const skippedCount = (ac6List.kind === 'reply' ? ac6List.text : '').split('skipped (busy)').length - 1
+  check(
+    'AC6: only the busy-skipped entry shows skipped (busy), not the fired entry',
+    skippedCount === 1,
+    `skipped (busy) count: ${skippedCount}`,
+  )
+}
+
+// --- AC6: --stop-on-reply flag (schedule-stop-on-reply change) ---
+
+// AC6a: add with --stop-on-reply "backlog complete" → persisted; confirmation mentions stop-on-reply
+{
+  const stopAdd = await handleMasterCommand(
+    '!project schedule add master-test --at "every 30m" --prompt "stop-reply-test" --stop-on-reply "backlog complete"',
+    mctx(),
+  )
+  check(
+    'stop-on-reply schedule add: accepted',
+    stopAdd.kind === 'reply' && stopAdd.text.includes('every 30m'),
+    stopAdd.kind === 'reply' ? stopAdd.text : stopAdd.kind,
+  )
+  check(
+    'stop-on-reply schedule add: confirmation contains stop-on-reply',
+    stopAdd.kind === 'reply' && stopAdd.text.includes('stop-on-reply'),
+    stopAdd.kind === 'reply' ? stopAdd.text : stopAdd.kind,
+  )
+  {
+    const scheds = loadSchedules(join(stateDir, 'schedules.json'))
+    const entry = scheds.schedules.find(s => s.prompt === 'stop-reply-test')
+    check('stop-on-reply schedule add: stopOnReply persisted', entry?.stopOnReply === 'backlog complete')
+  }
+}
+
+// AC6b: schedule list shows stop-on-reply for the entry we just added
+{
+  const listReply = await handleMasterCommand('!project schedule list master-test', mctx())
+  check(
+    'stop-on-reply schedule list: shows stop-on-reply marker',
+    listReply.kind === 'reply' && listReply.text.includes('stop-on-reply') && listReply.text.includes('backlog complete'),
+    listReply.kind === 'reply' ? listReply.text : listReply.kind,
+  )
+}
+
+// AC6c: invalid regex returns error, nothing persisted
+{
+  const schedsBefore = loadSchedules(join(stateDir, 'schedules.json'))
+  const countBefore = schedsBefore.schedules.filter(s => s.prompt === 'bad-regex-test').length
+
+  const badRegex = await handleMasterCommand(
+    '!project schedule add master-test --at "every 30m" --prompt "bad-regex-test" --stop-on-reply "("',
+    mctx(),
+  )
+  check(
+    'stop-on-reply schedule add: invalid regex returns error',
+    badRegex.kind === 'reply' && badRegex.text.includes('stop-on-reply') && badRegex.text.includes('valid regex'),
+    badRegex.kind === 'reply' ? badRegex.text : badRegex.kind,
+  )
+  {
+    const schedsAfter = loadSchedules(join(stateDir, 'schedules.json'))
+    const countAfter = schedsAfter.schedules.filter(s => s.prompt === 'bad-regex-test').length
+    check('stop-on-reply schedule add: invalid regex persists nothing', countAfter === countBefore)
+  }
+}
+
+// --- loop-halt-escalation AC3: schedule resume clears escalatedAt; list shows 🛑 ---
+{
+  const schedFilePath = join(stateDir, 'schedules.json')
+  const { saveSchedules: saveSched, loadSchedules: loadSched } = await import('./schedules-config.ts')
+  const existing = loadSched(schedFilePath).schedules
+  saveSched({
+    version: 1,
+    schedules: [...existing, {
+      id: 's_escalated',
+      chatId: existing[0]?.chatId ?? '111111111111111111',
+      interval: 'every 30m' as const,
+      prompt: 'run loop',
+      type: 'prompt' as const,
+      enabled: false,
+      lastRunAt: null,
+      createdAt: new Date().toISOString(),
+      maxRuns: null,
+      runCount: 3,
+      escalatedAt: '2026-07-12T08:00:00.000Z',
+    }],
+  }, schedFilePath)
+
+  const escList = await handleMasterCommand('!project schedule list master-test', mctx())
+  check(
+    'halt-escalation: list shows 🛑 escalated marker',
+    escList.kind === 'reply' && escList.text.includes('🛑 escalated'),
+    escList.kind === 'reply' ? escList.text : escList.kind,
+  )
+
+  const resume = await handleMasterCommand('!project schedule resume s_escalated', mctx())
+  check(
+    'halt-escalation AC3: resume accepted',
+    resume.kind === 'reply' && resume.text.includes('resumed'),
+    resume.kind === 'reply' ? resume.text : resume.kind,
+  )
+  const after = loadSched(schedFilePath).schedules.find(s => s.id === 's_escalated')
+  check('halt-escalation AC3: resume re-enables', after?.enabled === true)
+  check('halt-escalation AC3: resume clears escalatedAt', after?.escalatedAt === null, `got: ${after?.escalatedAt}`)
+
+  const pause = await handleMasterCommand('!project schedule pause s_escalated', mctx())
+  check('halt-escalation AC3: pause still works', pause.kind === 'reply' && pause.text.includes('paused'))
+  const afterPause = loadSched(schedFilePath).schedules.find(s => s.id === 's_escalated')
+  check('halt-escalation AC3: pause leaves escalatedAt cleared', afterPause?.escalatedAt === null)
+}
+
+// --- new heartbeat-attention-report AC5 / AC6 tests -------------------------
+
+// AC5: --quiet with no attention items → exactly HEARTBEAT_OK
+// AC5 (no-quiet): without --quiet → starts "✅ all quiet —" with scanned count
+{
+  // All projects have fresh or no transcripts at this point → no attention items
+  const quietResult = await handleMasterCommand('!project heartbeat --quiet', mctx())
+  check(
+    'AC5: heartbeat --quiet with no items returns exactly HEARTBEAT_OK',
+    quietResult.kind === 'reply' && quietResult.text === HEARTBEAT_OK,
+    quietResult.kind === 'reply' ? JSON.stringify(quietResult.text) : quietResult.kind,
+  )
+
+  const noQuietResult = await handleMasterCommand('!project heartbeat', mctx())
+  check(
+    'AC5: heartbeat without --quiet returns line starting ✅ all quiet —',
+    noQuietResult.kind === 'reply' && noQuietResult.text.startsWith('✅ all quiet —'),
+    noQuietResult.kind === 'reply' ? noQuietResult.text : noQuietResult.kind,
+  )
+  check(
+    'AC5: heartbeat all-quiet contains channels scanned count',
+    noQuietResult.kind === 'reply' && /\d+ channels? scanned/.test(noQuietResult.text),
+    noQuietResult.kind === 'reply' ? noQuietResult.text : noQuietResult.kind,
+  )
+}
+
+// AC6: circuit-open item → 🔴, <#chatId>, slug, ↳ action
+{
+  const circuitChatId = '999888777666555444' // 'support' project
+  const circuitCtx: MasterContext = {
+    ...mctx(),
+    config: loadConfig(),
+    getCircuitStates: () => {
+      const m = new Map<string, { circuitOpen: boolean; backoffUntil?: number }>()
+      m.set(circuitChatId, { circuitOpen: true })
+      return m
+    },
+  }
+  const circuitResult = await handleMasterCommand('!project heartbeat', circuitCtx)
+  check(
+    'AC6: circuit-open item produces 🔴 in output',
+    circuitResult.kind === 'reply' && circuitResult.text.includes('🔴'),
+    circuitResult.kind === 'reply' ? circuitResult.text : circuitResult.kind,
+  )
+  check(
+    'AC6: circuit-open item mentions <#chatId>',
+    circuitResult.kind === 'reply' && circuitResult.text.includes(`<#${circuitChatId}>`),
+    circuitResult.kind === 'reply' ? circuitResult.text : circuitResult.kind,
+  )
+  check(
+    'AC6: circuit-open item mentions slug',
+    circuitResult.kind === 'reply' && circuitResult.text.includes('support'),
+    circuitResult.kind === 'reply' ? circuitResult.text : circuitResult.kind,
+  )
+  check(
+    'AC6: circuit-open item has ↳ action line',
+    circuitResult.kind === 'reply' && circuitResult.text.includes('↳'),
+    circuitResult.kind === 'reply' ? circuitResult.text : circuitResult.kind,
+  )
+}
+
+// AC6 (15-cap): 17 circuit-open projects → output contains "(+2 more)" and only 15 item lines
+{
+  // Build a config with 17 fake projects, all circuit-open
+  const bigProjects: Record<string, { slug: string }> = {}
+  const bigCircuitMap = new Map<string, { circuitOpen: boolean }>()
+  for (let i = 1; i <= 17; i++) {
+    const chatId = `${String(i).padStart(18, '0')}`
+    const slug = `proj${i}`
+    bigProjects[chatId] = { slug }
+    bigCircuitMap.set(chatId, { circuitOpen: true })
+    // Create minimal project dir so scanOne doesn't throw
+    mkdirSync(join(stateDir, 'projects', slug), { recursive: true })
+  }
+  const bigConfig = ChannelsConfigSchema.parse({
+    master: { chatId: '000000000000000001' },
+    projects: bigProjects,
+  })
+  saveConfig(bigConfig)
+
+  const bigCtx: MasterContext = {
+    chatId: '000000000000000001',
+    userId: '797184740293476362',
+    config: bigConfig,
+    authorizedUsers: ['797184740293476362'],
+    getCircuitStates: () => bigCircuitMap,
+  }
+  const bigResult = await handleMasterCommand('!project heartbeat', bigCtx)
+  check(
+    'AC6 15-cap: output contains (+2 more)',
+    bigResult.kind === 'reply' && bigResult.text.includes('(+2 more)'),
+    bigResult.kind === 'reply' ? bigResult.text : bigResult.kind,
+  )
+  // Count 🔴 lines — should be exactly 15
+  const redLines = (bigResult.kind === 'reply' ? bigResult.text : '').split('\n').filter(l => l.startsWith('🔴'))
+  check(
+    'AC6 15-cap: exactly 15 🔴 item lines shown',
+    redLines.length === 15,
+    `got ${redLines.length}`,
+  )
+
+  // Restore the original config for subsequent tests
+  saveConfig(config)
+}
+
+// help text contains --quiet
+{
+  const helpResult = await handleMasterCommand('!project help', mctx())
+  check(
+    'help text contains --quiet for heartbeat',
+    helpResult.kind === 'reply' && helpResult.text.includes('--quiet'),
+    helpResult.kind === 'reply' ? helpResult.text : helpResult.kind,
+  )
 }
 
 if (failed > 0) {

@@ -33,6 +33,14 @@ while true; do
   # orphaned per-project session like `mcd-claude-…` fools us into thinking
   # the master session still exists and we silently no-op the restart.
   if ! tmux has-session -t "=$SESSION" 2>/dev/null; then
+    # Self-heal stale/missing node_modules before each respawn. If a `git pull`
+    # brought in new package.json entries (or wiped `node_modules/`), bun will
+    # crash at import time on every respawn attempt and the runner enters a
+    # tight 5s loop with no progress. Run install-deps here so each respawn
+    # attempt starts from a clean build. Idempotent — no-op on a fresh tree.
+    if [[ -x "$SCRIPT_DIR/install-deps.sh" ]]; then
+      "$SCRIPT_DIR/install-deps.sh" --quiet || true
+    fi
     # `tmux new-session` runs the command in a fresh login-less shell that does
     # NOT inherit env from this wrapper (so systemd's MCD_CHANNELS_DIR is dropped
     # on the floor). Inline the env assignment into the command string so the
