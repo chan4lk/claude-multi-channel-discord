@@ -53,3 +53,7 @@ export function projectGoalFile(slug: string): string {
 export function projectGoalsMd(slug: string): string {
   return join(projectDir(slug), 'GOALS.md')
 }
+
+export function hermesRunsDir(): string {
+  return join(channelsDir(), 'hermes-runs')
+}
