@@ -823,6 +823,147 @@ check('set: heartbeat accepted', setHb.kind === 'reply' && setHb.text.includes('
   )
 }
 
+// --- hermes verb tests -------------------------------------------------------
+{
+  // Config without hermes → disabled
+  const disabledResult = await handleMasterCommand('!project hermes "echo hi"', mctx())
+  check(
+    'hermes: disabled when config absent',
+    disabledResult.kind === 'reply' && disabledResult.text.includes('disabled'),
+    disabledResult.kind === 'reply' ? disabledResult.text : disabledResult.kind,
+  )
+
+  // Enable hermes config
+  const hermesConfig = ChannelsConfigSchema.parse({
+    master: { chatId: '123456789012345678' },
+    projects: {
+      '123456789012345678': { slug: 'master-test' },
+    },
+    defaults: {
+      hermes: {
+        enabled: true,
+        binPath: '/usr/local/bin/hermes',
+        yolo: true,
+        extraArgs: [],
+      },
+    },
+  })
+  saveConfig(hermesConfig)
+
+  // Mock spawnFn
+  const spawnCalls: Array<{ cmd: string; args: string[]; opts: any }> = []
+  function mockSpawn(cmd: string, args: string[], opts: any) {
+    spawnCalls.push({ cmd, args, opts })
+    return {
+      pid: 123,
+      unref() {},
+      on(e: string, cb: (...a: any[]) => void) {},
+    }
+  }
+
+  function hctx(over: Partial<MasterContext> = {}): MasterContext {
+    return {
+      chatId: '123456789012345678',
+      userId: '797184740293476362',
+      config: hermesConfig,
+      authorizedUsers: ['797184740293476362'],
+      mutator,
+      hermesSpawnFn: mockSpawn,
+      ...over,
+    }
+  }
+
+  // Launch reply contains run id and log path
+  spawnCalls.length = 0
+  const launchResult = await handleMasterCommand('!project hermes "deploy the app"', hctx())
+  check(
+    'hermes: launch reply contains run id',
+    launchResult.kind === 'reply' && /h-[0-9a-z]+-[0-9a-f]{4}/.test(launchResult.text),
+    launchResult.kind === 'reply' ? launchResult.text : launchResult.kind,
+  )
+  check(
+    'hermes: launch reply contains log path',
+    launchResult.kind === 'reply' && launchResult.text.includes('hermes-runs'),
+    launchResult.kind === 'reply' ? launchResult.text : launchResult.kind,
+  )
+  // Meta file exists
+  if (launchResult.kind === 'reply') {
+    const runIdMatch = launchResult.text.match(/h-[0-9a-z]+-[0-9a-f]{4}/)
+    const runId = runIdMatch?.[0]
+    check(
+      'hermes: meta json exists in hermes-runs dir',
+      runId != null && existsSync(join(stateDir, 'hermes-runs', `${runId}.json`)),
+      `runId=${runId}`,
+    )
+    // Verify meta contains the wrapped prompt
+    if (runId) {
+      const meta = JSON.parse(readFileSync(join(stateDir, 'hermes-runs', `${runId}.json`), 'utf8'))
+      check(
+        'hermes: meta wrappedPrompt contains hermes send instruction',
+        meta.wrappedPrompt.includes('hermes send'),
+      )
+    }
+  }
+
+  // --no-report: wrapped prompt does NOT contain 'hermes send'
+  spawnCalls.length = 0
+  const noReportResult = await handleMasterCommand('!project hermes "deploy" --no-report', hctx())
+  check(
+    'hermes: --no-report launch succeeds',
+    noReportResult.kind === 'reply' && /h-[0-9a-z]+-[0-9a-f]{4}/.test(noReportResult.text),
+    noReportResult.kind === 'reply' ? noReportResult.text : noReportResult.kind,
+  )
+  if (noReportResult.kind === 'reply') {
+    const runIdMatch = noReportResult.text.match(/h-[0-9a-z]+-[0-9a-f]{4}/)
+    const runId = runIdMatch?.[0]
+    if (runId) {
+      const meta = JSON.parse(readFileSync(join(stateDir, 'hermes-runs', `${runId}.json`), 'utf8'))
+      check(
+        'hermes: --no-report meta wrappedPrompt does NOT contain hermes send',
+        !meta.wrappedPrompt.includes('hermes send'),
+        meta.wrappedPrompt,
+      )
+    }
+  }
+
+  // Empty prompt → usage error
+  const emptyResult = await handleMasterCommand('!project hermes', hctx())
+  check(
+    'hermes: empty prompt returns usage error',
+    emptyResult.kind === 'reply' && emptyResult.text.includes('Usage:'),
+    emptyResult.kind === 'reply' ? emptyResult.text : emptyResult.kind,
+  )
+
+  // --tail unknown id → not-found message with recent-runs listing
+  const tailUnknown = await handleMasterCommand('!project hermes --tail unknown-run-id', hctx())
+  check(
+    'hermes: --tail unknown id returns not-found',
+    tailUnknown.kind === 'reply' && tailUnknown.text.includes('not found'),
+    tailUnknown.kind === 'reply' ? tailUnknown.text : tailUnknown.kind,
+  )
+  check(
+    'hermes: --tail unknown id includes recent runs listing',
+    tailUnknown.kind === 'reply' && (tailUnknown.text.includes('Recent runs:') || tailUnknown.text.includes('none')),
+    tailUnknown.kind === 'reply' ? tailUnknown.text : tailUnknown.kind,
+  )
+
+  // --tail existing id → returns log content
+  const fakeRunId = 'h-test00-abcd'
+  const hermesRunsDir = join(stateDir, 'hermes-runs')
+  mkdirSync(hermesRunsDir, { recursive: true })
+  writeFileSync(join(hermesRunsDir, `${fakeRunId}.log`), 'line1\nline2\nline3\n')
+  writeFileSync(join(hermesRunsDir, `${fakeRunId}.json`), JSON.stringify({ runId: fakeRunId }))
+  const tailResult = await handleMasterCommand(`!project hermes --tail ${fakeRunId}`, hctx())
+  check(
+    'hermes: --tail existing id returns log content',
+    tailResult.kind === 'reply' && tailResult.text.includes('line1') && tailResult.text.includes('line3'),
+    tailResult.kind === 'reply' ? tailResult.text : tailResult.kind,
+  )
+
+  // Restore original config
+  saveConfig(config)
+}
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)
   process.exit(1)
