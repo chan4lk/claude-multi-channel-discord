@@ -3,7 +3,7 @@ You are a development assistant for the **multi-channel-discord** project — a 
 This file is your primary context for picking up development. Read it fully before touching code.
 
 > **⚠️ CRITICAL — READ BEFORE DOING ANYTHING:**
-> You are running **inside** this bot as a subprocess. The `mcd` tmux session IS the production server that spawned you. **Never** run `tmux send-keys -t mcd C-c`, `pkill -f 'bun server.ts'`, or any command that restarts or kills the MCD server. Doing so kills the bot, which kills your own session. If code changes require a server restart, push to git and tell the operator to restart manually.
+> You are running **inside** this bot as a subprocess. The `mcd` tmux session IS the production server that spawned you. **Never** run `tmux send-keys -t mcd C-c`, `pkill -f 'bun server.ts'`, or any command that restarts or kills the MCD server. Doing so kills the bot, which kills your own session. If code changes require a server restart, push to git and tell the operator to restart manually — or, when the Hermes bridge is enabled, delegate the restart to Hermes (`!project hermes` / `mcp__mcd__hermes_run`), which runs outside MCD's process tree and reports back after the bot returns.
 
 > **⚠️ ON SESSION RESUME:**
 > When this session resumes via `--resume`, do NOT automatically re-run tool calls or continue prior work. Wait for an explicit instruction from the operator. If the first message is a greeting ("hi", "hello") or short, respond briefly and wait. Do not replay debugging steps, file reads, or bash commands from the previous session.
@@ -64,6 +64,7 @@ Discord Gateway (WSS)
 | `src/git-ops.ts` | `buildGitEnv()`, `gitStatusSummary()`, `gitPull()` |
 | `src/git-credentials.ts` | Credential aliases (mode 0600 enforced) |
 | `src/scheduler.ts` | Daily HH:MM / interval / 5-field cron jobs, reads/writes `schedules.json` |
+| `src/hermes-bridge.ts` | Detached one-shot hermes-agent runs (`!project hermes`, `mcp__mcd__hermes_run`) |
 | `src/init.ts` | Bootstrap CLI (called by setup script + `/discord:project init` skill) |
 | `src/argv.ts` | Bash-like argv splitter + flag parser |
 | `src/discord-chunk.ts` | 2000-char chunker respecting Discord markdown |
@@ -103,7 +104,7 @@ Tests: `src/master-commands.test.ts`, `src/project-pool.test.ts`, `src/master-mc
 
 ## All implemented `!project` verbs
 
-`list`, `show`/`status`, `create`, `clone`, `set`, `rename`, `remote`, `pull`, `usage`/`ps`/`top`, `stop`, `schedule add/inject/list/pause/resume/rm`, `provider`, `model`, `progress`, `branch`, `memory`, `heartbeat`, `teams-setup`, `rm --yes`, `help`
+`list`, `show`/`status`, `create`, `clone`, `set`, `rename`, `remote`, `pull`, `usage`/`ps`/`top`, `stop`, `schedule add/inject/list/pause/resume/rm`, `provider`, `model`, `progress`, `branch`, `memory`, `heartbeat`, `hermes`, `teams-setup`, `rm --yes`, `help`
 
 Mutation verbs require `userId ∈ access.allowFrom`. Destructive verbs (`rm`, `rename`, `remote --set`) require `--yes`.
 
@@ -137,6 +138,12 @@ WhatsApp is enabled when the `whatsapp-auth/` directory exists under `MCD_CHANNE
 A single `WhatsAppAdapter` (Baileys socket) serves all WhatsApp projects via multiplexing — inbound `messages.upsert` events are matched to a project by the sender's JID and dispatched through the pool; outbound `mcp__mcd__reply` calls route back through the same adapter. Access control reuses `access.allowFrom`, matched against the sender's E.164 number. Inbound media is surfaced as attachment summaries only — files are not downloaded.
 
 To bind a project to a WhatsApp contact, set `platform: "whatsapp"` and `whatsappJid: "<e164>@s.whatsapp.net"` on the project entry in `channels.json` (or use `!project set` once that flag is supported). Progress modes (`post`/`edit`) work over WhatsApp with parity to Discord and Teams.
+
+---
+
+## Hermes bridge (out-of-band ops)
+
+Opt-in via `defaults.hermes.{enabled, binPath, yolo, extraArgs}` in `channels.json` (disabled by default). `!project hermes "<prompt>"` (master channel, allowFrom-gated) and the master-only `mcp__mcd__hermes_run` MCP tool spawn a **detached** one-shot `hermes -z "<wrapped prompt>" --yolo` run via `src/hermes-bridge.ts`. The run outlives MCD — this is the sanctioned way to restart the MCD server: delegate to Hermes, which kills/restarts the bot and reports back to the master channel via `hermes send` (its own Discord credentials, no MCD needed). Logs + metadata per run under `<MCD_CHANNELS_DIR>/hermes-runs/`; inspect with `!project hermes --tail <run-id>`. MCD never kills detached runs; hung runs are killed manually (`pgrep -af 'hermes.*-z'`). Prompt passes as a single argv element — never through a shell.
 
 ---
 
