@@ -166,6 +166,44 @@ Access control reuses `access.allowFrom` — the sender's E.164 number must be i
 
 ---
 
+## Hermes bridge (optional)
+
+> **⚠️ Security:** Hermes runs with `--yolo` (auto-approved tools) as the same OS user as MCD. Anyone in `access.allowFrom` can execute arbitrary ops on the host through it. Leave disabled unless you need it.
+
+Delegates host-level ops tasks — **including restarting MCD itself** — to a locally installed [hermes-agent](https://github.com/nousresearch/hermes-agent). MCD spawns a detached one-shot `hermes -z "<prompt>"` run that survives MCD's own death; Hermes reports the result back to the master channel using its own Discord credentials (`hermes send`), so the loop closes even while the bot is down.
+
+**1. Enable** in `channels.json`:
+
+```jsonc
+"defaults": {
+  "hermes": {
+    "enabled": true,
+    "binPath": "/home/<user>/.local/bin/hermes",  // absolute path recommended
+    "yolo": true,                                  // default true; headless runs hang without it
+    "extraArgs": []                                // appended verbatim to the hermes argv
+  }
+}
+```
+
+Hermes itself must already be set up on the host (provider auth + Discord gateway credentials for `hermes send` — verify with `hermes send --list`).
+
+**2. Use** from the master channel (or ask master Claude, which calls the `hermes_run` MCP tool):
+
+```
+!project hermes "restart the MCD server"          — launch a run (replies with run id + log path)
+!project hermes "deploy tax-help-sl" --model MiniMax-M3
+!project hermes "..." --no-report                 — skip the Hermes-side report-back
+!project hermes --tail <run-id> [--lines 40]      — inspect a run's log
+```
+
+Run logs and metadata live under `<MCD_CHANNELS_DIR>/hermes-runs/`.
+
+**Restart-MCD recipe:** `!project hermes "Restart the MCD Discord bot: kill the bun server.ts process whose cwd is */multi-channel-discord, then start it again with MCD_CHANNELS_DIR=~/.claude/channels/discord-multi bun server.ts inside the mcd tmux session, verify it comes up"` — the wrapped prompt already tells Hermes to wait 5 seconds before destructive steps and to report back via `hermes send` when done.
+
+MCD never kills a Hermes run (it can't own the pid across its own restarts). If a run hangs: `--tail` to inspect, then kill manually — find it with `pgrep -af 'hermes.*-z'`.
+
+---
+
 ## Documentation
 
 | Guide | Contents |
@@ -196,6 +234,7 @@ src/
   project-pool.ts           lazy spawn, LRU eviction, idle eviction, dedup
   discord-chunk.ts          2000-char reply chunker
   git-ops.ts                buildGitEnv, gitStatusSummary, gitPull
+  hermes-bridge.ts          detached hermes-agent ops runs (!project hermes)
   git-credentials.ts        credential aliases (mode 0600 enforced)
   scheduler.ts              daily HH:MM cron-lite
   *.test.ts                 in-process smoke tests (bun src/<name>.test.ts)

@@ -1,12 +1,13 @@
 # 🦞 SpecClaw Dashboard
 
 **Project:** claude-mcd
-**Last Updated:** 2026-07-12 14:01 UTC
+**Last Updated:** 2026-07-15 17:34 UTC
 
 ## Active Changes
 
 
 - 🔨 **heartbeat-attention-report** — 4/5 tasks (80%) | 0 failed
+- ✅ **hermes-agent-bridge** — 5/5 tasks (100%) | 0 failed
 - ✅ **idle-gated-schedules** — 4/4 tasks (100%) | 0 failed
 - ✅ **loop-halt-escalation** — 4/4 tasks (100%) | 0 failed
 - ✅ **mcd-reliability-fixes** — 5/5 tasks (100%) | 0 failed
@@ -27,6 +28,6 @@ _None._
 
 ## Stats
 
-- **Total changes:** 10
-- **Active:** 10
+- **Total changes:** 11
+- **Active:** 11
 - **Completed:** 0

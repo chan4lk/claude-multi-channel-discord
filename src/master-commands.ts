@@ -22,6 +22,7 @@ import { accessFile, archiveDir, channelsDir, projectClaudeMd, projectDir, proje
 import { IntervalSchema, loadSchedules, newScheduleId, saveSchedules, validateCron, type Schedule } from './schedules-config.ts'
 import { buildAttentionReport } from './heartbeat.ts'
 import { readSpecclawStatus } from './specclaw-status.ts'
+import { launchHermesRun, tailHermesRun, listRecentRuns } from './hermes-bridge.ts'
 
 export type MasterCommandResult =
   | { kind: 'no-master-configured' }
@@ -42,6 +43,8 @@ export interface MasterContext {
   mutator?: MasterMutator
   memoryStore?: MemoryStore
   getCircuitStates?: () => Map<string, { circuitOpen: boolean; backoffUntil?: number }>
+  /** Injectable spawn function for hermes bridge (tests mock this). */
+  hermesSpawnFn?: (...args: any[]) => any
 }
 
 export interface MasterMutator {
@@ -79,7 +82,7 @@ export interface MasterMutator {
 }
 
 const READ_VERBS = ['list', 'show', 'status', 'help'] as const
-const MUTATION_VERBS = ['create', 'set', 'rename', 'rm', 'memory'] as const
+const MUTATION_VERBS = ['create', 'set', 'rename', 'rm', 'memory', 'hermes'] as const
 const PHASE_5_VERBS = ['clone', 'remote', 'pull'] as const
 
 function appendCommandLog(
@@ -185,6 +188,8 @@ export async function handleMasterCommand(
         result = { kind: 'reply', text: await handleMemory(rest, ctx) }; break
       case 'branch':
         result = { kind: 'reply', text: await handleBranch(rest, ctx) }; break
+      case 'hermes':
+        result = { kind: 'reply', text: await handleHermes(rest, ctx) }; break
       default:
         result = {
           kind: 'reply',
@@ -237,6 +242,8 @@ function helpText(prefix: string): string {
     `${prefix} memory clear [--slug S] [--type T] --yes — delete matching memories`,
     `${prefix} heartbeat [--channel <slug>] [--quiet]        — attention report (quiet: HEARTBEAT_OK sentinel when healthy)`,
     `${prefix} rm     <chat_id-or-slug> --yes                         — archive + remove`,
+    `${prefix} hermes "<prompt>" [--model <m>] [--no-report]         — launch a detached Hermes agent run (ops tasks, self-restart)`,
+    `${prefix} hermes --tail <run-id> [--lines <n>]                  — tail the log of a previous Hermes run`,
     `${prefix} help                          — this message`,
     '```',
     '_`--new-channel NAME` auto-creates the Discord channel (needs Manage Channels perm)._',
@@ -1937,4 +1944,51 @@ async function handleProgress(rest: string[], ctx: MasterContext): Promise<strin
 
   const mode = setMode ?? config.defaults.progressMode ?? 'off'
   return `✅ **${entry.project.slug}**: progressMode = \`${mode}\`\n_takes effect immediately (no restart needed)._`
+}
+
+async function handleHermes(rest: string[], ctx: MasterContext): Promise<string> {
+  const { positional, flags } = parseFlags(rest)
+
+  const hcfg = ctx.config.defaults.hermes
+  if (!hcfg?.enabled) {
+    return 'Hermes bridge is disabled. To enable it, add `"hermes": { "enabled": true, "binPath": "/path/to/hermes" }` under `defaults` in channels.json.'
+  }
+
+  // --tail mode
+  if (typeof flags.tail === 'string') {
+    const runId = flags.tail
+    const lines = typeof flags.lines === 'string' ? parseInt(flags.lines, 10) : 40
+    const content = tailHermesRun(runId, isNaN(lines) ? 40 : lines)
+    if (content === null) {
+      const recent = listRecentRuns(10)
+      const list = recent.length > 0 ? recent.join(', ') : 'none'
+      return `Run \`${runId}\` not found. Recent runs: ${list}`
+    }
+    return `**Log tail for \`${runId}\`:**\n\`\`\`\n${content}\n\`\`\``
+  }
+
+  // launch mode
+  const prompt = positional.join(' ')
+  if (!prompt.trim()) {
+    return 'Usage: `!project hermes "<prompt>" [--model <m>] [--no-report]`'
+  }
+
+  const model = typeof flags.model === 'string' ? flags.model : undefined
+  const report = flags['no-report'] !== true
+  const masterChatId = ctx.config.master!.chatId
+
+  try {
+    const { runId, logPath } = launchHermesRun({
+      prompt,
+      cfg: hcfg,
+      masterChatId,
+      model,
+      report,
+      spawnFn: ctx.hermesSpawnFn as any,
+    })
+    const reportNote = report ? '\nHermes will report back to this channel when finished.' : ''
+    return `Hermes run launched: \`${runId}\`\nLog: \`${logPath}\`${reportNote}`
+  } catch (err) {
+    return `Failed to launch Hermes run: ${(err as Error).message}`
+  }
 }

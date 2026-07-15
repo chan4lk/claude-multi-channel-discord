@@ -172,6 +172,14 @@ const MemoryConfigSchema = z.object({
   }).optional(),
 }).optional()
 
+export const HermesConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  binPath: z.string().default('hermes'),
+  yolo: z.boolean().default(true),
+  extraArgs: z.array(z.string()).default([]),
+})
+export type HermesConfig = z.infer<typeof HermesConfigSchema>
+
 const DefaultsSchema = z.object({
   model: z.string().default('sonnet'),
   idleEvictMinutes: z.number().int().positive().default(15),
@@ -203,6 +211,7 @@ const DefaultsSchema = z.object({
   /** Default context-warning threshold % (0–100). Default 80. */
   contextWarningThresholdPct: z.number().int().min(1).max(100).default(80),
   memory: MemoryConfigSchema,
+  hermes: HermesConfigSchema.optional(),
   /** How often (minutes) the autonomous inject sweep runs. */
   injectSweepIntervalMinutes: z.number().optional(),
   /** Proposal/line thresholds that trigger a batch autonomous injection. */

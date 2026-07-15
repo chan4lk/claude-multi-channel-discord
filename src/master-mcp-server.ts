@@ -25,11 +25,14 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { z } from 'zod'
 
+import type { spawn as SpawnFn } from 'node:child_process'
+
 import { channelsDir } from './paths.ts'
-import { findProjectBySlug, handoffEnabled, type ChannelsConfig } from './channels-config.ts'
+import { findProjectBySlug, handoffEnabled, type ChannelsConfig, type HermesConfig } from './channels-config.ts'
 import type { InboundEnvelope, OutboundReply } from './project-process.ts'
 import type { ProjectPool } from './project-pool.ts'
 import { MemoryStore, type MemoryType } from './memory-store.ts'
+import { launchHermesRun } from './hermes-bridge.ts'
 
 const ChatIdRoute = /^\/mcp\/([A-Za-z0-9:_\-\.%+@]{3,300})\/?$/
 
@@ -90,6 +93,17 @@ export interface MasterMcpServerOptions {
    * chatId. Used to gate Discord-only tool calls. Defaults to 'discord'.
    */
   getProjectPlatform?: (chatId: string) => string | undefined
+  /**
+   * Live read of the hermes config from channels.json defaults.hermes.
+   * When set and hermes.enabled is true, the master session gains the
+   * `hermes_run` tool. Optional — when absent the tool is never listed.
+   */
+  getHermesConfig?: () => HermesConfig | undefined
+  /**
+   * Injectable spawn function for hermes_run. Defaults to Node's
+   * child_process.spawn. Override in tests to avoid launching real processes.
+   */
+  hermesSpawnFn?: typeof SpawnFn
 }
 
 export class MasterMcpServer {
@@ -107,6 +121,8 @@ export class MasterMcpServer {
   private readonly getConfig: (() => ChannelsConfig | null) | undefined
   private readonly memoryStore: MemoryStore | null
   private readonly getProjectPlatform: ((chatId: string) => string | undefined) | null
+  private readonly getHermesConfig: (() => HermesConfig | undefined) | null
+  private readonly hermesSpawnFn: typeof SpawnFn | undefined
   /**
    * Per-chat bearer tokens. The endpoint is localhost-only but any local
    * process could otherwise POST /mcp/<chat_id> and reply as any channel —
@@ -129,6 +145,8 @@ export class MasterMcpServer {
     this.getConfig = opts.getConfig
     this.memoryStore = opts.memoryStore ?? null
     this.getProjectPlatform = opts.getProjectPlatform ?? null
+    this.getHermesConfig = opts.getHermesConfig ?? null
+    this.hermesSpawnFn = opts.hermesSpawnFn
   }
 
   async start(): Promise<{ host: string; port: number }> {
@@ -347,6 +365,24 @@ export class MasterMcpServer {
           },
         })
       }
+      if (this.getHermesConfig && this.getMasterChatId() === chatId) {
+        const hermesCfg = this.getHermesConfig()
+        if (hermesCfg?.enabled) {
+          tools.push({
+            name: 'hermes_run',
+            description: 'Launch a detached hermes-agent ops run on the host. The run survives MCD restarts. Hermes reports its result back to the master channel via `hermes send` when finished. Only available in the master channel when hermes bridge is enabled.',
+            inputSchema: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                prompt: { type: 'string', description: 'The ops task for Hermes to execute.' },
+                model: { type: 'string', description: 'Optional model override (maps to hermes -m <model>).' },
+              },
+              required: ['prompt'],
+            },
+          })
+        }
+      }
       if (this.client) {
         tools.push(
           {
@@ -549,6 +585,34 @@ export class MasterMcpServer {
             this.log(`run_master_command for ${chatId}: ${cmd.slice(0, 200)}`)
             const reply = await this.executeMasterCommand(cmd)
             return okResult(reply)
+          }
+          case 'hermes_run': {
+            if (!this.getHermesConfig) return errorResult('hermes bridge not configured')
+            if (this.getMasterChatId() !== chatId) {
+              return errorResult('hermes_run is only available in the master channel session')
+            }
+            const hermesCfg = this.getHermesConfig()
+            if (!hermesCfg?.enabled) return errorResult('hermes bridge disabled')
+            const HermesRunArgsSchema = z.object({
+              prompt: z.string().min(1, 'prompt must not be empty'),
+              model: z.string().optional(),
+            })
+            const parsed = HermesRunArgsSchema.safeParse(args)
+            if (!parsed.success) return errorResult(`invalid hermes_run args: ${parsed.error.toString()}`)
+            this.log(`hermes_run for ${chatId}: prompt=${JSON.stringify(parsed.data.prompt).slice(0, 80)}`)
+            try {
+              const masterChatId = this.getMasterChatId()!
+              const { runId, logPath } = launchHermesRun({
+                prompt: parsed.data.prompt,
+                cfg: hermesCfg,
+                masterChatId,
+                model: parsed.data.model,
+                spawnFn: this.hermesSpawnFn,
+              })
+              return okResult(`run ${runId} launched; log: ${logPath}`)
+            } catch (err) {
+              return errorResult((err as Error).message)
+            }
           }
           case 'react':
             return await this.callReact(chatId, args)
