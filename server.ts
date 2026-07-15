@@ -1226,6 +1226,8 @@ async function maybeInitProjectsBackend(): Promise<void> {
     getPool: () => projectPool,
     // Reread channels.json each call — handoff opt-ins can change at runtime.
     getConfig: () => loadChannelsConfig(),
+    // Hermes bridge opt-in — exposes `hermes_run` to the master session only.
+    getHermesConfig: () => loadChannelsConfig().defaults.hermes,
     getProjectPlatform: (chatId) => loadChannelsConfig().projects[chatId]?.platform,
     memoryStore: memoryStore ?? undefined,
     // Master-only privileged path. Claude in the master channel can

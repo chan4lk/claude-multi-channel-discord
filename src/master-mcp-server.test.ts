@@ -223,6 +223,128 @@ try {
 }
 check('urlFor after stop throws', urlAfterStopThrew)
 
+// ─── hermes_run tool tests ────────────────────────────────────────────────
+
+const HERMES_MASTER = '333333333333333333'
+const HERMES_PROJECT = '444444444444444444'
+
+type SpawnArgs = { file: string; args: string[]; options: Record<string, unknown> }
+const spawnCalls: SpawnArgs[] = []
+
+// Mock spawn: returns a minimal child process object (detached + unref pattern)
+function mockSpawn(file: string, args: string[], options: Record<string, unknown>) {
+  spawnCalls.push({ file, args, options })
+  const child: any = {
+    pid: 99999,
+    unref() {},
+    on(_ev: string, _cb: unknown) {},
+  }
+  return child
+}
+
+const enabledHermesCfg = {
+  enabled: true,
+  binPath: '/usr/local/bin/hermes',
+  yolo: true,
+  extraArgs: [] as string[],
+}
+
+// Server with hermes enabled
+const serverHermesEnabled = new MasterMcpServer({
+  onReply: () => {},
+  getMasterChatId: () => HERMES_MASTER,
+  getHermesConfig: () => enabledHermesCfg,
+  hermesSpawnFn: mockSpawn as any,
+  log: () => {},
+})
+const { host: hh, port: hp } = await serverHermesEnabled.start()
+const hermesEnabledMasterUrl = `http://${hh}:${hp}/mcp/${HERMES_MASTER}`
+const hermesEnabledProjectUrl = `http://${hh}:${hp}/mcp/${HERMES_PROJECT}`
+const hermesEnabledMasterToken = serverHermesEnabled.tokenFor(HERMES_MASTER)
+const hermesEnabledProjectToken = serverHermesEnabled.tokenFor(HERMES_PROJECT)
+
+// tools/list: master chat with hermes enabled → includes hermes_run
+const hermesEnabledMasterList = await rpc(hermesEnabledMasterUrl, hermesEnabledMasterToken, 'tools/list', {})
+const hermesEnabledMasterTools = (hermesEnabledMasterList.result?.tools ?? []).map((t: { name: string }) => t.name)
+check(
+  'hermes_run (master, enabled): listed in tools',
+  hermesEnabledMasterTools.includes('hermes_run'),
+  JSON.stringify(hermesEnabledMasterTools),
+)
+
+// tools/list: non-master chat (hermes enabled) → excludes hermes_run
+const hermesEnabledProjectList = await rpc(hermesEnabledProjectUrl, hermesEnabledProjectToken, 'tools/list', {})
+const hermesEnabledProjectTools = (hermesEnabledProjectList.result?.tools ?? []).map((t: { name: string }) => t.name)
+check(
+  'hermes_run (project, enabled): NOT listed for non-master chat',
+  !hermesEnabledProjectTools.includes('hermes_run'),
+  JSON.stringify(hermesEnabledProjectTools),
+)
+
+// tools/call hermes_run with mock spawnFn → ok result contains run id
+spawnCalls.length = 0
+const hermesRunRes = await rpc(hermesEnabledMasterUrl, hermesEnabledMasterToken, 'tools/call', {
+  name: 'hermes_run',
+  arguments: { prompt: 'echo hello from hermes test' },
+})
+check(
+  'hermes_run (master): ok result contains run id and log path',
+  hermesRunRes.result && !hermesRunRes.result.isError &&
+    (hermesRunRes.result.content?.[0]?.text ?? '').startsWith('run h-') &&
+    (hermesRunRes.result.content?.[0]?.text ?? '').includes('log:'),
+  JSON.stringify(hermesRunRes).slice(0, 300),
+)
+check(
+  'hermes_run (master): spawn was called with correct binary',
+  spawnCalls.length === 1 && spawnCalls[0]!.file === enabledHermesCfg.binPath,
+  JSON.stringify(spawnCalls),
+)
+
+// tools/call hermes_run with empty prompt → isError
+const hermesEmptyPromptRes = await rpc(hermesEnabledMasterUrl, hermesEnabledMasterToken, 'tools/call', {
+  name: 'hermes_run',
+  arguments: { prompt: '' },
+})
+check(
+  'hermes_run (master): empty prompt → isError',
+  hermesEmptyPromptRes.result?.isError === true,
+  JSON.stringify(hermesEmptyPromptRes).slice(0, 200),
+)
+
+await serverHermesEnabled.stop()
+
+// Server with hermes disabled (enabled: false) — tool must not appear
+const serverHermesDisabled = new MasterMcpServer({
+  onReply: () => {},
+  getMasterChatId: () => HERMES_MASTER,
+  getHermesConfig: () => ({ ...enabledHermesCfg, enabled: false }),
+  log: () => {},
+})
+const { host: hdh, port: hdp } = await serverHermesDisabled.start()
+const hermesDisabledMasterUrl = `http://${hdh}:${hdp}/mcp/${HERMES_MASTER}`
+const hermesDisabledMasterToken = serverHermesDisabled.tokenFor(HERMES_MASTER)
+
+const hermesDisabledList = await rpc(hermesDisabledMasterUrl, hermesDisabledMasterToken, 'tools/list', {})
+const hermesDisabledTools = (hermesDisabledList.result?.tools ?? []).map((t: { name: string }) => t.name)
+check(
+  'hermes_run (master, disabled): NOT listed when hermes.enabled=false',
+  !hermesDisabledTools.includes('hermes_run'),
+  JSON.stringify(hermesDisabledTools),
+)
+
+// tools/call hermes_run when disabled → isError even if tool somehow called
+const hermesDisabledCallRes = await rpc(hermesDisabledMasterUrl, hermesDisabledMasterToken, 'tools/call', {
+  name: 'hermes_run',
+  arguments: { prompt: 'should fail' },
+})
+check(
+  'hermes_run (master, disabled): call returns isError',
+  hermesDisabledCallRes.result?.isError === true,
+  JSON.stringify(hermesDisabledCallRes).slice(0, 200),
+)
+
+await serverHermesDisabled.stop()
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)
   process.exit(1)
