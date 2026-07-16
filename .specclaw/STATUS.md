@@ -1,11 +1,13 @@
 # 🦞 SpecClaw Dashboard
 
 **Project:** claude-mcd
-**Last Updated:** 2026-07-15 17:34 UTC
+**Last Updated:** 2026-07-16 06:47 UTC
 
 ## Active Changes
 
 
+- ✅ **bot-peer-dialogue** — 5/5 tasks (100%) | 0 failed
+- 🔨 **cross-project-dialogue** — 0/6 tasks (0%) | 0 failed
 - 🔨 **heartbeat-attention-report** — 4/5 tasks (80%) | 0 failed
 - ✅ **hermes-agent-bridge** — 5/5 tasks (100%) | 0 failed
 - ✅ **idle-gated-schedules** — 4/4 tasks (100%) | 0 failed
@@ -28,6 +30,6 @@ _None._
 
 ## Stats
 
-- **Total changes:** 11
-- **Active:** 11
+- **Total changes:** 13
+- **Active:** 13
 - **Completed:** 0
