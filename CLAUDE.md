@@ -69,8 +69,9 @@ Discord Gateway (WSS)
 | `src/argv.ts` | Bash-like argv splitter + flag parser |
 | `src/discord-chunk.ts` | 2000-char chunker respecting Discord markdown |
 | `src/whatsapp-adapter.ts` | `WhatsAppAdapter` — Baileys socket, QR-to-master-channel pairing, inbound/outbound routing |
+| `src/bot-peers.ts` | `BotPeerGate` — consecutive-turn limit, cooldown, notice latch, human reset for bot-peer inbound |
 
-Tests: `src/master-commands.test.ts`, `src/project-pool.test.ts`, `src/master-mcp-server.test.ts` (~80 checks total).
+Tests: `src/master-commands.test.ts`, `src/project-pool.test.ts`, `src/master-mcp-server.test.ts`, `src/bot-peers.test.ts` (~90 checks total).
 
 ---
 
@@ -98,13 +99,16 @@ Tests: `src/master-commands.test.ts`, `src/project-pool.test.ts`, `src/master-mc
 **`channels.json` key fields:**
 - `master.chatId` + `master.commandPrefix` (default `!project`)
 - `defaults.{model, idleEvictMinutes, maxConcurrent, git.{userName,userEmail,credentials,branchPrefix}, claude.{permissionMode,allowedTools,disallowedTools,extraArgs}, providers.<alias>.{baseUrl,apiKeyEnv}, provider?}`
-- `projects[<chat_id>].{slug, model?, git?, claude?, provider?, platform?, whatsappJid?}` — `platform` is `'discord' | 'teams' | 'whatsapp'` (default `'discord'`); `whatsappJid` is required when `platform === 'whatsapp'` (contact's E.164 JID, e.g. `15551234567@s.whatsapp.net`)
+- `projects[<chat_id>].{slug, model?, git?, claude?, provider?, platform?, whatsappJid?, botPeers?}` — `platform` is `'discord' | 'teams' | 'whatsapp'` (default `'discord'`); `whatsappJid` is required when `platform === 'whatsapp'` (contact's E.164 JID, e.g. `15551234567@s.whatsapp.net`); `botPeers: { allow: string[], maxConsecutive?, cooldownSeconds? }` enables allowlisted bot-peer inbound with loop-prevention
+- `defaults.botPeers.{maxConsecutive?, cooldownSeconds?}` — limits-only defaults (no `allow`); built-in fallback is maxConsecutive=5, cooldownSeconds=30
 
 ---
 
 ## All implemented `!project` verbs
 
 `list`, `show`/`status`, `create`, `clone`, `set`, `rename`, `remote`, `pull`, `usage`/`ps`/`top`, `stop`, `schedule add/inject/list/pause/resume/rm`, `provider`, `model`, `progress`, `branch`, `memory`, `heartbeat`, `hermes`, `teams-setup`, `rm --yes`, `help`
+
+`set` flags include `--bot-peers <id,id,...> --yes` (set/replace allowlist) and `--bot-peers none` (remove block, no `--yes` needed).
 
 Mutation verbs require `userId ∈ access.allowFrom`. Destructive verbs (`rm`, `rename`, `remote --set`) require `--yes`.
 

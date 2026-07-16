@@ -64,6 +64,30 @@ const VoiceProjectConfigSchema = z.object({
 })
 export type VoiceProjectConfig = z.infer<typeof VoiceProjectConfigSchema>
 
+/**
+ * Bot-peer dialogue config for a project.
+ * `allow`: explicit list of Discord user-id snowflakes permitted to deliver
+ * messages into this project's session as a machine peer.
+ * `maxConsecutive` / `cooldownSeconds`: per-project overrides for the loop
+ * guards; fall back to defaults.botPeers then built-in (5 / 30).
+ */
+const BotPeersSchema = z.object({
+  allow: z.array(z.string().regex(/^\d{17,20}$/, 'each bot-peer id must be a Discord snowflake (17-20 digits)')),
+  maxConsecutive: z.number().int().positive().optional(),
+  cooldownSeconds: z.number().int().positive().optional(),
+})
+export type BotPeers = z.infer<typeof BotPeersSchema>
+
+/**
+ * Limits-only variant for defaults.botPeers — no allow list (allowlists are
+ * always per-project; there is no safe global default for inbound bot reach).
+ */
+const BotPeerLimitsSchema = z.object({
+  maxConsecutive: z.number().int().positive().optional(),
+  cooldownSeconds: z.number().int().positive().optional(),
+})
+export type BotPeerLimits = z.infer<typeof BotPeerLimitsSchema>
+
 const ProjectSchema = z.object({
   slug: SlugSchema,
   /**
@@ -145,6 +169,14 @@ const ProjectSchema = z.object({
    * Falls back to RESUME_TRANSCRIPT_MAX_BYTES when unset.
    */
   sessionRotateThresholdKB: z.number().int().positive().optional(),
+  /**
+   * Bot-peer dialogue config. When present, messages from the listed Discord
+   * user ids (bot accounts) are delivered into this project's Claude session
+   * instead of being dropped. Loop guards (consecutive limit, cooldown) are
+   * applied per FR3/FR4. Master channel is always excluded regardless of this
+   * config. Absent = no bot messages accepted (default behavior preserved).
+   */
+  botPeers: BotPeersSchema.optional(),
 }).superRefine((val, ctx) => {
   if (val.platform === 'whatsapp' && !val.whatsappJid) {
     ctx.addIssue({
@@ -222,6 +254,11 @@ const DefaultsSchema = z.object({
    * per-channel via their own sessionRotateThresholdKB field.
    */
   sessionRotateThresholdKB: z.number().int().positive().optional(),
+  /**
+   * Default bot-peer loop-guard limits. No `allow` field — allowlists are
+   * always per-project. Built-in fallbacks: maxConsecutive 5, cooldownSeconds 30.
+   */
+  botPeers: BotPeerLimitsSchema.optional(),
 })
 
 const MasterSchema = z.object({

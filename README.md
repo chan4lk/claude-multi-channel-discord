@@ -166,6 +166,47 @@ Access control reuses `access.allowFrom` — the sender's E.164 number must be i
 
 ---
 
+## Bot-peer dialogue (optional)
+
+Lets an explicitly allowlisted external bot (e.g. Hermes) send messages into a specific project's Claude session, with hard loop-prevention.
+
+**Enable** by adding `botPeers` to the project entry in `channels.json`:
+
+```jsonc
+{
+  "projects": {
+    "<chat_id>": {
+      "slug": "my-project",
+      "botPeers": {
+        "allow": ["123456789012345678"],  // Discord user ids of trusted bots
+        "maxConsecutive": 5,              // max bot turns before human reset (default 5)
+        "cooldownSeconds": 30             // min seconds between bot deliveries (default 30)
+      }
+    }
+  }
+}
+```
+
+Limits-only defaults (no `allow`) can be set under `defaults.botPeers` in `channels.json`.
+
+**Manage** from the master channel:
+
+```
+!project set <slug> --bot-peers <id,id,...> --yes   — set/replace allowlist (requires --yes)
+!project set <slug> --bot-peers none                 — remove botPeers block (no --yes needed)
+```
+
+**Limits and semantics:**
+
+- `maxConsecutive` — consecutive bot deliveries since the last human message. On breach, a one-time notice is posted to the channel; further messages are dropped silently until a human sends a message to that channel, which resets the counter and notice latch.
+- `cooldownSeconds` — bot messages arriving faster than this are dropped silently (no counter increment, no notice).
+- The master channel is always excluded — bot messages to the master are dropped regardless of config.
+- Gate state is in-memory; a bot restart resets all counters.
+
+> **Cost caution:** Bot-to-bot loops burn tokens quickly. The consecutive limit stops runaway exchanges, but allowlisting a chatty bot against a project that replies verbosely can still accumulate cost fast. Monitor usage with `!project usage`.
+
+---
+
 ## Hermes bridge (optional)
 
 > **⚠️ Security:** Hermes runs with `--yolo` (auto-approved tools) as the same OS user as MCD. Anyone in `access.allowFrom` can execute arbitrary ops on the host through it. Leave disabled unless you need it.
