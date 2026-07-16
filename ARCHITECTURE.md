@@ -154,6 +154,30 @@ Lifecycle:
 - **`acceptReply`** — entry point used by the master MCP server's `reply` callback. Looks up the matching process, calls its internal `acceptReply` to bump activity and fan out, which itself fires the pool's `onReply` (the canonical Discord-dispatch path).
 - **`snapshot()`** — used by `!project usage`. Iterates tracked processes and calls each `getStats()` best-effort.
 
+### `BotPeerGate` (`src/bot-peers.ts`)
+
+Loop-prevention gate for bot-peer inbound messages (FR3/FR4/NFR1/NFR2). All state is in-memory — a process restart resets counters (documented, acceptable).
+
+```
+client.on('messageCreate')
+  ├─ msg.author.bot?
+  │    └─ handleBotInbound(msg)
+  │         ├─ project has botPeers.allow containing author id?   ── no → drop
+  │         ├─ channelId === master.chatId?                        ── yes → drop (hard exclusion)
+  │         ├─ botPeerGate.check(channelId, limits)
+  │         │     ├─ 'drop-cooldown'  → silent drop (stderr log)
+  │         │     ├─ 'limit'          → drop; post one-time notice (latched until human resets)
+  │         │     └─ 'deliver'        → pool.deliver({...envelope, authorType:'bot'}); recordDelivery()
+  │         └─ (skip sendTyping / ackReaction)
+  └─ human path (unchanged) ── on project-pool delivery → botPeerGate.recordHuman(channelId)
+```
+
+In-memory state: `consecutive: Map<chatId, number>`, `lastDeliveryMs: Map<chatId, number>`, `noticeSent: Set<chatId>`. `recordHuman(chatId)` clears all three for that channel. `check()` is read-only — the caller calls `recordDelivery()` only after a successful `pool.deliver()`.
+
+**Effective limits** resolve as: project `botPeers.{maxConsecutive,cooldownSeconds}` → `defaults.botPeers` → built-in (5 / 30). The `allow` list is always per-project only — no default allowlist.
+
+**Envelope labeling:** When a bot message passes the gate, `InboundEnvelope.authorType` is set to `'bot'` and `formatPrompt` emits `author_type="bot"` in the `<channel>` tag so the session knows it is talking to a machine peer.
+
 ### Master command parser (`src/master-commands.ts`)
 
 `handleMasterCommand` takes a content line + a `MasterContext` (chatId, userId, current config, authorizedUsers, optional MasterMutator). It:
@@ -170,7 +194,7 @@ Verbs and their handlers:
 | `show` / `status` | — | config + prompt preview + live `gitStatusSummary()` if the dir is a working tree |
 | `create` | `channels.json`, `access.json`, `projects/<slug>/`, optional Discord channel | with `--repo-dir` symlinks to an existing checkout instead of mkdir; with `--new-channel` does a find-or-create on the master's guild |
 | `clone` | `channels.json`, `access.json`, `projects/<slug>/.git/...`, optional Discord channel | runs `git clone` with the resolved credential env; rolls back any auto-created channel on failure |
-| `set` | `projects/<slug>/CLAUDE.md`; optionally kills running subprocess | claude re-reads CLAUDE.md on next spawn |
+| `set` | `projects/<slug>/CLAUDE.md`; optionally kills running subprocess; `--bot-peers` updates `channels.json` | claude re-reads CLAUDE.md on next spawn; `--bot-peers <csv> --yes` / `--bot-peers none` |
 | `rename` | `channels.json`, `projects/<slug>/` directory | kills running subprocess first to avoid pulling cwd out from under it |
 | `remote` | `channels.json` git block; optionally `git remote set-url` | view-only when called without `--set` |
 | `pull` | working tree | `git pull --ff-only`; refuses on non-FF |
@@ -264,8 +288,9 @@ In-process tests live next to source. Run a suite with `bun src/<name>.test.ts`.
 - `src/master-commands.test.ts` — argv parser, flag parser, every verb branch, mutator-mock interactions, claudeArgs merging.
 - `src/project-pool.test.ts` — lifecycle (lazy spawn, reuse, unknown-chat rejection, LRU at maxConcurrent, idle eviction with fake clock, shutdown propagation).
 - `src/master-mcp-server.test.ts` — listener bind, URL routing, 404 / 405 paths, stop cleanliness.
+- `src/bot-peers.test.ts` — `BotPeerGate`: consecutive counter, notice latch, cooldown (fake clock), human reset, limit-lowered edge case; `effectiveBotPeerLimits` fallback chain.
 
-Total: ~80 checks at last count. `bun tsc --noEmit` covers types across the whole project.
+Total: ~90 checks at last count. `bun tsc --noEmit` covers types across the whole project.
 
 ---
 

@@ -59,6 +59,7 @@ import { voiceSlashCommands, handleVoiceInteraction } from './src/voice-commands
 import { modelSlashCommands, handleModelInteraction } from './src/model-command.ts'
 import { providerSlashCommands, handleProviderInteraction } from './src/provider-command.ts'
 import { insertVoiceTurn } from './src/voice-db.ts'
+import { BotPeerGate, effectiveBotPeerLimits } from './src/bot-peers.ts'
 
 // Single-source state dir. MCD_CHANNELS_DIR is the multi-channel-discord
 // override and wins; falls back to upstream's DISCORD_STATE_DIR for in-place
@@ -1069,6 +1070,10 @@ client.on('interactionCreate', async (interaction: Interaction) => {
 })
 
 // ─── multi-channel-discord additions ──────────────────────────────────────
+// Shared bot-peer gate — one instance for the process lifetime.
+// State is in-memory only; a server restart resets all counters (NFR2).
+const botPeerGate = new BotPeerGate()
+
 // Optional per-project subprocess backend. Initialized at boot ONLY if
 // channels.json has a master configured. Without it, the bot falls back to
 // the upstream single-session behavior unchanged.
@@ -2039,9 +2044,88 @@ async function tryMasterCommand(msg: Message, access: Access): Promise<boolean> 
 }
 
 client.on('messageCreate', msg => {
-  if (msg.author.bot) return
+  if (msg.author.bot) {
+    handleBotInbound(msg).catch(e => process.stderr.write(`discord: handleBotInbound failed: ${e}\n`))
+    return
+  }
   handleInbound(msg).catch(e => process.stderr.write(`discord: handleInbound failed: ${e}\n`))
 })
+
+async function handleBotInbound(msg: Message): Promise<void> {
+  if (!projectPool) return
+
+  let cfg
+  try {
+    cfg = loadChannelsConfig()
+  } catch {
+    return
+  }
+
+  const chatId = msg.channelId
+  const project = cfg.projects[chatId]
+
+  // AC1: no project, no botPeers config, or author not in allow list → drop
+  if (!project) return
+  const allow = project.botPeers?.allow
+  if (!allow || !allow.includes(msg.author.id)) return
+
+  // AC3: master channel is always excluded (hard-coded)
+  if (cfg.master?.chatId === chatId) return
+
+  const limits = effectiveBotPeerLimits(cfg.defaults, project)
+  const gateResult = botPeerGate.check(chatId, limits)
+
+  if (gateResult.action === 'drop-cooldown') {
+    process.stderr.write(`discord: bot-peer cooldown drop msg=${msg.id} chat=${chatId} user=${msg.author.id}\n`)
+    return
+  }
+
+  if (gateResult.action === 'limit') {
+    if (gateResult.notify) {
+      // One-time notice to the channel
+      try {
+        const ch = await client.channels.fetch(chatId)
+        if (ch && 'send' in ch) {
+          await (ch as import('discord.js').TextChannel).send(
+            `🚫 bot-peer turn limit (${limits.maxConsecutive}) reached — send a message to resume`,
+          )
+        }
+      } catch (err) {
+        process.stderr.write(`discord: bot-peer limit notice failed: ${err}\n`)
+      }
+    }
+    return
+  }
+
+  // 'deliver'
+  const atts: string[] = []
+  for (const att of msg.attachments.values()) {
+    const kb = (att.size / 1024).toFixed(0)
+    atts.push(`${safeAttName(att)} (${att.contentType ?? 'unknown'}, ${kb}KB)`)
+  }
+  const content = msg.content || (atts.length > 0 ? '(attachment)' : '')
+
+  // AC8 / FR8: skip sendTyping and ackReaction for bot deliveries
+  process.stderr.write(`discord: bot-peer route msg=${msg.id} chat=${chatId} user=${msg.author.id} → pool\n`)
+  mcEmit('message_received', { chatId, userId: msg.author.id, messageId: msg.id })
+
+  void projectPool
+    .deliver(chatId, {
+      messageId: msg.id,
+      userId: msg.author.id,
+      username: msg.author.username,
+      content,
+      ts: msg.createdAt.toISOString(),
+      attachments: atts.length > 0 ? atts : undefined,
+      authorType: 'bot',
+    })
+    .then(() => {
+      botPeerGate.recordDelivery(chatId)
+    })
+    .catch((err) => {
+      process.stderr.write(`discord: bot-peer pool deliver failed: ${err}\n`)
+    })
+}
 
 async function handleInbound(msg: Message): Promise<void> {
   const result = await gate(msg)
@@ -2103,6 +2187,8 @@ async function handleInbound(msg: Message): Promise<void> {
 
       process.stderr.write(`discord: route msg=${msg.id} chat=${msg.channelId} user=${msg.author.id} → pool\n`)
       mcEmit('message_received', { chatId: msg.channelId, userId: msg.author.id, messageId: msg.id })
+      // FR6: human message resets the bot-peer consecutive counter for this channel
+      botPeerGate.recordHuman(msg.channelId)
       void projectPool
         .deliver(msg.channelId, {
           messageId: msg.id,

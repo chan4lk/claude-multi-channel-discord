@@ -1040,6 +1040,9 @@ export class ClaudeProjectProcess implements ProjectProcess {
       meta.push(`attachment_count="${envelope.attachments.length}"`)
       meta.push(`attachments="${attr(envelope.attachments.join('; '))}"`)
     }
+    if (envelope.authorType === 'bot') {
+      meta.push(`author_type="bot"`)
+    }
     const channelMsg = `<channel ${meta.join(' ')}>${body}</channel>`
 
     // Inject goal context and/or rotated session snapshot on the first message of each session start.

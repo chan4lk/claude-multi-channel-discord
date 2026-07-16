@@ -224,6 +224,8 @@ function helpText(prefix: string): string {
     `${prefix} set    <chat_id-or-slug> --distill-on-stop            — enable memory distillation after session stops`,
     `${prefix} set    <chat_id-or-slug> --pr-token-github <token>    — store PR-API token on the project's credential alias (delete the message after!)`,
     `${prefix} set    <chat_id-or-slug> --pr-token-azdo <token> --azdo-org X --azdo-project Y — store ADO PAT + org/project`,
+    `${prefix} set    <chat_id-or-slug> --bot-peers <id,id,...> --yes — set allowed inbound bot user ids (requires --yes)`,
+    `${prefix} set    <chat_id-or-slug> --bot-peers none            — remove bot-peer allow list`,
     `${prefix} rename <chat_id-or-slug> --slug NEW                    — rename slug + dir`,
     `${prefix} remote <chat_id-or-slug> [--set URL] [--creds NAME]    — show/set git remote`,
     `${prefix} pull   <chat_id-or-slug>                               — git pull --ff-only`,
@@ -627,8 +629,35 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
     prApi = { kind: 'azdo', token: prTokenAzdo, org, project }
   }
 
-  if (prompt === null && stuckMinutes === null && heartbeatMode === null && heartbeatWindow === null && heartbeatStale === null && goalRaw === null && distillOnStop === null && developBranch === null && prApi === null) {
-    return '`set` requires `--prompt "..."`, `--stuck-threshold-minutes N`, `--heartbeat-mode <supervised|autonomous>`, `--heartbeat-window <HH:MM-HH:MM>`, `--heartbeat-stale-minutes N`, `--goal "..."`, `--distill-on-stop`, `--develop-branch on|off`, `--pr-token-github <token>`, or `--pr-token-azdo <token> --azdo-org X --azdo-project Y`'
+  // --bot-peers <id,id,...> or --bot-peers none
+  const botPeersRaw = typeof flags['bot-peers'] === 'string' ? flags['bot-peers'] : null
+  // null means flag not present; 'none' means clear; otherwise csv of snowflakes
+  let botPeersAction: 'none' | string[] | null = null
+  if (botPeersRaw !== null) {
+    if (botPeersRaw === 'none') {
+      botPeersAction = 'none'
+    } else {
+      // Reject master slug as target
+      if (isMasterChannel(config, entry.chatId)) {
+        return '`set --bot-peers` cannot target the master channel'
+      }
+      // Requires --yes (expanding inbound attack surface)
+      if (flags.yes !== true) {
+        return '`set --bot-peers <ids>` requires `--yes` (adds inbound bot reach)'
+      }
+      const ids = botPeersRaw.split(',').map(s => s.trim()).filter(Boolean)
+      const snowflakeRe = /^\d{17,20}$/
+      for (const id of ids) {
+        if (!snowflakeRe.test(id)) {
+          return `invalid bot-peer id "${id}" — must be a Discord snowflake (17–20 digits)`
+        }
+      }
+      botPeersAction = ids
+    }
+  }
+
+  if (prompt === null && stuckMinutes === null && heartbeatMode === null && heartbeatWindow === null && heartbeatStale === null && goalRaw === null && distillOnStop === null && developBranch === null && prApi === null && botPeersAction === null) {
+    return '`set` requires `--prompt "..."`, `--stuck-threshold-minutes N`, `--heartbeat-mode <supervised|autonomous>`, `--heartbeat-window <HH:MM-HH:MM>`, `--heartbeat-stale-minutes N`, `--goal "..."`, `--distill-on-stop`, `--develop-branch on|off`, `--pr-token-github <token>`, `--pr-token-azdo <token> --azdo-org X --azdo-project Y`, or `--bot-peers <id,...>|none`'
   }
 
   const results: string[] = []
@@ -707,6 +736,21 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
       `✅ stored ${prApi.kind} PR token on alias \`${alias}\` for **${entry.project.slug}**.`,
       '⚠️ Delete the Discord message containing the token now — it is in channel history.',
     )
+  }
+
+  if (botPeersAction !== null) {
+    const latestConfig = loadConfig()
+    const latestEntry = latestConfig.projects[entry.chatId] ?? entry.project
+    if (botPeersAction === 'none') {
+      const { botPeers: _removed, ...rest } = latestEntry
+      saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: rest } })
+      results.push(`✅ cleared \`botPeers\` for **${entry.project.slug}**.`)
+    } else {
+      const existing = latestEntry.botPeers
+      const updated = { ...existing, allow: botPeersAction }
+      saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: { ...latestEntry, botPeers: updated } } })
+      results.push(`✅ set \`botPeers.allow\` = [${botPeersAction.join(', ')}] for **${entry.project.slug}**.`)
+    }
   }
 
   // Respawn only needed when prompt changed (CLAUDE.md is read at session start).

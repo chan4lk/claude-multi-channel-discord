@@ -20,6 +20,8 @@ export type InboundEnvelope = {
   ts: string
   /** Optional attachment summaries (name, type, size). */
   attachments?: string[]
+  /** Set to 'bot' when the message originates from an allowlisted bot peer. Absent for human messages. */
+  authorType?: 'bot'
 }
 
 export type OutboundReply =

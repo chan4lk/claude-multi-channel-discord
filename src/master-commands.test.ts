@@ -964,6 +964,92 @@ check('set: heartbeat accepted', setHb.kind === 'reply' && setHb.text.includes('
   saveConfig(config)
 }
 
+// --- AC6: set --bot-peers verb -----------------------------------------------
+
+// Re-use 'support' (chat_id 999888777666555444, slug 'support').
+// Master is 123456789012345678.
+
+// Missing --yes when providing ids → refusal
+{
+  const res = await handleMasterCommand(
+    '!project set support --bot-peers 111111111111111111',
+    mctx(),
+  )
+  check(
+    'set --bot-peers: missing --yes returns refusal',
+    res.kind === 'reply' && res.text.includes('--yes'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  check(
+    'set --bot-peers: not persisted when --yes missing',
+    loadConfig().projects['999888777666555444']?.botPeers === undefined,
+  )
+}
+
+// Invalid snowflake → usage error
+{
+  const res = await handleMasterCommand(
+    '!project set support --bot-peers not-a-snowflake --yes',
+    mctx(),
+  )
+  check(
+    'set --bot-peers: invalid snowflake rejected',
+    res.kind === 'reply' && res.text.includes('invalid bot-peer id'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+}
+
+// Valid csv with --yes → persists
+{
+  const res = await handleMasterCommand(
+    '!project set support --bot-peers 111111111111111111,222222222222222222 --yes',
+    mctx(),
+  )
+  check(
+    'set --bot-peers: valid csv with --yes succeeds',
+    res.kind === 'reply' && res.text.includes('botPeers.allow'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  const saved = loadConfig().projects['999888777666555444']?.botPeers
+  check(
+    'set --bot-peers: ids persisted to channels.json',
+    Array.isArray(saved?.allow) &&
+      saved!.allow.includes('111111111111111111') &&
+      saved!.allow.includes('222222222222222222'),
+    JSON.stringify(saved),
+  )
+}
+
+// --bot-peers none (no --yes required) → removes the block
+{
+  const res = await handleMasterCommand(
+    '!project set support --bot-peers none',
+    mctx(),
+  )
+  check(
+    'set --bot-peers none: succeeds without --yes',
+    res.kind === 'reply' && res.text.includes('cleared'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  check(
+    'set --bot-peers none: botPeers removed from channels.json',
+    loadConfig().projects['999888777666555444']?.botPeers === undefined,
+  )
+}
+
+// Master channel as target → error
+{
+  const res = await handleMasterCommand(
+    '!project set master-test --bot-peers 111111111111111111 --yes',
+    mctx(),
+  )
+  check(
+    'set --bot-peers: master channel target rejected',
+    res.kind === 'reply' && res.text.includes('master channel'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+}
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)
   process.exit(1)
