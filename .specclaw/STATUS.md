@@ -9,7 +9,6 @@
 - ✅ **bot-peer-dialogue** — 5/5 tasks (100%) | 0 failed
 - 🔨 **cross-project-dialogue** — 0/6 tasks (0%) | 0 failed
 - 🔨 **heartbeat-attention-report** — 4/5 tasks (80%) | 0 failed
-- ✅ **hermes-agent-bridge** — 5/5 tasks (100%) | 0 failed
 - ✅ **idle-gated-schedules** — 4/4 tasks (100%) | 0 failed
 - ✅ **loop-halt-escalation** — 4/4 tasks (100%) | 0 failed
 - ✅ **mcd-reliability-fixes** — 5/5 tasks (100%) | 0 failed
@@ -26,10 +25,11 @@ _None._
 
 ## Recently Completed
 
-_None._
+
+- ✅ **2026-07-15-hermes-agent-bridge**
 
 ## Stats
 
 - **Total changes:** 13
-- **Active:** 13
-- **Completed:** 0
+- **Active:** 12
+- **Completed:** 1
