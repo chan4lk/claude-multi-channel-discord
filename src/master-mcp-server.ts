@@ -28,11 +28,12 @@ import { z } from 'zod'
 import type { spawn as SpawnFn } from 'node:child_process'
 
 import { channelsDir } from './paths.ts'
-import { findProjectBySlug, handoffEnabled, type ChannelsConfig, type HermesConfig } from './channels-config.ts'
+import { effectivePeerLimits, findProjectBySlug, handoffEnabled, type ChannelsConfig, type HermesConfig } from './channels-config.ts'
 import type { InboundEnvelope, OutboundReply } from './project-process.ts'
 import type { ProjectPool } from './project-pool.ts'
 import { MemoryStore, type MemoryType } from './memory-store.ts'
 import { launchHermesRun } from './hermes-bridge.ts'
+import { appendLearning, readLearnings } from './shared-learnings.ts'
 
 const ChatIdRoute = /^\/mcp\/([A-Za-z0-9:_\-\.%+@]{3,300})\/?$/
 
@@ -104,6 +105,11 @@ export interface MasterMcpServerOptions {
    * child_process.spawn. Override in tests to avoid launching real processes.
    */
   hermesSpawnFn?: typeof SpawnFn
+  /**
+   * Injectable clock for cooldown calculations. Defaults to Date.now().
+   * Override in tests to control time without real sleeps.
+   */
+  now?: () => number
 }
 
 export class MasterMcpServer {
@@ -123,6 +129,17 @@ export class MasterMcpServer {
   private readonly getProjectPlatform: ((chatId: string) => string | undefined) | null
   private readonly getHermesConfig: (() => HermesConfig | undefined) | null
   private readonly hermesSpawnFn: typeof SpawnFn | undefined
+  private readonly now: () => number
+  /**
+   * Per-thread hop counts (thread_id → deliveries so far).
+   * Pruned FIFO at 500 entries. Process-lifetime only.
+   */
+  private readonly threadHops = new Map<string, number>()
+  /**
+   * Per-directed-pair last delivery timestamp (ms).
+   * Key: "<srcSlug>→<dstSlug>".
+   */
+  private readonly pairLastSentMs = new Map<string, number>()
   /**
    * Per-chat bearer tokens. The endpoint is localhost-only but any local
    * process could otherwise POST /mcp/<chat_id> and reply as any channel —
@@ -147,6 +164,7 @@ export class MasterMcpServer {
     this.getProjectPlatform = opts.getProjectPlatform ?? null
     this.getHermesConfig = opts.getHermesConfig ?? null
     this.hermesSpawnFn = opts.hermesSpawnFn
+    this.now = opts.now ?? (() => Date.now())
   }
 
   async start(): Promise<{ host: string; port: number }> {
@@ -383,6 +401,61 @@ export class MasterMcpServer {
           })
         }
       }
+      // ask_project: cross-project peer dialogue. Only for non-master project sessions
+      // with peers.allow non-empty.
+      const peerSrc = this.peerSource(chatId)
+      if (peerSrc !== null) {
+        const config = this.getConfig?.() ?? null
+        const srcProject = config?.projects[chatId]
+        const limits = config && srcProject ? effectivePeerLimits(config, srcProject) : { maxHops: 6, cooldownSeconds: 15 }
+        tools.push({
+          name: 'ask_project',
+          description: `Send a message to another project's Claude session by slug. Requires mutual consent (both sides must have each other in peers.allow). Budget: ${limits.maxHops} hops per thread; ${limits.cooldownSeconds}s cooldown per directed pair. Args: target_slug, text, thread_id (optional — omit to start a new thread).`,
+          inputSchema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              target_slug: { type: 'string', description: 'Slug of the target project.' },
+              text: { type: 'string', description: 'Message to deliver.' },
+              thread_id: { type: 'string', description: 'Continue an existing thread. Omit to start a new one.' },
+            },
+            required: ['target_slug', 'text'],
+          },
+        })
+      }
+      // share_learning / read_learnings: exposed to any project with peers.allow non-empty,
+      // and to the master channel.
+      const hasPeerAccess = peerSrc !== null || this.getMasterChatId() === chatId
+      if (hasPeerAccess && this.getConfig) {
+        tools.push(
+          {
+            name: 'share_learning',
+            description: 'Append a slug-attributed, timestamped learning to the shared board (<MCD_CHANNELS_DIR>/shared/learnings.md). Entry cap: 2 KB. File cap: 64 KB (oldest dropped on overflow).',
+            inputSchema: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                text: { type: 'string', description: 'The learning to record.' },
+                tags: { type: 'array', items: { type: 'string' }, description: 'Optional tags (e.g. ["tmux", "claude-cli"]).' },
+              },
+              required: ['text'],
+            },
+          },
+          {
+            name: 'read_learnings',
+            description: 'Read entries from the shared learnings board, newest-first. Optional tag filter (AND semantics) and limit.',
+            inputSchema: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                tags: { type: 'array', items: { type: 'string' }, description: 'Filter by tags (AND semantics).' },
+                limit: { type: 'number', description: 'Max entries to return (default 20).' },
+              },
+              required: [],
+            },
+          },
+        )
+      }
       if (this.client) {
         tools.push(
           {
@@ -575,6 +648,135 @@ export class MasterMcpServer {
             }
             return okResult(JSON.stringify({ ok: true, target_slug: targetSlug, target_chat_id: target.chatId }))
           }
+          case 'ask_project': {
+            const srcSlug = this.peerSource(chatId)
+            if (srcSlug === null) {
+              return errorResult('ask_project is not available for this session (set peers.allow on the project in channels.json)')
+            }
+            const config = this.getConfig!()
+            if (!config) return errorResult('config not available')
+            const pool = this.getPool!()
+            if (!pool) return errorResult('pool not available')
+
+            const targetSlug = String(args.target_slug ?? '').trim()
+            const text = String(args.text ?? '').trim()
+            if (!targetSlug) return errorResult('target_slug is required')
+            if (!text) return errorResult('text is required')
+
+            // FR7: master is never a valid target
+            if (config.master?.chatId && findProjectBySlug(config, targetSlug)?.chatId === config.master.chatId) {
+              return errorResult('master project is not a valid ask_project target')
+            }
+
+            // FR6 self-reference guard
+            if (targetSlug === srcSlug) return errorResult('cannot ask_project to the same project')
+
+            const target = findProjectBySlug(config, targetSlug)
+            if (!target) return errorResult(`no project with slug "${targetSlug}"`)
+
+            // FR2: mutual consent — target must also allow source
+            const srcProject = config.projects[chatId]!
+            const srcAllows = srcProject.peers?.allow ?? []
+            if (!srcAllows.includes(targetSlug)) {
+              return errorResult(`mutual consent required: source project does not allow "${targetSlug}" in its peers.allow`)
+            }
+            const tgtAllows = target.project.peers?.allow ?? []
+            if (!tgtAllows.includes(srcSlug)) {
+              return errorResult(`mutual consent required: target project "${targetSlug}" does not allow "${srcSlug}" in its peers.allow`)
+            }
+
+            // FR3: hop ledger
+            const threadId = String(args.thread_id ?? '').trim() || `t-${Date.now()}-${randomBytes(4).toString('hex')}`
+            const srcLimits = effectivePeerLimits(config, srcProject)
+            const currentHops = this.threadHops.get(threadId) ?? 0
+            if (currentHops >= srcLimits.maxHops) {
+              return errorResult(`thread hop budget exhausted (${currentHops}/${srcLimits.maxHops}); start a new thread or wait for operator to reset`)
+            }
+
+            // FR4: per-pair cooldown
+            const pairKey = `${srcSlug}→${targetSlug}`
+            const lastSent = this.pairLastSentMs.get(pairKey) ?? 0
+            const nowMs = this.now()
+            const cooldownMs = srcLimits.cooldownSeconds * 1000
+            const elapsed = nowMs - lastSent
+            if (elapsed < cooldownMs) {
+              const waitSec = Math.ceil((cooldownMs - elapsed) / 1000)
+              return errorResult(`cooldown active: wait ${waitSec}s before sending to "${targetSlug}" again`)
+            }
+
+            // FR5: build envelope
+            const hop = currentHops + 1
+            const envelope: InboundEnvelope = {
+              messageId: `peer-${Date.now()}-${randomBytes(4).toString('hex')}`,
+              userId: `peer:${srcSlug}`,
+              username: `peer:${srcSlug}`,
+              content: `[Peer message from "${srcSlug}" thread=${threadId} hop=${hop}/${srcLimits.maxHops}] ${text}`,
+              ts: new Date().toISOString(),
+            }
+
+            this.log(`ask_project: ${srcSlug} → ${targetSlug} (thread=${threadId} hop=${hop}/${srcLimits.maxHops})`)
+            await pool.deliver(target.chatId, envelope)
+
+            // Update state after successful delivery
+            this.threadHops.set(threadId, hop)
+            this.pruneThreadHops()
+            this.pairLastSentMs.set(pairKey, nowMs)
+
+            // FR6: mirror posts to both channels (best-effort)
+            const preview = text.slice(0, 200)
+            if (this.client) {
+              // Mirror to source channel
+              try {
+                const srcCh = await this.fetchTextChannel(chatId)
+                await (srcCh as any).send({ content: `🔁 → ${targetSlug}: ${preview}` })
+              } catch (err) {
+                this.log(`ask_project: failed to mirror to source channel ${chatId}: ${(err as Error).message}`)
+              }
+              // Mirror to target channel
+              try {
+                const tgtCh = await this.fetchTextChannel(target.chatId)
+                await (tgtCh as any).send({ content: `🔁 from ${srcSlug}: ${preview}` })
+              } catch (err) {
+                this.log(`ask_project: failed to mirror to target channel ${target.chatId}: ${(err as Error).message}`)
+              }
+            }
+
+            return okResult(JSON.stringify({ ok: true, thread_id: threadId, hop, max_hops: srcLimits.maxHops }))
+          }
+          case 'share_learning': {
+            const hasPeerAccess = this.peerSource(chatId) !== null || this.getMasterChatId() === chatId
+            if (!hasPeerAccess || !this.getConfig) {
+              return errorResult('share_learning is not available for this session')
+            }
+            const config = this.getConfig()
+            if (!config) return errorResult('config not available')
+            const text = String(args.text ?? '').trim()
+            if (!text) return errorResult('text is required')
+            const rawTags = Array.isArray(args.tags) ? args.tags.map((t: unknown) => String(t)) : []
+
+            // Determine slug for attribution
+            const isMaster = this.getMasterChatId() === chatId
+            const project = config.projects[chatId]
+            const slug = isMaster ? 'master' : (project?.slug ?? chatId)
+
+            try {
+              appendLearning({ slug, text, tags: rawTags })
+              return okResult(JSON.stringify({ ok: true }))
+            } catch (err) {
+              return errorResult((err as Error).message)
+            }
+          }
+          case 'read_learnings': {
+            const hasPeerAccess = this.peerSource(chatId) !== null || this.getMasterChatId() === chatId
+            if (!hasPeerAccess || !this.getConfig) {
+              return errorResult('read_learnings is not available for this session')
+            }
+            const rawTags = Array.isArray(args.tags) ? args.tags.map((t: unknown) => String(t)) : undefined
+            const limitRaw = typeof args.limit === 'number' ? args.limit : 20
+            const limit = Math.max(1, Math.min(limitRaw, 200))
+            const entries = readLearnings({ tags: rawTags, limit })
+            return okResult(JSON.stringify({ entries }))
+          }
           case 'run_master_command': {
             if (!this.executeMasterCommand) return errorResult('run_master_command not configured')
             if (this.getMasterChatId() !== chatId) {
@@ -684,6 +886,36 @@ export class MasterMcpServer {
     const project = config.projects[chatId]
     if (!project) return null
     return handoffEnabled(config, project) ? project.slug : null
+  }
+
+  /**
+   * Whether the session for `chatId` may use `ask_project`.
+   * Returns the source slug if: the session belongs to a non-master project
+   * that has `peers.allow` non-empty, pool and config are wired.
+   * Returns null otherwise (including master — master uses handoff instead).
+   */
+  private peerSource(chatId: string): string | null {
+    if (!this.getPool || !this.getConfig) return null
+    const config = this.getConfig()
+    if (!config) return null
+    // Master is explicitly excluded from ask_project (FR7)
+    if (this.getMasterChatId() === chatId) return null
+    const project = config.projects[chatId]
+    if (!project) return null
+    if (!project.peers?.allow?.length) return null
+    return project.slug
+  }
+
+  /** Prune threadHops to at most 500 entries (FIFO). */
+  private pruneThreadHops(): void {
+    if (this.threadHops.size > 500) {
+      const toDelete = this.threadHops.size - 500
+      let i = 0
+      for (const key of this.threadHops.keys()) {
+        if (i++ >= toDelete) break
+        this.threadHops.delete(key)
+      }
+    }
   }
 
   // ─── upstream-parity tools (require this.client) ────────────────────────

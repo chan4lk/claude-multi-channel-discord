@@ -345,6 +345,233 @@ check(
 
 await serverHermesDisabled.stop()
 
+// ─── ask_project + learnings tests ───────────────────────────────────────────
+
+const PEER_MASTER  = '555555555555555555'
+const PEER_A_CHAT  = '666666666666666666'
+const PEER_B_CHAT  = '777777777777777777'
+const PEER_C_CHAT  = '888888888888888888'  // no peers config
+
+const peerInjected: Array<{ chatId: string; envelope: { userId: string; content: string } }> = []
+const peerMirrors:  Array<{ chatId: string; content: string }> = []
+
+// Mock Discord client: captures channel.send calls for mirror verification (AC10)
+const mockDiscordClient = {
+  channels: {
+    fetch: async (id: string) => ({
+      isTextBased: () => true,
+      type: 0, // GuildText
+      send: async (msg: { content: string }) => {
+        peerMirrors.push({ chatId: id, content: msg.content })
+      },
+    }),
+  },
+} as any
+
+const peerPool = {
+  deliver: async (chatId: string, envelope: { userId: string; content: string; messageId: string; username: string; ts: string }) => {
+    peerInjected.push({ chatId, envelope })
+  },
+} as unknown as import('./project-pool.ts').ProjectPool
+
+// Fake clock for cooldown tests (AC5)
+let fakeNow = 1_000_000
+
+// channels.json config with peer relationships:
+// A ↔ B mutual consent, A → C one-way (C doesn't allow A), maxHops:2 for A
+const peerConfig = {
+  version: 1 as const,
+  master: { chatId: PEER_MASTER, commandPrefix: '!project' },
+  defaults: {
+    model: 'sonnet',
+    idleEvictMinutes: 15,
+    maxConcurrent: 8,
+    git: { userName: 'bot', userEmail: 'bot@local', branchPrefix: 'claude/' },
+    claude: { permissionMode: 'auto' as const },
+    providers: {},
+    progressMode: 'off' as const,
+    handoff: false,
+    contextWarningThresholdPct: 80,
+  },
+  projects: {
+    [PEER_A_CHAT]: {
+      slug: 'project-a',
+      peers: { allow: ['project-b', 'project-c'], maxHops: 2 },
+    },
+    [PEER_B_CHAT]: {
+      slug: 'project-b',
+      peers: { allow: ['project-a'] },
+    },
+    [PEER_C_CHAT]: {
+      slug: 'project-c',
+      // no peers.allow — C accepts no peer messages
+    },
+  },
+} as unknown as import('./channels-config.ts').ChannelsConfig
+
+const serverPeer = new MasterMcpServer({
+  onReply: () => {},
+  getMasterChatId: () => PEER_MASTER,
+  getPool: () => peerPool,
+  getConfig: () => peerConfig,
+  client: mockDiscordClient,
+  now: () => fakeNow,
+  log: () => {},
+})
+const { host: ph, port: pp } = await serverPeer.start()
+
+function peerUrl(chatId: string) { return `http://${ph}:${pp}/mcp/${chatId}` }
+function peerToken(chatId: string) { return serverPeer.tokenFor(chatId) }
+
+// AC1: tools/list for project without peers config omits ask_project / learnings tools
+const cList = await rpc(peerUrl(PEER_C_CHAT), peerToken(PEER_C_CHAT), 'tools/list', {})
+const cTools = (cList.result?.tools ?? []).map((t: { name: string }) => t.name)
+check('AC1: project without peers: ask_project absent', !cTools.includes('ask_project'), JSON.stringify(cTools))
+check('AC1: project without peers: share_learning absent', !cTools.includes('share_learning'), JSON.stringify(cTools))
+check('AC1: project without peers: read_learnings absent', !cTools.includes('read_learnings'), JSON.stringify(cTools))
+
+// AC1: project with peers.allow non-empty sees all three tools
+const aList = await rpc(peerUrl(PEER_A_CHAT), peerToken(PEER_A_CHAT), 'tools/list', {})
+const aTools = (aList.result?.tools ?? []).map((t: { name: string }) => t.name)
+check('AC1: project with peers: ask_project listed', aTools.includes('ask_project'), JSON.stringify(aTools))
+check('AC1: project with peers: share_learning listed', aTools.includes('share_learning'), JSON.stringify(aTools))
+check('AC1: project with peers: read_learnings listed', aTools.includes('read_learnings'), JSON.stringify(aTools))
+
+// AC1: master has learnings tools but NOT ask_project
+const mList = await rpc(peerUrl(PEER_MASTER), peerToken(PEER_MASTER), 'tools/list', {})
+const mTools = (mList.result?.tools ?? []).map((t: { name: string }) => t.name)
+check('AC1: master: ask_project absent', !mTools.includes('ask_project'), JSON.stringify(mTools))
+check('AC1: master: share_learning listed', mTools.includes('share_learning'), JSON.stringify(mTools))
+check('AC1: master: read_learnings listed', mTools.includes('read_learnings'), JSON.stringify(mTools))
+
+// AC2: A → B mutual consent — delivery succeeds
+peerInjected.length = 0
+peerMirrors.length = 0
+fakeNow = 2_000_000
+const askRes = await rpc(peerUrl(PEER_A_CHAT), peerToken(PEER_A_CHAT), 'tools/call', {
+  name: 'ask_project',
+  arguments: { target_slug: 'project-b', text: 'hello from A' },
+})
+check(
+  'AC2: ask_project A→B: tool ok result',
+  askRes.result && !askRes.result.isError,
+  JSON.stringify(askRes).slice(0, 300),
+)
+const askParsed = JSON.parse(askRes.result?.content?.[0]?.text ?? '{}')
+check('AC2: result has thread_id', typeof askParsed.thread_id === 'string' && askParsed.thread_id.startsWith('t-'), JSON.stringify(askParsed))
+check('AC2: result has hop=1', askParsed.hop === 1, JSON.stringify(askParsed))
+check('AC2: pool received envelope', peerInjected.length === 1 && peerInjected[0]!.chatId === PEER_B_CHAT, JSON.stringify(peerInjected))
+check(
+  'AC2: envelope userId=peer:project-a',
+  peerInjected[0]!.envelope.userId === 'peer:project-a',
+  JSON.stringify(peerInjected[0]?.envelope),
+)
+check(
+  'AC2: envelope content matches FR5',
+  peerInjected[0]!.envelope.content.includes('[Peer message from "project-a"') &&
+    peerInjected[0]!.envelope.content.includes('hello from A'),
+  peerInjected[0]?.envelope.content,
+)
+
+// AC10: mirror posts to both channels
+check('AC10: two mirror posts', peerMirrors.length === 2, JSON.stringify(peerMirrors))
+check(
+  'AC10: source mirror → target preview',
+  peerMirrors.some(m => m.chatId === PEER_A_CHAT && m.content.includes('→ project-b')),
+  JSON.stringify(peerMirrors),
+)
+check(
+  'AC10: target mirror from source preview',
+  peerMirrors.some(m => m.chatId === PEER_B_CHAT && m.content.includes('from project-a')),
+  JSON.stringify(peerMirrors),
+)
+
+// AC3: one-way allow — A allows C but C does not allow A → error
+peerInjected.length = 0
+fakeNow = 3_000_000
+const oneWayRes = await rpc(peerUrl(PEER_A_CHAT), peerToken(PEER_A_CHAT), 'tools/call', {
+  name: 'ask_project',
+  arguments: { target_slug: 'project-c', text: 'hello' },
+})
+check('AC3: one-way allow → isError', oneWayRes.result?.isError === true, JSON.stringify(oneWayRes).slice(0, 200))
+check('AC3: nothing delivered', peerInjected.length === 0)
+
+// AC4: hop budget — A has maxHops:2; third delivery on same thread refused
+const threadForHopTest = `t-${Date.now()}-hoptest`
+fakeNow = 4_000_000
+const hop1 = await rpc(peerUrl(PEER_A_CHAT), peerToken(PEER_A_CHAT), 'tools/call', {
+  name: 'ask_project',
+  arguments: { target_slug: 'project-b', text: 'hop1', thread_id: threadForHopTest },
+})
+fakeNow += 60_000  // advance past cooldown
+const hop2 = await rpc(peerUrl(PEER_A_CHAT), peerToken(PEER_A_CHAT), 'tools/call', {
+  name: 'ask_project',
+  arguments: { target_slug: 'project-b', text: 'hop2', thread_id: threadForHopTest },
+})
+fakeNow += 60_000
+const hop3 = await rpc(peerUrl(PEER_A_CHAT), peerToken(PEER_A_CHAT), 'tools/call', {
+  name: 'ask_project',
+  arguments: { target_slug: 'project-b', text: 'hop3 should fail', thread_id: threadForHopTest },
+})
+check('AC4: hop1 succeeds', hop1.result && !hop1.result.isError, JSON.stringify(hop1).slice(0, 200))
+check('AC4: hop2 succeeds', hop2.result && !hop2.result.isError, JSON.stringify(hop2).slice(0, 200))
+check('AC4: hop3 refused (budget exhausted)', hop3.result?.isError === true, JSON.stringify(hop3).slice(0, 200))
+
+// AC4: fresh thread delivers again after budget exhausted on previous thread
+fakeNow += 60_000
+const freshThread = await rpc(peerUrl(PEER_A_CHAT), peerToken(PEER_A_CHAT), 'tools/call', {
+  name: 'ask_project',
+  arguments: { target_slug: 'project-b', text: 'fresh thread' },
+})
+check('AC4: fresh thread after budget exhausted succeeds', freshThread.result && !freshThread.result.isError, JSON.stringify(freshThread).slice(0, 200))
+
+// AC5: cooldown — two deliveries on same pair within cooldownSeconds → second refused
+const cooldownThread = `t-${Date.now()}-cooltest`
+fakeNow = 10_000_000
+const cd1 = await rpc(peerUrl(PEER_A_CHAT), peerToken(PEER_A_CHAT), 'tools/call', {
+  name: 'ask_project',
+  arguments: { target_slug: 'project-b', text: 'cd1', thread_id: cooldownThread },
+})
+// Immediately attempt second delivery (within cooldown window)
+const cd2 = await rpc(peerUrl(PEER_A_CHAT), peerToken(PEER_A_CHAT), 'tools/call', {
+  name: 'ask_project',
+  arguments: { target_slug: 'project-b', text: 'cd2', thread_id: cooldownThread },
+})
+check('AC5: cd1 succeeds', cd1.result && !cd1.result.isError, JSON.stringify(cd1).slice(0, 200))
+check('AC5: cd2 refused (cooldown)', cd2.result?.isError === true, JSON.stringify(cd2).slice(0, 200))
+
+// Advance past cooldown (default 15s, A has no cooldownSeconds override)
+fakeNow += 20_000
+const cd3 = await rpc(peerUrl(PEER_A_CHAT), peerToken(PEER_A_CHAT), 'tools/call', {
+  name: 'ask_project',
+  arguments: { target_slug: 'project-b', text: 'cd3', thread_id: cooldownThread },
+})
+check('AC5: cd3 succeeds after cooldown window', cd3.result && !cd3.result.isError, JSON.stringify(cd3).slice(0, 200))
+
+// AC6: ask_project targeting master slug → error
+// (master chat is PEER_MASTER; its slug in projects map doesn't exist — no project entry for it)
+// We test self-reference and unknown slug directly
+const selfRes = await rpc(peerUrl(PEER_A_CHAT), peerToken(PEER_A_CHAT), 'tools/call', {
+  name: 'ask_project',
+  arguments: { target_slug: 'project-a', text: 'self' },
+})
+check('AC6: self-target → isError', selfRes.result?.isError === true, JSON.stringify(selfRes).slice(0, 200))
+
+const unknownRes2 = await rpc(peerUrl(PEER_A_CHAT), peerToken(PEER_A_CHAT), 'tools/call', {
+  name: 'ask_project',
+  arguments: { target_slug: 'nonexistent-slug', text: 'hi' },
+})
+check('AC6: unknown slug → isError', unknownRes2.result?.isError === true, JSON.stringify(unknownRes2).slice(0, 200))
+
+// AC6: project-C (no peers) calling ask_project → isError (not available)
+const noPeerCallRes = await rpc(peerUrl(PEER_C_CHAT), peerToken(PEER_C_CHAT), 'tools/call', {
+  name: 'ask_project',
+  arguments: { target_slug: 'project-a', text: 'hi' },
+})
+check('AC6: project without peers.allow: ask_project → isError', noPeerCallRes.result?.isError === true, JSON.stringify(noPeerCallRes).slice(0, 200))
+
+await serverPeer.stop()
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)
   process.exit(1)
