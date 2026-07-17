@@ -9,7 +9,7 @@ import { join } from 'node:path'
 
 import { splitArgv, parseFlags } from './argv.ts'
 import { handleMasterCommand, HEARTBEAT_OK, type MasterContext, type MasterMutator } from './master-commands.ts'
-import { ChannelsConfigSchema, loadConfig, resolveClaudeArgs, saveConfig } from './channels-config.ts'
+import { ChannelsConfigSchema, loadConfig, resolveClaudeArgs, saveConfig, effectivePeerLimits } from './channels-config.ts'
 import { loadSchedules } from './schedules-config.ts'
 import { classifyChannel } from './heartbeat.ts'
 
@@ -1049,6 +1049,181 @@ check('set: heartbeat accepted', setHb.kind === 'reply' && setHb.text.includes('
     res.kind === 'reply' ? res.text : res.kind,
   )
 }
+
+// --- peers config schema + effectivePeerLimits (FR1) -------------------------
+
+// Round-trip: project with full peers block
+{
+  const cfg = ChannelsConfigSchema.parse({
+    master: { chatId: '123456789012345678' },
+    projects: {
+      '111111111111111111': {
+        slug: 'alpha',
+        peers: { allow: ['beta'], maxHops: 3, cooldownSeconds: 20 },
+      },
+      '222222222222222222': { slug: 'beta' },
+    },
+    defaults: { peers: { maxHops: 4, cooldownSeconds: 10 } },
+  })
+
+  const alpha = cfg.projects['111111111111111111']!
+  const beta = cfg.projects['222222222222222222']!
+
+  check(
+    'peers schema: allow persisted',
+    Array.isArray(alpha.peers?.allow) && alpha.peers!.allow[0] === 'beta',
+    JSON.stringify(alpha.peers),
+  )
+  check('peers schema: maxHops persisted', alpha.peers?.maxHops === 3)
+  check('peers schema: cooldownSeconds persisted', alpha.peers?.cooldownSeconds === 20)
+
+  // effectivePeerLimits: project values win
+  const limitsAlpha = effectivePeerLimits(cfg, alpha)
+  check('effectivePeerLimits: project maxHops wins', limitsAlpha.maxHops === 3)
+  check('effectivePeerLimits: project cooldownSeconds wins', limitsAlpha.cooldownSeconds === 20)
+
+  // effectivePeerLimits: falls back to defaults when project has no peers block
+  const limitsBeta = effectivePeerLimits(cfg, beta)
+  check('effectivePeerLimits: defaults maxHops used when project has no peers', limitsBeta.maxHops === 4)
+  check('effectivePeerLimits: defaults cooldownSeconds used when project has no peers', limitsBeta.cooldownSeconds === 10)
+}
+
+// effectivePeerLimits: built-in fallback when neither project nor defaults set peers
+{
+  const bare = ChannelsConfigSchema.parse({
+    projects: { '111111111111111111': { slug: 'solo' } },
+  })
+  const solo = bare.projects['111111111111111111']!
+  const limits = effectivePeerLimits(bare, solo)
+  check('effectivePeerLimits: built-in maxHops is 6', limits.maxHops === 6)
+  check('effectivePeerLimits: built-in cooldownSeconds is 15', limits.cooldownSeconds === 15)
+}
+
+// defaults.peers must not accept an allow field (limits-only)
+{
+  let threw = false
+  try {
+    ChannelsConfigSchema.parse({
+      defaults: { peers: { allow: ['other'], maxHops: 2 } },
+    })
+  } catch {
+    threw = true
+  }
+  check('peers schema: defaults.peers rejects allow field', threw)
+}
+
+// Invalid slug in peers.allow is rejected
+{
+  let threw = false
+  try {
+    ChannelsConfigSchema.parse({
+      projects: { '111111111111111111': { slug: 'alpha', peers: { allow: ['BAD SLUG!'] } } },
+    })
+  } catch {
+    threw = true
+  }
+  check('peers schema: invalid slug in allow is rejected', threw)
+}
+
+// --- AC9: set --peers verb ---------------------------------------------------
+// Use 'support' (999888777666555444) which is always present in the restored config.
+// 'master-test' (123456789012345678) is the master project.
+
+// set --peers with valid slug → persists peers.allow
+{
+  // Temporarily add a second project 'peer-target' to the config
+  const cfg = loadConfig()
+  const peerChatId = '777777777777777777'
+  const cfgWithPeer = { ...cfg, projects: { ...cfg.projects, [peerChatId]: { slug: 'peer-target' } } }
+  saveConfig(cfgWithPeer)
+  // Also create its directory so save doesn't fail
+  mkdirSync(join(stateDir, 'projects', 'peer-target'), { recursive: true })
+
+  const setPeers = await handleMasterCommand(
+    '!project set support --peers peer-target',
+    mctx(),
+  )
+  check(
+    'AC9: set --peers success reply',
+    setPeers.kind === 'reply' && setPeers.text.includes('peers.allow'),
+    setPeers.kind === 'reply' ? setPeers.text : setPeers.kind,
+  )
+  const proj = loadConfig().projects['999888777666555444']
+  check('AC9: peers.allow persisted', JSON.stringify(proj?.peers?.allow) === JSON.stringify(['peer-target']))
+}
+
+// set --peers preserves existing limits when replacing allow
+{
+  const cfg = loadConfig()
+  const proj = cfg.projects['999888777666555444']!
+  saveConfig({ ...cfg, projects: { ...cfg.projects, '999888777666555444': { ...proj, peers: { allow: ['peer-target'], maxHops: 3 } } } })
+
+  const setPeers2 = await handleMasterCommand(
+    '!project set support --peers peer-target',
+    mctx(),
+  )
+  check('AC9: --peers replace keeps existing limits', setPeers2.kind === 'reply')
+  const proj2 = loadConfig().projects['999888777666555444']
+  check('AC9: maxHops preserved after allow replace', proj2?.peers?.maxHops === 3)
+  check('AC9: allow still updated', JSON.stringify(proj2?.peers?.allow) === JSON.stringify(['peer-target']))
+}
+
+// set --peers none → removes peers block
+{
+  const clearPeers = await handleMasterCommand(
+    '!project set support --peers none',
+    mctx(),
+  )
+  check(
+    'AC9: --peers none success reply',
+    clearPeers.kind === 'reply' && clearPeers.text.includes('cleared'),
+    clearPeers.kind === 'reply' ? clearPeers.text : clearPeers.kind,
+  )
+  const proj = loadConfig().projects['999888777666555444']
+  check('AC9: peers block removed after --peers none', proj?.peers === undefined)
+}
+
+// set --peers with unknown slug → rejected
+{
+  const unknownPeer = await handleMasterCommand(
+    '!project set support --peers nonexistent-slug',
+    mctx(),
+  )
+  check(
+    'AC9: --peers with unknown slug rejected',
+    unknownPeer.kind === 'reply' && unknownPeer.text.includes('not found'),
+    unknownPeer.kind === 'reply' ? unknownPeer.text : unknownPeer.kind,
+  )
+}
+
+// set --peers with self-reference → rejected
+{
+  const selfPeer = await handleMasterCommand(
+    '!project set support --peers support',
+    mctx(),
+  )
+  check(
+    'AC9: --peers self-reference rejected',
+    selfPeer.kind === 'reply' && selfPeer.text.includes('self'),
+    selfPeer.kind === 'reply' ? selfPeer.text : selfPeer.kind,
+  )
+}
+
+// set --peers with master slug → rejected
+{
+  const masterPeer = await handleMasterCommand(
+    '!project set support --peers master-test',
+    mctx(),
+  )
+  check(
+    'AC9: --peers master slug rejected',
+    masterPeer.kind === 'reply' && masterPeer.text.includes('master'),
+    masterPeer.kind === 'reply' ? masterPeer.text : masterPeer.kind,
+  )
+}
+
+// Restore original config after AC9 tests
+saveConfig(config)
 
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)

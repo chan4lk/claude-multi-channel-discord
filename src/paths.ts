@@ -57,3 +57,11 @@ export function projectGoalsMd(slug: string): string {
 export function hermesRunsDir(): string {
   return join(channelsDir(), 'hermes-runs')
 }
+
+export function sharedDir(): string {
+  return join(channelsDir(), 'shared')
+}
+
+export function sharedLearningsPath(): string {
+  return join(sharedDir(), 'learnings.md')
+}

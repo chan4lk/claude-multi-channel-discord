@@ -70,8 +70,9 @@ Discord Gateway (WSS)
 | `src/discord-chunk.ts` | 2000-char chunker respecting Discord markdown |
 | `src/whatsapp-adapter.ts` | `WhatsAppAdapter` — Baileys socket, QR-to-master-channel pairing, inbound/outbound routing |
 | `src/bot-peers.ts` | `BotPeerGate` — consecutive-turn limit, cooldown, notice latch, human reset for bot-peer inbound |
+| `src/shared-learnings.ts` | Shared learnings board — `appendLearning`/`readLearnings` backed by `shared/learnings.md` |
 
-Tests: `src/master-commands.test.ts`, `src/project-pool.test.ts`, `src/master-mcp-server.test.ts`, `src/bot-peers.test.ts` (~90 checks total).
+Tests: `src/master-commands.test.ts`, `src/project-pool.test.ts`, `src/master-mcp-server.test.ts`, `src/bot-peers.test.ts`, `src/shared-learnings.test.ts` (~110 checks total).
 
 ---
 
@@ -85,6 +86,8 @@ Tests: `src/master-commands.test.ts`, `src/project-pool.test.ts`, `src/master-mc
 ├── git-credentials.json       credential aliases (mode 0600)
 ├── schedules.json             daily HH:MM jobs (mode 0600)
 ├── inbox/                     downloaded attachments
+├── shared/
+│   └── learnings.md           cross-project learnings board (created on first share_learning call)
 ├── whatsapp-auth/             Baileys multi-file auth state (mode 0600); presence enables WhatsApp
 └── projects/
     ├── master/
@@ -99,8 +102,9 @@ Tests: `src/master-commands.test.ts`, `src/project-pool.test.ts`, `src/master-mc
 **`channels.json` key fields:**
 - `master.chatId` + `master.commandPrefix` (default `!project`)
 - `defaults.{model, idleEvictMinutes, maxConcurrent, git.{userName,userEmail,credentials,branchPrefix}, claude.{permissionMode,allowedTools,disallowedTools,extraArgs}, providers.<alias>.{baseUrl,apiKeyEnv}, provider?}`
-- `projects[<chat_id>].{slug, model?, git?, claude?, provider?, platform?, whatsappJid?, botPeers?}` — `platform` is `'discord' | 'teams' | 'whatsapp'` (default `'discord'`); `whatsappJid` is required when `platform === 'whatsapp'` (contact's E.164 JID, e.g. `15551234567@s.whatsapp.net`); `botPeers: { allow: string[], maxConsecutive?, cooldownSeconds? }` enables allowlisted bot-peer inbound with loop-prevention
+- `projects[<chat_id>].{slug, model?, git?, claude?, provider?, platform?, whatsappJid?, botPeers?, peers?}` — `platform` is `'discord' | 'teams' | 'whatsapp'` (default `'discord'`); `whatsappJid` is required when `platform === 'whatsapp'` (contact's E.164 JID, e.g. `15551234567@s.whatsapp.net`); `botPeers: { allow: string[], maxConsecutive?, cooldownSeconds? }` enables allowlisted bot-peer inbound with loop-prevention; `peers: { allow: string[], maxHops?, cooldownSeconds? }` enables cross-project dialogue (mutual consent required on both sides)
 - `defaults.botPeers.{maxConsecutive?, cooldownSeconds?}` — limits-only defaults (no `allow`); built-in fallback is maxConsecutive=5, cooldownSeconds=30
+- `defaults.peers.{maxHops?, cooldownSeconds?}` — limits-only defaults for cross-project dialogue (no `allow`); built-in fallback is maxHops=6, cooldownSeconds=15
 
 ---
 
@@ -108,7 +112,7 @@ Tests: `src/master-commands.test.ts`, `src/project-pool.test.ts`, `src/master-mc
 
 `list`, `show`/`status`, `create`, `clone`, `set`, `rename`, `remote`, `pull`, `usage`/`ps`/`top`, `stop`, `schedule add/inject/list/pause/resume/rm`, `provider`, `model`, `progress`, `branch`, `memory`, `heartbeat`, `hermes`, `teams-setup`, `rm --yes`, `help`
 
-`set` flags include `--bot-peers <id,id,...> --yes` (set/replace allowlist) and `--bot-peers none` (remove block, no `--yes` needed).
+`set` flags include `--bot-peers <id,id,...> --yes` (set/replace allowlist) and `--bot-peers none` (remove block, no `--yes` needed); `--peers <slug,...>` (set/replace peer allow list, slugs must exist, no self/master) and `--peers none` (remove peers block).
 
 Mutation verbs require `userId ∈ access.allowFrom`. Destructive verbs (`rm`, `rename`, `remote --set`) require `--yes`.
 
@@ -208,6 +212,8 @@ After first successful delivery, `tuiReady = true` is sticky.
 bun src/master-commands.test.ts
 bun src/project-pool.test.ts
 bun src/master-mcp-server.test.ts
+bun src/bot-peers.test.ts
+bun src/shared-learnings.test.ts
 
 # Typecheck
 bun tsc --noEmit
@@ -238,11 +244,10 @@ bin/setup-new-instance.sh --state-dir ~/.claude/channels/discord-multi \
 ## What's planned (remaining)
 
 - Per-channel allowlists beyond `access.json groups[].allowFrom` (role-based)
-- Cross-project handoff (`@<slug> please finish this`)
 - `/discord:project` skill verbs that proxy `create`/`clone` without typing in Discord
 - Resume-broken-PR support (bot died mid-push)
 
-Recently shipped (previously on this list): proactive respawn with backoff + circuit breaker (`ProjectPool.recordFailureAndMaybeRespawn`), 5-field cron scheduler syntax (#291), MCP tool round-trip tests (#295), `persistSessionAndRename` retry loop (6× at TUI-ready + per-deliver re-attempt).
+Recently shipped (previously on this list): proactive respawn with backoff + circuit breaker (`ProjectPool.recordFailureAndMaybeRespawn`), 5-field cron scheduler syntax (#291), MCP tool round-trip tests (#295), `persistSessionAndRename` retry loop (6× at TUI-ready + per-deliver re-attempt), cross-project dialogue (`mcp__mcd__ask_project`, `share_learning`, `read_learnings`, `!project set --peers`).
 
 ---
 
