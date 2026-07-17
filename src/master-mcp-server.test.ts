@@ -570,6 +570,97 @@ const noPeerCallRes = await rpc(peerUrl(PEER_C_CHAT), peerToken(PEER_C_CHAT), 't
 })
 check('AC6: project without peers.allow: ask_project → isError', noPeerCallRes.result?.isError === true, JSON.stringify(noPeerCallRes).slice(0, 200))
 
+// ─── AC7: share_learning + read_learnings tool-level tests ───────────────────
+// Use a temp dir so we don't write to the real MCD_CHANNELS_DIR.
+{
+  const { mkdtempSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const learningsTmpDir = mkdtempSync(require('path').join(tmpdir(), 'mcd-ac7-test-'))
+  const origChannelsDir = process.env.MCD_CHANNELS_DIR
+  process.env.MCD_CHANNELS_DIR = learningsTmpDir
+
+  // share_learning: happy path from a project with peers.allow
+  const slRes = await rpc(peerUrl(PEER_A_CHAT), peerToken(PEER_A_CHAT), 'tools/call', {
+    name: 'share_learning',
+    arguments: { text: 'tool-level learning from project-a', tags: ['tool', 'test'] },
+  })
+  check('AC7: share_learning (project with peers): ok result', slRes.result && !slRes.result.isError, JSON.stringify(slRes).slice(0, 200))
+
+  // read_learnings: returns the entry just appended
+  const rlRes = await rpc(peerUrl(PEER_A_CHAT), peerToken(PEER_A_CHAT), 'tools/call', {
+    name: 'read_learnings',
+    arguments: {},
+  })
+  check('AC7: read_learnings returns ok', rlRes.result && !rlRes.result.isError, JSON.stringify(rlRes).slice(0, 200))
+  const rlParsed = JSON.parse(rlRes.result?.content?.[0]?.text ?? '{}')
+  check('AC7: read_learnings returns entries array', Array.isArray(rlParsed.entries), JSON.stringify(rlParsed))
+  check('AC7: read_learnings entry count ≥ 1', rlParsed.entries.length >= 1, JSON.stringify(rlParsed))
+  check('AC7: entry slug is project-a', rlParsed.entries[0]?.slug === 'project-a', JSON.stringify(rlParsed.entries[0]))
+  check('AC7: entry text matches', rlParsed.entries[0]?.text === 'tool-level learning from project-a', JSON.stringify(rlParsed.entries[0]))
+  check('AC7: entry tags include "tool"', rlParsed.entries[0]?.tags?.includes('tool'), JSON.stringify(rlParsed.entries[0]))
+  check('AC7: entry has ts (ISO string)', typeof rlParsed.entries[0]?.ts === 'string' && rlParsed.entries[0].ts.includes('T'), JSON.stringify(rlParsed.entries[0]))
+
+  // share_learning: second entry for tag filter / limit / newest-first tests
+  await rpc(peerUrl(PEER_A_CHAT), peerToken(PEER_A_CHAT), 'tools/call', {
+    name: 'share_learning',
+    arguments: { text: 'second entry no tags' },
+  })
+
+  // read_learnings: tag filter excludes non-matching entries (AND semantics)
+  const tagFilterRes = await rpc(peerUrl(PEER_A_CHAT), peerToken(PEER_A_CHAT), 'tools/call', {
+    name: 'read_learnings',
+    arguments: { tags: ['tool'] },
+  })
+  const tagFilterParsed = JSON.parse(tagFilterRes.result?.content?.[0]?.text ?? '{}')
+  check('AC7: tag filter returns only matching entries', tagFilterParsed.entries?.length === 1, JSON.stringify(tagFilterParsed))
+  check('AC7: tag filter entry text matches', tagFilterParsed.entries?.[0]?.text === 'tool-level learning from project-a', JSON.stringify(tagFilterParsed.entries?.[0]))
+
+  // read_learnings: limit=1 returns newest first
+  const limitRes = await rpc(peerUrl(PEER_A_CHAT), peerToken(PEER_A_CHAT), 'tools/call', {
+    name: 'read_learnings',
+    arguments: { limit: 1 },
+  })
+  const limitParsed = JSON.parse(limitRes.result?.content?.[0]?.text ?? '{}')
+  check('AC7: limit=1 returns exactly 1 entry', limitParsed.entries?.length === 1, JSON.stringify(limitParsed))
+  check('AC7: limit=1 returns newest entry first', limitParsed.entries?.[0]?.text === 'second entry no tags', JSON.stringify(limitParsed.entries?.[0]))
+
+  // share_learning: master channel attribution ('master' slug)
+  const masterSlRes = await rpc(peerUrl(PEER_MASTER), peerToken(PEER_MASTER), 'tools/call', {
+    name: 'share_learning',
+    arguments: { text: 'master channel learning', tags: ['master'] },
+  })
+  check('AC7: share_learning from master: ok', masterSlRes.result && !masterSlRes.result.isError, JSON.stringify(masterSlRes).slice(0, 200))
+  const masterRlRes = await rpc(peerUrl(PEER_MASTER), peerToken(PEER_MASTER), 'tools/call', {
+    name: 'read_learnings',
+    arguments: { tags: ['master'] },
+  })
+  const masterRlParsed = JSON.parse(masterRlRes.result?.content?.[0]?.text ?? '{}')
+  check('AC7: master learning slug is "master"', masterRlParsed.entries?.[0]?.slug === 'master', JSON.stringify(masterRlParsed.entries?.[0]))
+
+  // Error paths: empty text → isError
+  const emptyTextRes = await rpc(peerUrl(PEER_A_CHAT), peerToken(PEER_A_CHAT), 'tools/call', {
+    name: 'share_learning',
+    arguments: { text: '' },
+  })
+  check('AC7: share_learning empty text → isError', emptyTextRes.result?.isError === true, JSON.stringify(emptyTextRes).slice(0, 200))
+
+  // Gating: project without peers.allow cannot use share_learning or read_learnings
+  const cShareRes = await rpc(peerUrl(PEER_C_CHAT), peerToken(PEER_C_CHAT), 'tools/call', {
+    name: 'share_learning',
+    arguments: { text: 'should fail' },
+  })
+  check('AC7: share_learning gating: no peers → isError', cShareRes.result?.isError === true, JSON.stringify(cShareRes).slice(0, 200))
+
+  const cReadRes = await rpc(peerUrl(PEER_C_CHAT), peerToken(PEER_C_CHAT), 'tools/call', {
+    name: 'read_learnings',
+    arguments: {},
+  })
+  check('AC7: read_learnings gating: no peers → isError', cReadRes.result?.isError === true, JSON.stringify(cReadRes).slice(0, 200))
+
+  process.env.MCD_CHANNELS_DIR = origChannelsDir
+  rmSync(learningsTmpDir, { recursive: true, force: true })
+}
+
 await serverPeer.stop()
 
 if (failed > 0) {
