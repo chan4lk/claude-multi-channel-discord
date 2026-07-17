@@ -9,7 +9,7 @@ import { join } from 'node:path'
 
 import { splitArgv, parseFlags } from './argv.ts'
 import { handleMasterCommand, HEARTBEAT_OK, type MasterContext, type MasterMutator } from './master-commands.ts'
-import { ChannelsConfigSchema, loadConfig, resolveClaudeArgs, saveConfig } from './channels-config.ts'
+import { ChannelsConfigSchema, loadConfig, resolveClaudeArgs, saveConfig, effectivePeerLimits } from './channels-config.ts'
 import { loadSchedules } from './schedules-config.ts'
 import { classifyChannel } from './heartbeat.ts'
 
@@ -1048,6 +1048,81 @@ check('set: heartbeat accepted', setHb.kind === 'reply' && setHb.text.includes('
     res.kind === 'reply' && res.text.includes('master channel'),
     res.kind === 'reply' ? res.text : res.kind,
   )
+}
+
+// --- peers config schema + effectivePeerLimits (FR1) -------------------------
+
+// Round-trip: project with full peers block
+{
+  const cfg = ChannelsConfigSchema.parse({
+    master: { chatId: '123456789012345678' },
+    projects: {
+      '111111111111111111': {
+        slug: 'alpha',
+        peers: { allow: ['beta'], maxHops: 3, cooldownSeconds: 20 },
+      },
+      '222222222222222222': { slug: 'beta' },
+    },
+    defaults: { peers: { maxHops: 4, cooldownSeconds: 10 } },
+  })
+
+  const alpha = cfg.projects['111111111111111111']!
+  const beta = cfg.projects['222222222222222222']!
+
+  check(
+    'peers schema: allow persisted',
+    Array.isArray(alpha.peers?.allow) && alpha.peers!.allow[0] === 'beta',
+    JSON.stringify(alpha.peers),
+  )
+  check('peers schema: maxHops persisted', alpha.peers?.maxHops === 3)
+  check('peers schema: cooldownSeconds persisted', alpha.peers?.cooldownSeconds === 20)
+
+  // effectivePeerLimits: project values win
+  const limitsAlpha = effectivePeerLimits(cfg, alpha)
+  check('effectivePeerLimits: project maxHops wins', limitsAlpha.maxHops === 3)
+  check('effectivePeerLimits: project cooldownSeconds wins', limitsAlpha.cooldownSeconds === 20)
+
+  // effectivePeerLimits: falls back to defaults when project has no peers block
+  const limitsBeta = effectivePeerLimits(cfg, beta)
+  check('effectivePeerLimits: defaults maxHops used when project has no peers', limitsBeta.maxHops === 4)
+  check('effectivePeerLimits: defaults cooldownSeconds used when project has no peers', limitsBeta.cooldownSeconds === 10)
+}
+
+// effectivePeerLimits: built-in fallback when neither project nor defaults set peers
+{
+  const bare = ChannelsConfigSchema.parse({
+    projects: { '111111111111111111': { slug: 'solo' } },
+  })
+  const solo = bare.projects['111111111111111111']!
+  const limits = effectivePeerLimits(bare, solo)
+  check('effectivePeerLimits: built-in maxHops is 6', limits.maxHops === 6)
+  check('effectivePeerLimits: built-in cooldownSeconds is 15', limits.cooldownSeconds === 15)
+}
+
+// defaults.peers must not accept an allow field (limits-only)
+{
+  let threw = false
+  try {
+    ChannelsConfigSchema.parse({
+      defaults: { peers: { allow: ['other'], maxHops: 2 } },
+    })
+  } catch {
+    threw = true
+  }
+  check('peers schema: defaults.peers rejects allow field', threw)
+}
+
+// Invalid slug in peers.allow is rejected
+{
+  let threw = false
+  try {
+    ChannelsConfigSchema.parse({
+      projects: { '111111111111111111': { slug: 'alpha', peers: { allow: ['BAD SLUG!'] } } },
+    })
+  } catch {
+    threw = true
+  }
+  check('peers schema: invalid slug in allow is rejected', threw)
 }
 
 if (failed > 0) {

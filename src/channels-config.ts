@@ -65,6 +65,31 @@ const VoiceProjectConfigSchema = z.object({
 export type VoiceProjectConfig = z.infer<typeof VoiceProjectConfigSchema>
 
 /**
+ * Cross-project peer dialogue config for a project.
+ * `allow`: slugs of other projects this project may exchange messages with
+ * (mutual consent required on both sides). `maxHops` / `cooldownSeconds`
+ * are per-project overrides for the loop guards; fall back to
+ * defaults.peers then built-in (maxHops 6, cooldownSeconds 15).
+ */
+const PeersSchema = z.object({
+  allow: z.array(SlugSchema),
+  maxHops: z.number().int().positive().optional(),
+  cooldownSeconds: z.number().int().positive().optional(),
+})
+export type Peers = z.infer<typeof PeersSchema>
+
+/**
+ * Limits-only variant for defaults.peers — no allow list (allowlists are
+ * always per-project; there is no safe global default for cross-project reach).
+ * `.strict()` makes Zod error if `allow` is accidentally included.
+ */
+const PeerLimitsSchema = z.object({
+  maxHops: z.number().int().positive().optional(),
+  cooldownSeconds: z.number().int().positive().optional(),
+}).strict()
+export type PeerLimits = z.infer<typeof PeerLimitsSchema>
+
+/**
  * Bot-peer dialogue config for a project.
  * `allow`: explicit list of Discord user-id snowflakes permitted to deliver
  * messages into this project's session as a machine peer.
@@ -177,6 +202,14 @@ const ProjectSchema = z.object({
    * config. Absent = no bot messages accepted (default behavior preserved).
    */
   botPeers: BotPeersSchema.optional(),
+  /**
+   * Cross-project peer dialogue config. When present with a non-empty `allow`
+   * list, the project's session gets the `ask_project` MCP tool and may
+   * exchange messages with the listed peer slugs (mutual consent required).
+   * Loop guards (hop budget, cooldown) are applied per FR3/FR4 of
+   * cross-project-dialogue spec. Absent = no cross-project messaging.
+   */
+  peers: PeersSchema.optional(),
 }).superRefine((val, ctx) => {
   if (val.platform === 'whatsapp' && !val.whatsappJid) {
     ctx.addIssue({
@@ -259,6 +292,12 @@ const DefaultsSchema = z.object({
    * always per-project. Built-in fallbacks: maxConsecutive 5, cooldownSeconds 30.
    */
   botPeers: BotPeerLimitsSchema.optional(),
+  /**
+   * Default cross-project peer loop-guard limits. No `allow` field —
+   * allowlists are always per-project. Built-in fallbacks: maxHops 6,
+   * cooldownSeconds 15.
+   */
+  peers: PeerLimitsSchema.optional(),
 })
 
 const MasterSchema = z.object({
@@ -378,6 +417,28 @@ export function findProjectBySlug(config: ChannelsConfig, slug: string): { chatI
 /** Whether a project may initiate cross-project handoff (project override, else defaults). */
 export function handoffEnabled(config: ChannelsConfig, project: Project): boolean {
   return project.handoff ?? config.defaults.handoff
+}
+
+const PEER_LIMITS_BUILT_IN = { maxHops: 6, cooldownSeconds: 15 } as const
+
+/**
+ * Resolve effective peer loop-guard limits for a project.
+ * Resolution order: project.peers → defaults.peers → built-in (maxHops 6, cooldownSeconds 15).
+ */
+export function effectivePeerLimits(
+  config: ChannelsConfig,
+  project: Project,
+): { maxHops: number; cooldownSeconds: number } {
+  return {
+    maxHops:
+      project.peers?.maxHops ??
+      config.defaults.peers?.maxHops ??
+      PEER_LIMITS_BUILT_IN.maxHops,
+    cooldownSeconds:
+      project.peers?.cooldownSeconds ??
+      config.defaults.peers?.cooldownSeconds ??
+      PEER_LIMITS_BUILT_IN.cooldownSeconds,
+  }
 }
 
 export function isMasterChannel(config: ChannelsConfig, chatId: string): boolean {
