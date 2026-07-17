@@ -226,6 +226,8 @@ function helpText(prefix: string): string {
     `${prefix} set    <chat_id-or-slug> --pr-token-azdo <token> --azdo-org X --azdo-project Y — store ADO PAT + org/project`,
     `${prefix} set    <chat_id-or-slug> --bot-peers <id,id,...> --yes — set allowed inbound bot user ids (requires --yes)`,
     `${prefix} set    <chat_id-or-slug> --bot-peers none            — remove bot-peer allow list`,
+    `${prefix} set    <chat_id-or-slug> --peers <slug,slug,...>     — set cross-project peer allow list (slugs must exist, no self/master)`,
+    `${prefix} set    <chat_id-or-slug> --peers none               — remove cross-project peer allow list`,
     `${prefix} rename <chat_id-or-slug> --slug NEW                    — rename slug + dir`,
     `${prefix} remote <chat_id-or-slug> [--set URL] [--creds NAME]    — show/set git remote`,
     `${prefix} pull   <chat_id-or-slug>                               — git pull --ff-only`,
@@ -656,8 +658,36 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
     }
   }
 
-  if (prompt === null && stuckMinutes === null && heartbeatMode === null && heartbeatWindow === null && heartbeatStale === null && goalRaw === null && distillOnStop === null && developBranch === null && prApi === null && botPeersAction === null) {
-    return '`set` requires `--prompt "..."`, `--stuck-threshold-minutes N`, `--heartbeat-mode <supervised|autonomous>`, `--heartbeat-window <HH:MM-HH:MM>`, `--heartbeat-stale-minutes N`, `--goal "..."`, `--distill-on-stop`, `--develop-branch on|off`, `--pr-token-github <token>`, `--pr-token-azdo <token> --azdo-org X --azdo-project Y`, or `--bot-peers <id,...>|none`'
+  // --peers <slug,slug,...> or --peers none
+  const peersRaw = typeof flags['peers'] === 'string' ? flags['peers'] : null
+  // null means flag not present; 'none' means clear; otherwise csv of slugs
+  let peersAction: 'none' | string[] | null = null
+  if (peersRaw !== null) {
+    if (peersRaw === 'none') {
+      peersAction = 'none'
+    } else {
+      const slugs = peersRaw.split(',').map(s => s.trim()).filter(Boolean)
+      const masterSlug = config.projects[config.master?.chatId ?? '']?.slug
+      for (const slug of slugs) {
+        if (!SLUG_PATTERN.test(slug)) {
+          return `invalid peer slug "${slug}" — must match ${SLUG_PATTERN}`
+        }
+        if (slug === entry.project.slug) {
+          return `self-reference not allowed: project "${slug}" cannot peer with itself`
+        }
+        if (slug === masterSlug) {
+          return `master project "${slug}" cannot be a peer target`
+        }
+        if (!findProjectBySlug(config, slug)) {
+          return `peer slug "${slug}" not found — create the project first`
+        }
+      }
+      peersAction = slugs
+    }
+  }
+
+  if (prompt === null && stuckMinutes === null && heartbeatMode === null && heartbeatWindow === null && heartbeatStale === null && goalRaw === null && distillOnStop === null && developBranch === null && prApi === null && botPeersAction === null && peersAction === null) {
+    return '`set` requires `--prompt "..."`, `--stuck-threshold-minutes N`, `--heartbeat-mode <supervised|autonomous>`, `--heartbeat-window <HH:MM-HH:MM>`, `--heartbeat-stale-minutes N`, `--goal "..."`, `--distill-on-stop`, `--develop-branch on|off`, `--pr-token-github <token>`, `--pr-token-azdo <token> --azdo-org X --azdo-project Y`, `--bot-peers <id,...>|none`, or `--peers <slug,...>|none`'
   }
 
   const results: string[] = []
@@ -750,6 +780,22 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
       const updated = { ...existing, allow: botPeersAction }
       saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: { ...latestEntry, botPeers: updated } } })
       results.push(`✅ set \`botPeers.allow\` = [${botPeersAction.join(', ')}] for **${entry.project.slug}**.`)
+    }
+  }
+
+  if (peersAction !== null) {
+    const latestConfig = loadConfig()
+    const latestEntry = latestConfig.projects[entry.chatId] ?? entry.project
+    if (peersAction === 'none') {
+      const { peers: _removed, ...rest } = latestEntry
+      saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: rest } })
+      results.push(`✅ cleared \`peers\` for **${entry.project.slug}**.`)
+    } else {
+      // Keep existing limit fields (maxHops, cooldownSeconds), replace allow only
+      const existing = latestEntry.peers
+      const updated = { ...existing, allow: peersAction }
+      saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: { ...latestEntry, peers: updated } } })
+      results.push(`✅ set \`peers.allow\` = [${peersAction.join(', ')}] for **${entry.project.slug}**.`)
     }
   }
 
