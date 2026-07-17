@@ -1,14 +1,15 @@
 # Goals: claude-mcd
 
 ## Scheduling
-- **Recommended interval:** 288 min
-- **Peak hour:** 13:00 UTC
-- **Avg turns/day:** 5.0
-- **Last updated:** 2026-07-16T02:01:03.834Z
+- **Recommended interval:** 295 min
+- **Peak hour:** 06:00 UTC
+- **Avg turns/day:** 4.9
+- **Last updated:** 2026-07-17T02:01:08.611Z
 
 ## Proposals
+- [ ] bot-peer-dialogue
+- [ ] cross-project-dialogue
 - [ ] heartbeat-attention-report
-- [ ] hermes-agent-bridge
 - [ ] idle-gated-schedules
 - [x] loop-halt-escalation
 - [ ] mcd-reliability-fixes
