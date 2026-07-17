@@ -166,6 +166,69 @@ Access control reuses `access.allowFrom` — the sender's E.164 number must be i
 
 ---
 
+## Cross-project dialogue (optional)
+
+Lets two MCD project Claude sessions exchange messages directly — without operator relay — through constrained, mutual-consent peer links. Builds on the handoff plumbing but adds bidirectional threading, hop budgets, per-pair cooldowns, and a shared learnings board.
+
+**Enable** by adding `peers` to both project entries in `channels.json` (consent must be mutual):
+
+```jsonc
+{
+  "projects": {
+    "<chat_id_A>": {
+      "slug": "project-a",
+      "peers": {
+        "allow": ["project-b"],    // project-a allows project-b to message it
+        "maxHops": 6,              // max deliveries per thread (default 6)
+        "cooldownSeconds": 15      // min seconds between directed sends (default 15)
+      }
+    },
+    "<chat_id_B>": {
+      "slug": "project-b",
+      "peers": { "allow": ["project-a"] }   // project-b allows project-a back
+    }
+  }
+}
+```
+
+Limits-only defaults (no `allow`) can be set under `defaults.peers` in `channels.json`.
+
+**Manage** the allowlist from the master channel:
+
+```
+!project set <slug> --peers <slug,slug,...>   — set/replace peer allow list (slugs must exist)
+!project set <slug> --peers none              — remove peers block
+```
+
+**MCP tools** available to project sessions with `peers.allow` non-empty:
+
+- `mcp__mcd__ask_project({ target_slug, text, thread_id? })` — send a message to another project. Returns `{ ok, thread_id, hop, max_hops }`. Omit `thread_id` to start a new thread; echo it in subsequent calls to continue.
+- `mcp__mcd__share_learning({ text, tags? })` — append a timestamped, slug-attributed entry to the shared learnings board (`shared/learnings.md`).
+- `mcp__mcd__read_learnings({ tags?, limit? })` — read from the shared board, newest-first. Optional tag filter (AND semantics) and result limit (default 20).
+
+Master channel also gets `share_learning` / `read_learnings` but not `ask_project`.
+
+**Loop guards:**
+
+- `maxHops` — max deliveries on a single thread. Once reached, the tool returns an error; start a fresh thread to continue.
+- `cooldownSeconds` — minimum gap between directed sends (source → target). Violations return an error with the wait remaining.
+- Both guards are in-memory (reset on server restart). Restart forgiveness is acceptable and documented.
+- The master project is never a valid `ask_project` target. Self-sends are rejected.
+
+**Discord mirror:** On each successful delivery, a preview (first 200 chars) is posted to both channels — `🔁 → <target>: <preview>` and `🔁 from <source>: <preview>` — so the operator has live visibility. Mirror failures are logged and never fail the tool call.
+
+**Shared learnings board:** `<MCD_CHANNELS_DIR>/shared/learnings.md`, one entry per line:
+
+```
+- [2026-07-16T04:55:00.000Z project-a] tmux send-keys drops Enter pre-TUI #tmux #claude-cli
+```
+
+Entry cap: 2 KB. File cap: 64 KB (oldest entries dropped on overflow). Writes are atomic (tmp + rename); directory created on first write. Any project session (or master) with peer access can read and write the board.
+
+> **Cost caution:** Cross-project loops burn tokens on both sides. The hop budget stops runaway exchanges, but a pair configured with high `maxHops` and short `cooldownSeconds` can still accumulate cost quickly. Monitor with `!project usage`.
+
+---
+
 ## Bot-peer dialogue (optional)
 
 Lets an explicitly allowlisted external bot (e.g. Hermes) send messages into a specific project's Claude session, with hard loop-prevention.
@@ -278,6 +341,7 @@ src/
   hermes-bridge.ts          detached hermes-agent ops runs (!project hermes)
   git-credentials.ts        credential aliases (mode 0600 enforced)
   scheduler.ts              daily HH:MM cron-lite
+  shared-learnings.ts       shared learnings board (shared/learnings.md)
   *.test.ts                 in-process smoke tests (bun src/<name>.test.ts)
 docs/                       setup and operator guides
 skills/                     Claude Code terminal skills

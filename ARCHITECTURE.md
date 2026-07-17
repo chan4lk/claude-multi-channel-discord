@@ -85,6 +85,12 @@ Tool surface (per chat session):
 - `mcp__mcd__reply` — always available. `{ text, reply_to? }` → routed via the pool's `onReply` to `dispatchProjectReply` → discord.js `channel.send`. Replies chunked at the upstream 2000-char limit, honoring `access.replyToMode` and `access.chunkMode`.
 - `mcp__mcd__react`, `mcp__mcd__edit_message`, `mcp__mcd__download_attachment`, `mcp__mcd__fetch_messages` — available when constructed with a `Client` (which `server.ts` always passes). Direct discord.js calls.
 - `mcp__mcd__run_master_command` — **only available in the master channel session** (gate: `chatId === getMasterChatId()`). Takes `{ command }` (everything after `!project`), routes through `handleMasterCommand`, returns the parser's reply text. This is what makes the master claude conversational — natural-language asks turn into real verbs without operator typing.
+- `mcp__mcd__ask_project` — **only available when the project's config has `peers.allow` non-empty** (gate: `peerSource(chatId) !== null`). Delivers a message to another project session via `pool.deliver`, enforcing mutual consent, per-thread hop budget, and per-pair cooldown. Returns `{ ok, thread_id, hop, max_hops }`. Master is never a valid target.
+- `mcp__mcd__share_learning` / `mcp__mcd__read_learnings` — available to any session with `peers.allow` non-empty **or** the master channel. Read/write the shared learnings board via `src/shared-learnings.ts`. See the SharedLearnings section below.
+
+Cross-project constraint state is held in two `MasterMcpServer` instance maps (process lifetime, reset on restart):
+- `threadHops: Map<string, number>` — thread_id → deliveries so far; FIFO-pruned at 500 entries.
+- `pairLastSentMs: Map<string, number>` — `"src→dst"` → last delivery timestamp (ms).
 
 ### `Scheduler` (`src/scheduler.ts`)
 
@@ -154,6 +160,25 @@ Lifecycle:
 - **`acceptReply`** — entry point used by the master MCP server's `reply` callback. Looks up the matching process, calls its internal `acceptReply` to bump activity and fan out, which itself fires the pool's `onReply` (the canonical Discord-dispatch path).
 - **`snapshot()`** — used by `!project usage`. Iterates tracked processes and calls each `getStats()` best-effort.
 
+### `SharedLearnings` (`src/shared-learnings.ts`)
+
+Manages `<MCD_CHANNELS_DIR>/shared/learnings.md` — a markdown log shared across all project sessions that have peer access. No database; the file is human-editable and grep-able.
+
+Entry format: `- [<ISO-ts> <slug>] <text> #tag1 #tag2`
+
+```
+- [2026-07-16T04:55:00.000Z project-a] tmux send-keys drops Enter pre-TUI #tmux #claude-cli
+```
+
+Two exported functions:
+
+- `appendLearning({ slug, text, tags? })` — formats and appends one entry. Rejects entries over 2 KB. Drops oldest lines to keep the file under 64 KB. Atomic write (tmp + rename). Creates the `shared/` directory on first call.
+- `readLearnings({ tags?, limit? })` — reads the file, filters by tags (AND semantics), returns entries newest-first up to `limit` (default 20). Returns an empty list when the file is absent.
+
+Tag normalization: strip leading `#`, lowercase, drop empties. Tags in entries are stored with `#` prefix.
+
+This module is intentionally small — no caching, no indexing, no schema. At 64 KB the file fits in memory; single-process serial tool calls mean concurrent-write races don't occur in practice.
+
 ### `BotPeerGate` (`src/bot-peers.ts`)
 
 Loop-prevention gate for bot-peer inbound messages (FR3/FR4/NFR1/NFR2). All state is in-memory — a process restart resets counters (documented, acceptable).
@@ -194,7 +219,7 @@ Verbs and their handlers:
 | `show` / `status` | — | config + prompt preview + live `gitStatusSummary()` if the dir is a working tree |
 | `create` | `channels.json`, `access.json`, `projects/<slug>/`, optional Discord channel | with `--repo-dir` symlinks to an existing checkout instead of mkdir; with `--new-channel` does a find-or-create on the master's guild |
 | `clone` | `channels.json`, `access.json`, `projects/<slug>/.git/...`, optional Discord channel | runs `git clone` with the resolved credential env; rolls back any auto-created channel on failure |
-| `set` | `projects/<slug>/CLAUDE.md`; optionally kills running subprocess; `--bot-peers` updates `channels.json` | claude re-reads CLAUDE.md on next spawn; `--bot-peers <csv> --yes` / `--bot-peers none` |
+| `set` | `projects/<slug>/CLAUDE.md`; optionally kills running subprocess; `--bot-peers`/`--peers` update `channels.json` | claude re-reads CLAUDE.md on next spawn; `--bot-peers <csv> --yes` / `--bot-peers none`; `--peers <slug,...>` / `--peers none` |
 | `rename` | `channels.json`, `projects/<slug>/` directory | kills running subprocess first to avoid pulling cwd out from under it |
 | `remote` | `channels.json` git block; optionally `git remote set-url` | view-only when called without `--set` |
 | `pull` | working tree | `git pull --ff-only`; refuses on non-FF |
@@ -219,6 +244,8 @@ The `MasterMutator` interface is the dependency-injection seam — the parser do
 ├── git-credentials.json       credential aliases (mode 0600)
 ├── schedules.json             daily HH:MM cron-lite, mode 0600
 ├── inbox/                     downloaded attachments (one file per call)
+├── shared/
+│   └── learnings.md           cross-project learnings board (created on first share_learning call)
 ├── whatsapp-auth/             Baileys multi-file auth state (mode 0600); presence enables WhatsApp
 └── projects/
     ├── master/
@@ -236,7 +263,8 @@ The `MasterMutator` interface is the dependency-injection seam — the parser do
 
 - `master.chatId` + `master.commandPrefix` (default `!project`)
 - `defaults.{model, idleEvictMinutes, maxConcurrent, git.{userName,userEmail,credentials,branchPrefix}, claude.{permissionMode,allowedTools,disallowedTools,extraArgs}, providers.<alias>.{baseUrl,apiKeyEnv}, provider?}`
-- `projects[<chat_id>].{slug, model?, git?, claude?, provider?, platform?, whatsappJid?}` — per-project overrides; `platform` is `'discord' | 'teams' | 'whatsapp'` (default `'discord'`); `whatsappJid` (e.g. `15551234567@s.whatsapp.net`) is required when `platform === 'whatsapp'`
+- `projects[<chat_id>].{slug, model?, git?, claude?, provider?, platform?, whatsappJid?, botPeers?, peers?}` — per-project overrides; `platform` is `'discord' | 'teams' | 'whatsapp'` (default `'discord'`); `whatsappJid` (e.g. `15551234567@s.whatsapp.net`) is required when `platform === 'whatsapp'`; `peers: { allow: slug[], maxHops?, cooldownSeconds? }` enables cross-project dialogue when non-empty and mutual
+- `defaults.peers.{maxHops?, cooldownSeconds?}` — limits-only defaults for cross-project dialogue; built-in fallbacks: maxHops 6, cooldownSeconds 15
 
 `git-credentials.json` aliases (mode 0600 enforced by the loader):
 
@@ -285,12 +313,13 @@ The template is intentionally generic — operators with different SSH-key paths
 
 In-process tests live next to source. Run a suite with `bun src/<name>.test.ts`.
 
-- `src/master-commands.test.ts` — argv parser, flag parser, every verb branch, mutator-mock interactions, claudeArgs merging.
+- `src/master-commands.test.ts` — argv parser, flag parser, every verb branch, mutator-mock interactions, claudeArgs merging; `--peers` set/clear/validation.
 - `src/project-pool.test.ts` — lifecycle (lazy spawn, reuse, unknown-chat rejection, LRU at maxConcurrent, idle eviction with fake clock, shutdown propagation).
-- `src/master-mcp-server.test.ts` — listener bind, URL routing, 404 / 405 paths, stop cleanliness.
+- `src/master-mcp-server.test.ts` — listener bind, URL routing, 404 / 405 paths, stop cleanliness; `ask_project` gating (AC1–AC7, AC10), `share_learning`/`read_learnings` tool gating.
 - `src/bot-peers.test.ts` — `BotPeerGate`: consecutive counter, notice latch, cooldown (fake clock), human reset, limit-lowered edge case; `effectiveBotPeerLimits` fallback chain.
+- `src/shared-learnings.test.ts` — `appendLearning`/`readLearnings`: tag filter, newest-first, limit, 64 KB rotation (oldest dropped), 2 KB entry rejection.
 
-Total: ~90 checks at last count. `bun tsc --noEmit` covers types across the whole project.
+Total: ~110 checks at last count. `bun tsc --noEmit` covers types across the whole project.
 
 ---
 
