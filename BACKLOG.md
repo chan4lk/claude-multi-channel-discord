@@ -7228,7 +7228,7 @@ New `progressMode: "phases"`: on the existing 2s poll cycle, snapshot/diff `.spe
 
 ## P309 — Bug: `progress --set phases` rejected despite valid schema value
 
-**Status:** `[ ] proposed`
+**Status:** `[x] done`
 **Created:** 2026-07-18
 
 ### Problem
