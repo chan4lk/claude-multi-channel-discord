@@ -10,7 +10,7 @@ export type PoolEvent =
   | { kind: 'rejected'; chatId: string; reason: 'unknown-project' | 'pool-full-no-evict-candidate' }
   | { kind: 'crashed'; chatId: string; slug: string; code: number | null; signal: NodeJS.Signals | null }
   | { kind: 'stuck'; chatId: string; slug: string; sinceLastReplyMs: number; effectiveThresholdMs: number }
-  | { kind: 'progress-skip'; chatId: string; slug: string; sinceLastReplyMs: number; sinceTranscriptMs: number; effectiveThresholdMs: number }
+  | { kind: 'progress-skip'; chatId: string; slug: string; sinceLastReplyMs: number; sinceTranscriptMs: number; effectiveThresholdMs: number; episodeStartMs: number }
   | { kind: 'tool-progress'; chatId: string; slug: string; event: ToolProgressEvent }
   | { kind: 'specclaw-progress'; chatId: string; slug: string; event: SpecclawProgressEvent }
   | { kind: 'limit-hit'; chatId: string; slug: string; event: LimitHitEvent }
@@ -392,6 +392,7 @@ export class ProjectPool {
               sinceLastReplyMs: sincePending,
               sinceTranscriptMs: now - transcriptMtime,
               effectiveThresholdMs: effectiveThreshold,
+              episodeStartMs: pendingAt,
             })
             continue
           }

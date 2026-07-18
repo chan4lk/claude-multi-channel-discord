@@ -1368,6 +1368,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
       }
       if (evt.kind === 'stuck') {
         mcEmit('session_killed_watchdog', { slug: evt.slug, chatId: evt.chatId, stuckMs: evt.sinceLastReplyMs })
+        progressSkipState.delete(evt.chatId)
         detachSpecclawWatcher(evt.chatId)
         const minutes = Math.round(evt.sinceLastReplyMs / 60_000)
         const reply: OutboundReply = {
@@ -1379,15 +1380,12 @@ async function maybeInitProjectsBackend(): Promise<void> {
         void routeNotification(loadChannelsConfig(), reply, 'stuck notify')
       }
       if (evt.kind === 'progress-skip') {
-        const minutes = Math.round(evt.sinceLastReplyMs / 60_000)
-        const reply: OutboundReply = {
-          kind: 'text',
-          chatId: evt.chatId,
-          text: `⏳ \`${evt.slug}\`: still working (transcript active, ${minutes} min since last reply)`,
-        }
-        void routeNotification(loadChannelsConfig(), reply, 'progress-skip notify')
+        void dispatchProgressSkip(evt).catch((err) => {
+          process.stderr.write(`discord: progress-skip notify failed: ${err}\n`)
+        })
       }
       if (evt.kind === 'crashed') {
+        progressSkipState.delete(evt.chatId)
         detachSpecclawWatcher(evt.chatId)
       }
       if (evt.kind === 'respawn-scheduled') {
@@ -1715,6 +1713,11 @@ async function dispatchProjectReply(reply: OutboundReply): Promise<void> {
     editProgressState.delete(reply.chatId)
     channel.messages.fetch(progressState.msgId).then((m) => m.delete()).catch(() => {})
   }
+  const skipState = progressSkipState.get(reply.chatId)
+  if (skipState) {
+    progressSkipState.delete(reply.chatId)
+    channel.messages.fetch(skipState.msgId).then((m) => m.delete()).catch(() => {})
+  }
   for (let i = 0; i < chunks.length; i++) {
     const isFirst = i === 0
     const threadThis =
@@ -1770,6 +1773,42 @@ const editProgressState = new Map<string, { msgId: string; lines: string[] }>()
 const postProgressMsgIds = new Map<string, string>()
 /** 'phases' mode: one message per specclaw change, keyed `chatId:change`. */
 const phasesProgressState = new Map<string, { msgId: string; lines: string[] }>()
+/** Watchdog progress-skip: one message per stuck episode, edited in place. */
+const progressSkipState = new Map<string, { episodeId: number; msgId: string }>()
+
+/**
+ * Collapse watchdog still-working ticks into one message per stuck episode.
+ * The episode id is the pending-turn start timestamp — stable across poll
+ * cycles within a turn, fresh for the next turn. Non-Discord platforms keep
+ * per-event posting (edit routing parity is out of scope here).
+ */
+async function dispatchProgressSkip(
+  evt: { chatId: string; slug: string; sinceLastReplyMs: number; episodeStartMs: number },
+): Promise<void> {
+  const minutes = Math.round(evt.sinceLastReplyMs / 60_000)
+  const text = `⏳ \`${evt.slug}\`: still working (transcript active, ${minutes} min since last reply)`
+  const cfg = loadChannelsConfig()
+  const platform = cfg.projects[evt.chatId]?.platform ?? 'discord'
+  if (platform !== 'discord') {
+    routeNotification(cfg, { kind: 'text', chatId: evt.chatId, text }, 'progress-skip notify')
+    return
+  }
+
+  const channel = await fetchTextChannel(evt.chatId).catch(() => null)
+  if (!channel) return
+  const state = progressSkipState.get(evt.chatId)
+  if (state && state.episodeId === evt.episodeStartMs) {
+    const fetched = await channel.messages.fetch(state.msgId).catch(() => null)
+    if (fetched) {
+      await fetched.edit(text).catch(() => {})
+      return
+    }
+    // message gone — fall through to posting a fresh one
+  }
+  const sent = await (channel as { send: (o: { content: string }) => Promise<{ id: string }> })
+    .send({ content: text }).catch(() => null)
+  if (sent) progressSkipState.set(evt.chatId, { episodeId: evt.episodeStartMs, msgId: sent.id })
+}
 
 /** progressMode 'phases': edit-in-place timeline, one Discord message per change. */
 async function handleSpecclawProgressEvent(

@@ -7299,7 +7299,7 @@ Make tasks.md the source of truth for task counts at fire time: `readSpecclawSta
 
 ## P312 — Watchdog Status Noise Collapse
 
-**Status:** `[ ] proposed`
+**Status:** `[x] done`
 **Created:** 2026-07-18
 **SpecClaw change:** `watchdog-status-noise-collapse`
 
