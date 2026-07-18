@@ -1583,6 +1583,52 @@ async function maybeInitProjectsBackend(): Promise<void> {
     mcdDir: channelsDir(),
   })
 
+  // Backlog autopilot sweep: MCD-driven seed/nudge loop over per-project backlogs
+  scheduler.registerAutopilotSweep({
+    pool: {
+      deliver: (chatId, envelope) => projectPool!.deliver(chatId, envelope),
+      isBusy: (chatId, graceMs) => projectPool!.isBusy(chatId, graceMs),
+    },
+    getChannels: () => loadChannelsConfig(),
+    saveChannels: (cfg) => saveConfig(cfg),
+    projectDirFor: (slug) => projectDir(slug),
+    checkHalt: (chatId) => {
+      const slug = loadChannelsConfig().projects[chatId]?.slug
+      if (!slug) return { halted: false }
+      try {
+        return detectSpecclawHalt(projectDir(slug))
+      } catch {
+        return { halted: false }
+      }
+    },
+    onEscalate: (slug, _chatId, reason, detail) => {
+      const cfg = loadChannelsConfig()
+      const masterChatId = cfg.master?.chatId
+      if (!masterChatId) return
+      const label =
+        reason === 'verify-failed' ? 'seed produced no backlog' :
+        reason === 'stall' ? 'no progress' : 'specclaw loop halted'
+      const notice: OutboundReply = {
+        kind: 'text',
+        chatId: masterChatId,
+        text: `🛑 **${slug}**: autopilot suspended — ${label} (${detail}). Re-arm with \`set ${slug} --autopilot on\` after fixing.`,
+      }
+      routeNotification(cfg, notice, 'autopilot escalate')
+    },
+    onAnnounce: (slug, chatId, kind, snap) => {
+      const cfg = loadChannelsConfig()
+      const text = kind === 'complete'
+        ? `🏁 **${slug}**: backlog complete — ${snap.done}/${snap.total} items done. Autopilot resting; re-arms when new items appear.`
+        : `🔄 **${slug}**: new backlog items detected (${snap.done}/${snap.total}) — autopilot re-armed.`
+      routeNotification(cfg, { kind: 'text', chatId, text }, 'autopilot announce')
+      const masterChatId = cfg.master?.chatId
+      if (masterChatId && masterChatId !== chatId) {
+        routeNotification(cfg, { kind: 'text', chatId: masterChatId, text }, 'autopilot announce master')
+      }
+    },
+    mcdDir: channelsDir(),
+  })
+
   // Nightly GOALS.md reconcile cron (02:00 local)
   void import('./src/pattern-mining.ts').then(({ minePatterns }) => {
     scheduler!.registerGoalReconcileCron({
