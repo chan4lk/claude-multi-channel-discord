@@ -7323,7 +7323,7 @@ Reuse the edit-in-place pattern: first `progress-skip` in a stuck episode posts 
 
 ## P313 — Bot-Peer Dialogue Build (planned 2026-07-16)
 
-**Status:** `[ ] proposed`
+**Status:** `[x] done`
 **Created:** 2026-07-18
 **SpecClaw change:** `bot-peer-dialogue` (spec + design + tasks already complete; build pending)
 
