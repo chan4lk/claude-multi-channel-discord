@@ -129,6 +129,17 @@ Or clone a repo into a channel:
 
 Detects: unanswered questions (🔴), stuck tool calls (🟡), schedule-noop loops (🟡), circuit-open channels (🔴), idle specclaw changes (🔵). Each item shows the channel mention, a one-line summary, and a `↳` suggested action. See [templates/master.CLAUDE.md](./templates/master.CLAUDE.md) for scheduled-run setup.
 
+**Backlog autopilot** — MCD drives a project through its backlog without operator nudges:
+
+```
+!project set <slug> --autopilot on --seed "build the reporting MVP"   — seed BACKLOG.md via the project's Claude, then loop
+!project set <slug> --autopilot on                                    — same, goal derived from the project's CLAUDE.md
+!project set <slug> --autopilot off                                   — stop the loop (user limits kept, runtime state cleared)
+!project backlog <slug>                                               — source, X/Y done, state, last fire, effective limits
+```
+
+Specclaw projects loop pending changes/tasks instead of BACKLOG.md (specclaw wins when both exist). The sweep nudges only when the project is idle, respects `heartbeat.window`, suspends on specclaw guardrail halts, escalates to master after 3 zero-progress fires ("stalled at X/Y"), announces 🏁 completion, and re-arms automatically when new items appear. Optional flags: `--autopilot-interval <min>` (default 30), `--backlog-file <path>` (default `BACKLOG.md`).
+
 ---
 
 ## WhatsApp setup (optional)

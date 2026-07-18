@@ -102,6 +102,14 @@ v1 timing: daily HH:MM, host local zone. The schema reserves a `cron` field for 
 
 Crucially, the scheduler doesn't know what kind of agent the project runs. It dispatches through `ProjectPool.deliver()` which dispatches to `ProjectProcess.deliver()`. Today the implementation is `ClaudeProjectProcess` spawning `claude`; nothing in the scheduler care if a future project runs MiniMax via the Anthropic-compatible API or some other CLI.
 
+### Backlog autopilot (`src/backlog.ts` + `Scheduler.registerAutopilotSweep()`)
+
+Config-driven sweep (behaviour-mirror-sweep pattern, NOT a schedules.json entry — the schedule schema is Discord-snowflake-bound and static-prompt) that drives a project through its backlog. Per-project `autopilot` block in `channels.json` holds user settings (`enabled`, `file`, `intervalMinutes`, `stallThreshold`, `respectHeartbeatWindow`) plus MCD-maintained runtime state (`state`, `seededAt`, `seedGoal`, `lastFireAt`, `zeroDeltaCount`, `lastSnapshot`) — same mutable-config precedent as `lastInjectedAt`.
+
+State machine: `seeding → running → halted | complete`. Fresh enable with no backlog → seed injection (MCD asks the project's Claude to author `BACKLOG.md`; goal from `--seed` or derived from CLAUDE.md); no backlog after 2 intervals → escalate + halt. Running → interval-gated nudges ("work the next unchecked item"), fired only when idle (`ProjectPool.isBusy`, 5-min grace) and inside `heartbeat.window`; `stallThreshold` consecutive zero-delta snapshots → halt + master escalation; specclaw guardrail halt (`detectSpecclawHalt`) suspends the same way. All done → 🏁 announce, `complete`; new items → auto re-arm. `halted` requires manual `set --autopilot on` re-arm.
+
+Backlog source auto-detection: `.specclaw/STATUS.md` present → specclaw flavor (pending proposals + active-change `tasks.md` checkboxes); else markdown checkboxes in the backlog file. All parsing/transition logic is pure (`src/backlog.ts`, clock injected) — the sweep in `scheduler.ts` only does IO and side effects. Envelopes use `userId = "__mcd_autopilot__"`, `messageId = "autopilot-<chatId>-<ts>"`; fires append to `scheduler-history.jsonl`.
+
 ### Provider routing
 
 Projects default to the operator's Claude Code subscription auth (no API key, no env override at spawn). To route specific projects to a different Anthropic-compatible API:
