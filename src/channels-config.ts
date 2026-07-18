@@ -113,6 +113,49 @@ const BotPeerLimitsSchema = z.object({
 })
 export type BotPeerLimits = z.infer<typeof BotPeerLimitsSchema>
 
+/**
+ * MCD-driven backlog autopilot config for a project.
+ * `enabled`: activates the autopilot sweep for this project.
+ * `file`: backlog filename to read/write (default 'BACKLOG.md').
+ * `intervalMinutes` / `stallThreshold`: per-project overrides for the sweep
+ * cadence and stall detection; fall back to defaults.autopilot then built-in
+ * (intervalMinutes 30, stallThreshold 3).
+ * `respectHeartbeatWindow`: when true, nudges fire only inside the project's
+ * heartbeat.window (seed injections are exempt). Default true.
+ * Runtime fields (MCD-maintained, persisted in channels.json):
+ * `state` tracks the state machine; `seededAt`, `seedGoal`, `lastFireAt`,
+ * `zeroDeltaCount`, `lastSnapshot` are updated by the sweep each tick.
+ */
+const AutopilotSchema = z.object({
+  enabled: z.boolean(),
+  file: z.string().optional(),
+  intervalMinutes: z.number().int().positive().optional(),
+  stallThreshold: z.number().int().positive().optional(),
+  respectHeartbeatWindow: z.boolean().optional(),
+  // Runtime fields — maintained by the autopilot sweep, not by the operator.
+  state: z.enum(['seeding', 'running', 'halted', 'complete']).optional(),
+  seededAt: z.string().optional(),
+  seedGoal: z.string().optional(),
+  lastFireAt: z.string().optional(),
+  zeroDeltaCount: z.number().int().nonnegative().optional(),
+  lastSnapshot: z.object({
+    done: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative(),
+  }).optional(),
+})
+export type AutopilotConfig = z.infer<typeof AutopilotSchema>
+
+/**
+ * Limits-only variant for defaults.autopilot — no `enabled` field (autopilot
+ * is always opted in per-project). Built-in fallbacks: intervalMinutes 30,
+ * stallThreshold 3.
+ */
+const DefaultsAutopilotSchema = z.object({
+  intervalMinutes: z.number().int().positive().optional(),
+  stallThreshold: z.number().int().positive().optional(),
+})
+export type DefaultsAutopilot = z.infer<typeof DefaultsAutopilotSchema>
+
 const ProjectSchema = z.object({
   slug: SlugSchema,
   /**
@@ -210,6 +253,16 @@ const ProjectSchema = z.object({
    * cross-project-dialogue spec. Absent = no cross-project messaging.
    */
   peers: PeersSchema.optional(),
+  /**
+   * Backlog autopilot config. When present with `enabled: true`, MCD drives
+   * the "create a backlog, then loop through all items" workflow for this
+   * project: seeding a backlog if none exists, periodically injecting nudges
+   * while unchecked items remain, detecting stalls and guardrail halts,
+   * announcing completion, and re-arming when new items appear. Runtime fields
+   * (`state`, `seededAt`, `lastFireAt`, etc.) are maintained by the sweep and
+   * persisted here — do not edit them by hand. Absent = autopilot off.
+   */
+  autopilot: AutopilotSchema.optional(),
 }).superRefine((val, ctx) => {
   if (val.platform === 'whatsapp' && !val.whatsappJid) {
     ctx.addIssue({
@@ -298,6 +351,12 @@ const DefaultsSchema = z.object({
    * cooldownSeconds 15.
    */
   peers: PeerLimitsSchema.optional(),
+  /**
+   * Default autopilot sweep limits. No `enabled` field — autopilot is always
+   * opted in per-project. Built-in fallbacks: intervalMinutes 30,
+   * stallThreshold 3.
+   */
+  autopilot: DefaultsAutopilotSchema.optional(),
 })
 
 const MasterSchema = z.object({

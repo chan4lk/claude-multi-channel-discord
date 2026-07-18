@@ -750,6 +750,351 @@ function makeScheduler(opts: {
 }
 
 // ============================================================
+// runAutopilotSweep — AC3 through AC10
+// ============================================================
+
+import type { ChannelsConfig } from './channels-config.ts'
+
+/**
+ * Build a minimal ChannelsConfig with a single project that has autopilot configured.
+ */
+function makeAutopilotConfig(overrides: {
+  chatId?: string
+  slug?: string
+  autopilot?: Record<string, unknown>
+  masterChatId?: string
+  heartbeatWindow?: string
+} = {}): { config: ChannelsConfig; chatId: string } {
+  const chatId = overrides.chatId ?? '222222222222222222'
+  const slug = overrides.slug ?? 'testproj'
+  const autopilotDefaults = {
+    enabled: true,
+    intervalMinutes: 30,
+    stallThreshold: 3,
+  }
+  const config: ChannelsConfig = {
+    version: 1,
+    master: overrides.masterChatId ? { chatId: overrides.masterChatId, commandPrefix: '!project' } : undefined,
+    defaults: {
+      model: 'sonnet',
+      idleEvictMinutes: 15,
+      maxConcurrent: 8,
+      git: { userName: 'bot', userEmail: 'bot@local', branchPrefix: 'claude/' },
+      claude: { permissionMode: 'auto' },
+      providers: {},
+      progressMode: 'off',
+      handoff: false,
+      contextWarningThresholdPct: 80,
+    },
+    projects: {
+      [chatId]: {
+        slug,
+        autopilot: { ...autopilotDefaults, ...(overrides.autopilot ?? {}) } as ChannelsConfig['projects'][string]['autopilot'],
+        ...(overrides.heartbeatWindow ? { heartbeat: { mode: 'supervised', window: overrides.heartbeatWindow, staleAfterMinutes: 60 } } : {}),
+      },
+    },
+  }
+  return { config, chatId }
+}
+
+/**
+ * Build a minimal sweep opts with mocked deps.
+ */
+function makeAutopilotOpts(opts: {
+  config: ChannelsConfig
+  projectDir?: string
+  isBusy?: boolean
+  checkHalt?: { halted: boolean; change?: string; evidence?: string }
+  mcdDir?: string
+}): {
+  pool: { deliver: (chatId: string, envelope: InboundEnvelope) => Promise<void>; isBusy?: (chatId: string, graceMs: number) => boolean }
+  getChannels: () => ChannelsConfig
+  saveChannels: (cfg: ChannelsConfig) => void
+  projectDirFor: (slug: string) => string
+  checkHalt?: (chatId: string) => { halted: boolean; change?: string; evidence?: string }
+  onEscalate?: (slug: string, chatId: string, reason: string, detail: string) => void
+  onAnnounce?: (slug: string, chatId: string, kind: string, snap: { done: number; total: number }) => void
+  mcdDir: string
+  delivered: Array<{ chatId: string; envelope: InboundEnvelope }>
+  saved: ChannelsConfig[]
+  escalations: Array<{ slug: string; chatId: string; reason: string; detail: string }>
+  announcements: Array<{ slug: string; chatId: string; kind: string; snap: { done: number; total: number } }>
+} {
+  const delivered: Array<{ chatId: string; envelope: InboundEnvelope }> = []
+  const saved: ChannelsConfig[] = []
+  const escalations: Array<{ slug: string; chatId: string; reason: string; detail: string }> = []
+  const announcements: Array<{ slug: string; chatId: string; kind: string; snap: { done: number; total: number } }> = []
+
+  let currentConfig = opts.config
+
+  return {
+    pool: {
+      deliver: async (chatId, envelope) => { delivered.push({ chatId, envelope }) },
+      ...(opts.isBusy !== undefined ? { isBusy: () => opts.isBusy! } : {}),
+    },
+    getChannels: () => currentConfig,
+    saveChannels: (cfg: ChannelsConfig) => { saved.push(cfg); currentConfig = cfg },
+    projectDirFor: () => opts.projectDir ?? '/nonexistent',
+    ...(opts.checkHalt !== undefined ? { checkHalt: () => opts.checkHalt! } : {}),
+    onEscalate: (slug, chatId, reason, detail) => { escalations.push({ slug, chatId, reason, detail }) },
+    onAnnounce: (slug, chatId, kind, snap) => { announcements.push({ slug, chatId, kind, snap }) },
+    mcdDir: opts.mcdDir ?? '/tmp',
+    delivered,
+    saved,
+    escalations,
+    announcements,
+  }
+}
+
+// AP-1: disabled project skipped — no deliver, no save
+{
+  const { config, chatId } = makeAutopilotConfig({ autopilot: { enabled: false } })
+  const sweepOpts = makeAutopilotOpts({ config })
+  const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+  await scheduler.runAutopilotSweep(sweepOpts)
+  check('AP-1: disabled → no deliver', sweepOpts.delivered.length === 0)
+  check('AP-1: disabled → no save', sweepOpts.saved.length === 0)
+}
+
+// AP-2: busy project skipped — no deliver, no save
+{
+  const { config, chatId } = makeAutopilotConfig({ autopilot: { enabled: true, state: 'running', lastFireAt: new Date(Date.now() - 99 * 60_000).toISOString() } })
+  const sweepOpts = makeAutopilotOpts({ config, isBusy: true })
+  const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+  await scheduler.runAutopilotSweep(sweepOpts)
+  check('AP-2: busy → no deliver', sweepOpts.delivered.length === 0)
+  check('AP-2: busy → no save', sweepOpts.saved.length === 0)
+}
+
+// AP-3: fresh enable, no source → seed delivered + state 'seeding' persisted
+{
+  const tmpDir = mkdtempSync(join(tmpdir(), 'mcd-ap-test-'))
+  try {
+    const { config, chatId } = makeAutopilotConfig({ autopilot: { enabled: true } })
+    const sweepOpts = makeAutopilotOpts({ config, projectDir: tmpDir, mcdDir: tmpDir })
+    const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+    await scheduler.runAutopilotSweep(sweepOpts)
+    check('AP-3: seed delivered', sweepOpts.delivered.length === 1)
+    check('AP-3: seed envelope userId', sweepOpts.delivered[0]?.envelope.userId === '__mcd_autopilot__')
+    check('AP-3: seed messageId prefix', sweepOpts.delivered[0]?.envelope.messageId.startsWith('autopilot-'))
+    check('AP-3: state seeding persisted', sweepOpts.saved.length > 0)
+    const savedAutopilot = sweepOpts.saved[sweepOpts.saved.length - 1]?.projects[chatId]?.autopilot
+    check('AP-3: state=seeding', savedAutopilot?.state === 'seeding')
+    check('AP-3: seededAt set', typeof savedAutopilot?.seededAt === 'string')
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+}
+
+// AP-4: seeding → running when backlog appears
+{
+  const tmpDir = mkdtempSync(join(tmpdir(), 'mcd-ap-test-'))
+  try {
+    // Write a BACKLOG.md with a checkbox task
+    writeFileSync(join(tmpDir, 'BACKLOG.md'), '- [ ] task one\n')
+    const { config, chatId } = makeAutopilotConfig({
+      autopilot: {
+        enabled: true,
+        state: 'seeding',
+        seededAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+        intervalMinutes: 30,
+      },
+    })
+    const sweepOpts = makeAutopilotOpts({ config, projectDir: tmpDir, mcdDir: tmpDir })
+    const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+    await scheduler.runAutopilotSweep(sweepOpts)
+    // seeding→running is a 'none' action (no nudge yet), just state patch
+    check('AP-4: no deliver on seeding→running', sweepOpts.delivered.length === 0)
+    const savedAutopilot = sweepOpts.saved[sweepOpts.saved.length - 1]?.projects[chatId]?.autopilot
+    check('AP-4: state=running', savedAutopilot?.state === 'running')
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+}
+
+// AP-5: verify-failed after seed window expired (seededAt > 2×interval ago, no backlog)
+{
+  const tmpDir = mkdtempSync(join(tmpdir(), 'mcd-ap-test-'))
+  try {
+    // No BACKLOG.md in tmpDir — source is 'none'
+    const seededAt = new Date(Date.now() - 61 * 60_000).toISOString() // 61 min ago, interval=30 → 2×interval=60 min expired
+    const { config, chatId } = makeAutopilotConfig({
+      autopilot: {
+        enabled: true,
+        state: 'seeding',
+        seededAt,
+        intervalMinutes: 30,
+      },
+    })
+    const sweepOpts = makeAutopilotOpts({ config, projectDir: tmpDir, mcdDir: tmpDir })
+    const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+    await scheduler.runAutopilotSweep(sweepOpts)
+    check('AP-5: verify-failed escalated', sweepOpts.escalations.length === 1)
+    check('AP-5: reason=verify-failed', sweepOpts.escalations[0]?.reason === 'verify-failed')
+    const savedAutopilot = sweepOpts.saved[sweepOpts.saved.length - 1]?.projects[chatId]?.autopilot
+    check('AP-5: state=halted after verify-failed', savedAutopilot?.state === 'halted')
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+}
+
+// AP-6: due nudge delivered with lastFireAt/lastSnapshot persisted
+{
+  const tmpDir = mkdtempSync(join(tmpdir(), 'mcd-ap-test-'))
+  try {
+    // BACKLOG.md with 1 done, 2 total
+    writeFileSync(join(tmpDir, 'BACKLOG.md'), '- [x] task one\n- [ ] task two\n')
+    const lastFireAt = new Date(Date.now() - 35 * 60_000).toISOString() // 35 min ago, interval=30 → due
+    const { config, chatId } = makeAutopilotConfig({
+      autopilot: {
+        enabled: true,
+        state: 'running',
+        lastFireAt,
+        intervalMinutes: 30,
+        lastSnapshot: { done: 1, total: 2 },
+        zeroDeltaCount: 0,
+      },
+    })
+    const sweepOpts = makeAutopilotOpts({ config, projectDir: tmpDir, mcdDir: tmpDir })
+    const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+    await scheduler.runAutopilotSweep(sweepOpts)
+    check('AP-6: nudge delivered', sweepOpts.delivered.length === 1)
+    check('AP-6: nudge userId', sweepOpts.delivered[0]?.envelope.userId === '__mcd_autopilot__')
+    const savedAutopilot = sweepOpts.saved[sweepOpts.saved.length - 1]?.projects[chatId]?.autopilot
+    check('AP-6: lastFireAt updated', savedAutopilot?.lastFireAt !== lastFireAt)
+    check('AP-6: lastSnapshot persisted', savedAutopilot?.lastSnapshot?.done === 1 && savedAutopilot?.lastSnapshot?.total === 2)
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+}
+
+// AP-7: zero-delta ×3 → stall escalation + halted
+{
+  const tmpDir = mkdtempSync(join(tmpdir(), 'mcd-ap-test-'))
+  try {
+    // BACKLOG.md with 1 done, 3 total
+    writeFileSync(join(tmpDir, 'BACKLOG.md'), '- [x] task one\n- [ ] task two\n- [ ] task three\n')
+    const lastFireAt = new Date(Date.now() - 35 * 60_000).toISOString()
+    const { config, chatId } = makeAutopilotConfig({
+      autopilot: {
+        enabled: true,
+        state: 'running',
+        lastFireAt,
+        intervalMinutes: 30,
+        stallThreshold: 3,
+        lastSnapshot: { done: 1, total: 3 },
+        zeroDeltaCount: 2, // this fire = 3rd zero-delta → stall
+      },
+    })
+    const sweepOpts = makeAutopilotOpts({ config, projectDir: tmpDir, mcdDir: tmpDir })
+    const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+    await scheduler.runAutopilotSweep(sweepOpts)
+    check('AP-7: stall escalated', sweepOpts.escalations.length === 1)
+    check('AP-7: reason=stall', sweepOpts.escalations[0]?.reason === 'stall')
+    const savedAutopilot = sweepOpts.saved[sweepOpts.saved.length - 1]?.projects[chatId]?.autopilot
+    check('AP-7: state=halted', savedAutopilot?.state === 'halted')
+    check('AP-7: no nudge delivered', sweepOpts.delivered.length === 0)
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+}
+
+// AP-8: complete announce
+{
+  const tmpDir = mkdtempSync(join(tmpdir(), 'mcd-ap-test-'))
+  try {
+    // BACKLOG.md with all 2 done
+    writeFileSync(join(tmpDir, 'BACKLOG.md'), '- [x] task one\n- [x] task two\n')
+    const lastFireAt = new Date(Date.now() - 35 * 60_000).toISOString()
+    const { config, chatId } = makeAutopilotConfig({
+      autopilot: {
+        enabled: true,
+        state: 'running',
+        lastFireAt,
+        intervalMinutes: 30,
+        lastSnapshot: { done: 1, total: 2 },
+        zeroDeltaCount: 0,
+      },
+    })
+    const sweepOpts = makeAutopilotOpts({ config, projectDir: tmpDir, mcdDir: tmpDir })
+    const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+    await scheduler.runAutopilotSweep(sweepOpts)
+    check('AP-8: complete announced', sweepOpts.announcements.length === 1)
+    check('AP-8: kind=complete', sweepOpts.announcements[0]?.kind === 'complete')
+    check('AP-8: snap done=2', sweepOpts.announcements[0]?.snap.done === 2)
+    const savedAutopilot = sweepOpts.saved[sweepOpts.saved.length - 1]?.projects[chatId]?.autopilot
+    check('AP-8: state=complete', savedAutopilot?.state === 'complete')
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+}
+
+// AP-9: rearm announce — new items appear after complete
+{
+  const tmpDir = mkdtempSync(join(tmpdir(), 'mcd-ap-test-'))
+  try {
+    // BACKLOG.md with 2 done + 1 new open item
+    writeFileSync(join(tmpDir, 'BACKLOG.md'), '- [x] task one\n- [x] task two\n- [ ] task three\n')
+    const { config, chatId } = makeAutopilotConfig({
+      autopilot: {
+        enabled: true,
+        state: 'complete',
+        intervalMinutes: 30,
+        lastSnapshot: { done: 2, total: 2 }, // was complete
+        zeroDeltaCount: 0,
+      },
+    })
+    const sweepOpts = makeAutopilotOpts({ config, projectDir: tmpDir, mcdDir: tmpDir })
+    const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+    await scheduler.runAutopilotSweep(sweepOpts)
+    check('AP-9: rearm announced', sweepOpts.announcements.length === 1)
+    check('AP-9: kind=rearm', sweepOpts.announcements[0]?.kind === 'rearm')
+    const savedAutopilot = sweepOpts.saved[sweepOpts.saved.length - 1]?.projects[chatId]?.autopilot
+    check('AP-9: state=running after rearm', savedAutopilot?.state === 'running')
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+}
+
+// AP-10: specclaw-halt escalation once (not repeated when already halted)
+{
+  const tmpDir = mkdtempSync(join(tmpdir(), 'mcd-ap-test-'))
+  try {
+    writeFileSync(join(tmpDir, 'BACKLOG.md'), '- [ ] task one\n')
+    const lastFireAt = new Date(Date.now() - 35 * 60_000).toISOString()
+    const { config, chatId } = makeAutopilotConfig({
+      autopilot: {
+        enabled: true,
+        state: 'running',
+        lastFireAt,
+        intervalMinutes: 30,
+      },
+    })
+    const sweepOpts = makeAutopilotOpts({
+      config,
+      projectDir: tmpDir,
+      mcdDir: tmpDir,
+      checkHalt: { halted: true, change: 'my-change', evidence: 'verify red' },
+    })
+    const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+
+    // First sweep: running → should escalate and patch to halted
+    await scheduler.runAutopilotSweep(sweepOpts)
+    check('AP-10: first sweep escalates', sweepOpts.escalations.length === 1)
+    check('AP-10: reason=specclaw-halted', sweepOpts.escalations[0]?.reason === 'specclaw-halted')
+    const savedAfterFirst = sweepOpts.saved[sweepOpts.saved.length - 1]?.projects[chatId]?.autopilot
+    check('AP-10: state=halted after first sweep', savedAfterFirst?.state === 'halted')
+
+    // Second sweep: already halted → checkHalt not consulted for state='halted', no second escalation
+    await scheduler.runAutopilotSweep(sweepOpts)
+    check('AP-10: second sweep no additional escalation', sweepOpts.escalations.length === 1)
+    check('AP-10: no nudge delivered', sweepOpts.delivered.length === 0)
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+}
+
+// ============================================================
 // Final result
 // ============================================================
 

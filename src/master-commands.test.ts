@@ -1225,6 +1225,288 @@ check('set: heartbeat accepted', setHb.kind === 'reply' && setHb.text.includes('
 // Restore original config after AC9 tests
 saveConfig(config)
 
+// --- autopilot set tests (AC1, FR2) ----------------------------------------
+
+// Helper: create a fresh project for autopilot tests so we don't pollute 'support'
+const apChatId = '888888888888888888'
+{
+  const cfg = loadConfig()
+  const cfgWithAp = { ...cfg, projects: { ...cfg.projects, [apChatId]: { slug: 'ap-test' } } }
+  saveConfig(cfgWithAp)
+  mkdirSync(join(stateDir, 'projects', 'ap-test'), { recursive: true })
+}
+
+// Test 1: --autopilot on round-trip persists enabled + cleared runtime fields
+{
+  // First set some runtime state manually
+  {
+    const cfg = loadConfig()
+    const proj = cfg.projects[apChatId]!
+    saveConfig({
+      ...cfg,
+      projects: {
+        ...cfg.projects,
+        [apChatId]: {
+          ...proj,
+          autopilot: {
+            enabled: true,
+            state: 'halted',
+            seededAt: '2026-01-01T00:00:00Z',
+            lastFireAt: '2026-01-02T00:00:00Z',
+            zeroDeltaCount: 5,
+            lastSnapshot: { done: 2, total: 4 },
+          },
+        },
+      },
+    })
+  }
+  const res = await handleMasterCommand('!project set ap-test --autopilot on', mctx())
+  check(
+    'autopilot on: success reply',
+    res.kind === 'reply' && res.text.includes('enabled'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  const proj = loadConfig().projects[apChatId]!
+  check('autopilot on: enabled=true persisted', proj.autopilot?.enabled === true)
+  check('autopilot on: runtime state cleared', proj.autopilot?.state === undefined)
+  check('autopilot on: seededAt cleared', proj.autopilot?.seededAt === undefined)
+  check('autopilot on: lastFireAt cleared', proj.autopilot?.lastFireAt === undefined)
+  check('autopilot on: zeroDeltaCount cleared', proj.autopilot?.zeroDeltaCount === undefined)
+  check('autopilot on: lastSnapshot cleared', proj.autopilot?.lastSnapshot === undefined)
+}
+
+// Test 2: --autopilot on with --seed stores seedGoal
+{
+  const res = await handleMasterCommand('!project set ap-test --autopilot on --seed "build a REST API"', mctx())
+  check(
+    'autopilot on + seed: success reply',
+    res.kind === 'reply' && res.text.includes('enabled'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  const proj = loadConfig().projects[apChatId]!
+  check('autopilot on + seed: seedGoal persisted', proj.autopilot?.seedGoal === 'build a REST API')
+  check('autopilot on + seed: enabled=true', proj.autopilot?.enabled === true)
+}
+
+// Test 3: --autopilot off clears runtime keeps limits
+{
+  // Set some limits and runtime state
+  {
+    const cfg = loadConfig()
+    const proj = cfg.projects[apChatId]!
+    saveConfig({
+      ...cfg,
+      projects: {
+        ...cfg.projects,
+        [apChatId]: {
+          ...proj,
+          autopilot: {
+            enabled: true,
+            intervalMinutes: 45,
+            stallThreshold: 5,
+            state: 'running',
+            seededAt: '2026-01-01T00:00:00Z',
+            lastFireAt: '2026-01-02T00:00:00Z',
+            zeroDeltaCount: 2,
+            lastSnapshot: { done: 1, total: 3 },
+          },
+        },
+      },
+    })
+  }
+  const res = await handleMasterCommand('!project set ap-test --autopilot off', mctx())
+  check(
+    'autopilot off: success reply',
+    res.kind === 'reply' && res.text.includes('disabled'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  const proj = loadConfig().projects[apChatId]!
+  check('autopilot off: enabled=false', proj.autopilot?.enabled === false)
+  // User limits preserved
+  check('autopilot off: intervalMinutes preserved', proj.autopilot?.intervalMinutes === 45)
+  check('autopilot off: stallThreshold preserved', proj.autopilot?.stallThreshold === 5)
+  // Runtime fields cleared
+  check('autopilot off: state cleared', proj.autopilot?.state === undefined)
+  check('autopilot off: seededAt cleared', proj.autopilot?.seededAt === undefined)
+  check('autopilot off: zeroDeltaCount cleared', proj.autopilot?.zeroDeltaCount === undefined)
+}
+
+// Test 4: Invalid autopilot value → error
+{
+  const res = await handleMasterCommand('!project set ap-test --autopilot maybe', mctx())
+  check(
+    'autopilot invalid value: error reply',
+    res.kind === 'reply' && res.text.includes('on') && res.text.includes('off'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+}
+
+// Test 5: Master channel refusal
+{
+  const res = await handleMasterCommand('!project set master-test --autopilot on', mctx())
+  check(
+    'autopilot on master channel: refused',
+    res.kind === 'reply' && res.text.includes('master channel'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+}
+
+// Test 6: --autopilot-interval without existing block → error
+{
+  // Make sure ap-test2 has no autopilot block
+  const tmpChatId = '666666666666666661'
+  {
+    const cfg = loadConfig()
+    const cfgWith = { ...cfg, projects: { ...cfg.projects, [tmpChatId]: { slug: 'ap-test2' } } }
+    saveConfig(cfgWith)
+    mkdirSync(join(stateDir, 'projects', 'ap-test2'), { recursive: true })
+  }
+  const res = await handleMasterCommand('!project set ap-test2 --autopilot-interval 60', mctx())
+  check(
+    'autopilot-interval without existing block: error',
+    res.kind === 'reply' && res.text.includes('requires'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+}
+
+// Test 7: backlog verb renders for file-source project (tmp dir with BACKLOG.md fixture)
+{
+  // Create a BACKLOG.md with some tasks in ap-test
+  writeFileSync(join(stateDir, 'projects', 'ap-test', 'BACKLOG.md'), [
+    '- [x] Task one',
+    '- [ ] Task two',
+    '- [ ] Task three',
+  ].join('\n'))
+
+  const res = await handleMasterCommand('!project backlog ap-test', mctx())
+  check(
+    'backlog verb: success reply',
+    res.kind === 'reply',
+    res.kind,
+  )
+  check(
+    'backlog verb: shows file source',
+    res.kind === 'reply' && res.text.includes('file'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  check(
+    'backlog verb: shows progress',
+    res.kind === 'reply' && res.text.includes('1/3'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  check(
+    'backlog verb: shows state',
+    res.kind === 'reply' && res.text.includes('state:'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  check(
+    'backlog verb: shows last fire',
+    res.kind === 'reply' && res.text.includes('last fire:'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+}
+
+// Test 8: backlog verb for specclaw-source project
+{
+  const specChatId = '555555555555555551'
+  const specSlug = 'specclaw-proj'
+  {
+    const cfg = loadConfig()
+    saveConfig({ ...cfg, projects: { ...cfg.projects, [specChatId]: { slug: specSlug } } })
+    const specDir = join(stateDir, 'projects', specSlug)
+    mkdirSync(join(specDir, '.specclaw'), { recursive: true })
+    writeFileSync(join(specDir, '.specclaw', 'STATUS.md'), '# specclaw status\n')
+    // Create a change with a tasks.md
+    mkdirSync(join(specDir, '.specclaw', 'changes', 'my-change'), { recursive: true })
+    writeFileSync(join(specDir, '.specclaw', 'changes', 'my-change', 'tasks.md'), [
+      '- [x] T1',
+      '- [ ] T2',
+    ].join('\n'))
+  }
+  const res = await handleMasterCommand(`!project backlog ${specSlug}`, mctx())
+  check(
+    'backlog verb specclaw: success reply',
+    res.kind === 'reply',
+    res.kind,
+  )
+  check(
+    'backlog verb specclaw: shows specclaw source',
+    res.kind === 'reply' && res.text.includes('specclaw'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  check(
+    'backlog verb specclaw: shows progress',
+    res.kind === 'reply' && res.text.includes('1/2'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+}
+
+// Test 9: backlog verb for none-source project
+{
+  const noneChatId = '444444444444444441'
+  const noneSlug = 'no-backlog-proj'
+  {
+    const cfg = loadConfig()
+    saveConfig({ ...cfg, projects: { ...cfg.projects, [noneChatId]: { slug: noneSlug } } })
+    mkdirSync(join(stateDir, 'projects', noneSlug), { recursive: true })
+  }
+  const res = await handleMasterCommand(`!project backlog ${noneSlug}`, mctx())
+  check(
+    'backlog verb none: success reply',
+    res.kind === 'reply',
+    res.kind,
+  )
+  check(
+    'backlog verb none: shows none source',
+    res.kind === 'reply' && res.text.includes('none'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  check(
+    'backlog verb none: shows 0/0',
+    res.kind === 'reply' && res.text.includes('0/0'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+}
+
+// Test 10: backlog verb with unknown slug → error
+{
+  const res = await handleMasterCommand('!project backlog totally-unknown-slug', mctx())
+  check(
+    'backlog verb unknown slug: error',
+    res.kind === 'reply' && res.text.includes('no project found'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+}
+
+// Test 11: Non-allowFrom user refused for set, but backlog verb readable by any allowFrom user
+// (The test for allowFrom is at the handleMasterCommand level -- unauthorized users get 'unauthorized' kind)
+// The backlog verb has no extra mutation gate; since all our verb calls go through the allowFrom check,
+// we verify that a valid user can read backlog (already tested above) and an invalid user is blocked.
+{
+  const unauthorizedRes = await handleMasterCommand('!project backlog ap-test', {
+    ...mctx(),
+    userId: '000000000000000000',
+    authorizedUsers: ['797184740293476362'],
+  })
+  check(
+    'backlog verb unauthorized user: blocked at auth gate',
+    unauthorizedRes.kind === 'unauthorized',
+    unauthorizedRes.kind,
+  )
+  // An authorized user can use backlog (already tested in test 7, but verify the read-only nature):
+  // set requires allowFrom gating too, so both use the same gate — backlog is "read-only" in that
+  // it does not require --yes or mutation checks beyond the global allowFrom gate.
+  const authorizedRes = await handleMasterCommand('!project backlog ap-test', mctx())
+  check(
+    'backlog verb authorized user: succeeds',
+    authorizedRes.kind === 'reply' && !authorizedRes.text.includes('no project found'),
+    authorizedRes.kind === 'reply' ? authorizedRes.text : authorizedRes.kind,
+  )
+}
+
+// Restore config after autopilot tests
+saveConfig(config)
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)
   process.exit(1)

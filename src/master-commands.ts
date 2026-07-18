@@ -12,6 +12,7 @@ import {
   loadConfig,
   saveConfig,
   SLUG_PATTERN,
+  type AutopilotConfig,
   type ChannelsConfig,
   type ProgressMode,
   type Project,
@@ -23,6 +24,7 @@ import { IntervalSchema, loadSchedules, newScheduleId, saveSchedules, validateCr
 import { buildAttentionReport } from './heartbeat.ts'
 import { readSpecclawStatus } from './specclaw-status.ts'
 import { launchHermesRun, tailHermesRun, listRecentRuns } from './hermes-bridge.ts'
+import { detectBacklogSource, snapshotBacklog } from './backlog.ts'
 
 export type MasterCommandResult =
   | { kind: 'no-master-configured' }
@@ -190,6 +192,8 @@ export async function handleMasterCommand(
         result = { kind: 'reply', text: await handleBranch(rest, ctx) }; break
       case 'hermes':
         result = { kind: 'reply', text: await handleHermes(rest, ctx) }; break
+      case 'backlog':
+        result = { kind: 'reply', text: await handleBacklog(rest, ctx) }; break
       default:
         result = {
           kind: 'reply',
@@ -228,6 +232,8 @@ function helpText(prefix: string): string {
     `${prefix} set    <chat_id-or-slug> --bot-peers none            — remove bot-peer allow list`,
     `${prefix} set    <chat_id-or-slug> --peers <slug,slug,...>     — set cross-project peer allow list (slugs must exist, no self/master)`,
     `${prefix} set    <chat_id-or-slug> --peers none               — remove cross-project peer allow list`,
+    `${prefix} set    <chat_id-or-slug> --autopilot on|off [--seed "<goal>"] [--autopilot-interval N] [--backlog-file <path>]  — enable/disable backlog autopilot`,
+    `${prefix} backlog <chat_id-or-slug>                            — show backlog source, progress, and autopilot state`,
     `${prefix} rename <chat_id-or-slug> --slug NEW                    — rename slug + dir`,
     `${prefix} remote <chat_id-or-slug> [--set URL] [--creds NAME]    — show/set git remote`,
     `${prefix} pull   <chat_id-or-slug>                               — git pull --ff-only`,
@@ -686,8 +692,48 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
     }
   }
 
-  if (prompt === null && stuckMinutes === null && heartbeatMode === null && heartbeatWindow === null && heartbeatStale === null && goalRaw === null && distillOnStop === null && developBranch === null && prApi === null && botPeersAction === null && peersAction === null) {
-    return '`set` requires `--prompt "..."`, `--stuck-threshold-minutes N`, `--heartbeat-mode <supervised|autonomous>`, `--heartbeat-window <HH:MM-HH:MM>`, `--heartbeat-stale-minutes N`, `--goal "..."`, `--distill-on-stop`, `--develop-branch on|off`, `--pr-token-github <token>`, `--pr-token-azdo <token> --azdo-org X --azdo-project Y`, `--bot-peers <id,...>|none`, or `--peers <slug,...>|none`'
+  // --autopilot on|off [--seed "<goal>"] [--autopilot-interval N] [--backlog-file <path>]
+  const autopilotRaw = typeof flags['autopilot'] === 'string' ? flags['autopilot'] : null
+  if (autopilotRaw !== null && autopilotRaw !== 'on' && autopilotRaw !== 'off') {
+    return '`--autopilot` must be `on` or `off`'
+  }
+  const autopilotAction: 'on' | 'off' | null = autopilotRaw as 'on' | 'off' | null
+
+  // --seed requires --autopilot on
+  const seedGoal = typeof flags['seed'] === 'string' ? flags['seed'] : null
+  if (seedGoal !== null && autopilotAction !== 'on') {
+    return '`--seed` is only valid with `--autopilot on`'
+  }
+
+  // --autopilot-interval N
+  let autopilotInterval: number | null = null
+  if (flags['autopilot-interval'] !== undefined) {
+    const n = Number(flags['autopilot-interval'])
+    if (!Number.isInteger(n) || n <= 0) {
+      return '`--autopilot-interval` must be a positive integer (minutes)'
+    }
+    autopilotInterval = n
+  }
+
+  // --backlog-file <path>
+  const backlogFile = typeof flags['backlog-file'] === 'string' ? flags['backlog-file'] : null
+
+  // --autopilot-interval and --backlog-file are only valid with --autopilot on OR existing autopilot block
+  if (autopilotInterval !== null && autopilotAction !== 'on') {
+    const proj = loadConfig().projects[entry.chatId] ?? entry.project
+    if (!proj.autopilot) {
+      return '`--autopilot-interval` requires `--autopilot on` (or an existing autopilot block)'
+    }
+  }
+  if (backlogFile !== null && autopilotAction !== 'on') {
+    const proj = loadConfig().projects[entry.chatId] ?? entry.project
+    if (!proj.autopilot) {
+      return '`--backlog-file` requires `--autopilot on` (or an existing autopilot block)'
+    }
+  }
+
+  if (prompt === null && stuckMinutes === null && heartbeatMode === null && heartbeatWindow === null && heartbeatStale === null && goalRaw === null && distillOnStop === null && developBranch === null && prApi === null && botPeersAction === null && peersAction === null && autopilotAction === null && autopilotInterval === null && backlogFile === null) {
+    return '`set` requires `--prompt "..."`, `--stuck-threshold-minutes N`, `--heartbeat-mode <supervised|autonomous>`, `--heartbeat-window <HH:MM-HH:MM>`, `--heartbeat-stale-minutes N`, `--goal "..."`, `--distill-on-stop`, `--develop-branch on|off`, `--pr-token-github <token>`, `--pr-token-azdo <token> --azdo-org X --azdo-project Y`, `--bot-peers <id,...>|none`, `--peers <slug,...>|none`, or `--autopilot on|off [--seed "<goal>"] [--autopilot-interval N] [--backlog-file <path>]`'
   }
 
   const results: string[] = []
@@ -796,6 +842,59 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
       const updated = { ...existing, allow: peersAction }
       saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: { ...latestEntry, peers: updated } } })
       results.push(`✅ set \`peers.allow\` = [${peersAction.join(', ')}] for **${entry.project.slug}**.`)
+    }
+  }
+
+  if (autopilotAction !== null || autopilotInterval !== null || backlogFile !== null) {
+    // Refuse on master channel
+    if (isMasterChannel(config, entry.chatId)) {
+      return '`--autopilot` cannot be enabled on the master channel'
+    }
+    const latestConfig = loadConfig()
+    const latestEntry = latestConfig.projects[entry.chatId] ?? entry.project
+    // Use a typed variable so destructuring is well-typed
+    const existing: AutopilotConfig = latestEntry.autopilot ?? { enabled: false }
+
+    if (autopilotAction === 'on') {
+      // Preserve user-config limits, clear runtime state for fresh entry
+      const newAutopilot: AutopilotConfig = {
+        enabled: true,
+        ...(existing.file !== undefined ? { file: existing.file } : {}),
+        ...(existing.intervalMinutes !== undefined ? { intervalMinutes: existing.intervalMinutes } : {}),
+        ...(existing.stallThreshold !== undefined ? { stallThreshold: existing.stallThreshold } : {}),
+        ...(existing.respectHeartbeatWindow !== undefined ? { respectHeartbeatWindow: existing.respectHeartbeatWindow } : {}),
+        ...(seedGoal !== null ? { seedGoal } : {}),
+        ...(autopilotInterval !== null ? { intervalMinutes: autopilotInterval } : {}),
+        ...(backlogFile !== null ? { file: backlogFile } : {}),
+      }
+      saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: { ...latestEntry, autopilot: newAutopilot } } })
+      // Detect backlog source to give a helpful state hint
+      const dir = projectDir(latestEntry.slug)
+      const file = newAutopilot.file ?? 'BACKLOG.md'
+      const source = existsSync(dir) ? detectBacklogSource(dir, file) : 'none'
+      const stateHint = source === 'none' ? 'seeding (no backlog source detected — seed phase will run)' : 'running'
+      results.push(`✅ autopilot **enabled** for **${latestEntry.slug}**. State: ${stateHint}.`)
+    } else if (autopilotAction === 'off') {
+      // Clear runtime state, keep user limits
+      const newAutopilot: AutopilotConfig = {
+        enabled: false,
+        ...(existing.file !== undefined ? { file: existing.file } : {}),
+        ...(existing.intervalMinutes !== undefined ? { intervalMinutes: existing.intervalMinutes } : {}),
+        ...(existing.stallThreshold !== undefined ? { stallThreshold: existing.stallThreshold } : {}),
+        ...(existing.respectHeartbeatWindow !== undefined ? { respectHeartbeatWindow: existing.respectHeartbeatWindow } : {}),
+      }
+      saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: { ...latestEntry, autopilot: newAutopilot } } })
+      results.push(`✅ autopilot **disabled** for **${latestEntry.slug}**. Runtime state cleared; limits preserved.`)
+    } else {
+      // Only interval or file update (existing block confirmed above, has `enabled`)
+      const updated: AutopilotConfig = {
+        ...existing,
+        ...(autopilotInterval !== null ? { intervalMinutes: autopilotInterval } : {}),
+        ...(backlogFile !== null ? { file: backlogFile } : {}),
+      }
+      saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: { ...latestEntry, autopilot: updated } } })
+      if (autopilotInterval !== null) results.push(`✅ set \`autopilot.intervalMinutes\` = ${autopilotInterval} for **${latestEntry.slug}**.`)
+      if (backlogFile !== null) results.push(`✅ set \`autopilot.file\` = "${backlogFile}" for **${latestEntry.slug}**.`)
     }
   }
 
@@ -2081,4 +2180,47 @@ async function handleHermes(rest: string[], ctx: MasterContext): Promise<string>
   } catch (err) {
     return `Failed to launch Hermes run: ${(err as Error).message}`
   }
+}
+
+/**
+ * `!project backlog <chat_id-or-slug>` — read-only backlog status.
+ * Shows source, X/Y progress, autopilot state, and effective settings.
+ */
+async function handleBacklog(rest: string[], _ctx: MasterContext): Promise<string> {
+  const { positional } = parseFlags(rest)
+  if (positional.length === 0) return '`backlog` needs a chat_id or slug'
+  const target = positional[0]!
+
+  const config = loadConfig()
+  const entry = resolveTarget(config, target)
+  if (!entry) return `no project found for "${target}"`
+
+  const { project } = entry
+  const ap = project.autopilot
+  const dir = projectDir(project.slug)
+  const file = ap?.file ?? 'BACKLOG.md'
+
+  // Detect source and snapshot progress
+  const source = existsSync(dir) ? detectBacklogSource(dir, file) : 'none'
+  const snap = existsSync(dir) ? snapshotBacklog(dir, source, file) : { done: 0, total: 0 }
+
+  // Effective limits
+  const effectiveInterval = ap?.intervalMinutes ?? config.defaults.autopilot?.intervalMinutes ?? 30
+  const effectiveStall = ap?.stallThreshold ?? config.defaults.autopilot?.stallThreshold ?? 3
+  const respectWindow = ap?.respectHeartbeatWindow ?? true
+  const hwWindow = project.heartbeat?.window
+
+  const lines = [
+    `**Backlog — ${project.slug}**`,
+    `source: ${source}${source === 'file' ? ` (\`${file}\`)` : ''}`,
+    `progress: ${snap.done}/${snap.total} done`,
+    `autopilot: ${ap?.enabled ? 'enabled' : 'disabled'}`,
+    `state: ${ap?.state ?? '—'}`,
+    `last fire: ${ap?.lastFireAt ?? 'never'}`,
+    `zeroDeltaCount: ${ap?.zeroDeltaCount ?? 0}`,
+    `effectiveIntervalMinutes: ${effectiveInterval}`,
+    `stallThreshold: ${effectiveStall}`,
+    `respectHeartbeatWindow: ${respectWindow}${hwWindow ? ` (window: ${hwWindow})` : ''}`,
+  ]
+  return lines.join('\n')
 }
