@@ -7225,3 +7225,118 @@ New `progressMode: "phases"`: on the existing 2s poll cycle, snapshot/diff `.spe
 - AC3: One Discord message per change, edited in place
 - AC4: `mcp__mcd__*` and non-transition tool activity produce no output
 - AC5: Fixture-sequence classification tests; `bun tsc --noEmit` clean
+
+## P309 — Bug: `progress --set phases` rejected despite valid schema value
+
+**Status:** `[ ] proposed`
+**Created:** 2026-07-18
+
+### Problem
+
+`ProgressModeSchema` (`src/channels-config.ts:56`) includes `phases` as a valid enum value, but the `progress` verb's `--set` validator (`src/master-commands.ts:2016`) only allows `['off', 'edit', 'post']`. Running `!project progress <slug> --set phases` fails with `` `--set` must be one of: `off`, `edit`, `post` `` — the phases progress mode shipped in P308 is unreachable via master command; operators must hand-edit `channels.json`.
+
+### Proposed Solution
+
+- `src/master-commands.ts:2016`: add `'phases'` to the validator array and to the error message
+- `src/master-commands.ts:242`: help text — `--set off|edit|post|phases`
+- Test: `progress <slug> --set phases` round-trip in `src/master-commands.test.ts`
+
+### Acceptance Criteria
+
+- AC1: `!project progress <slug> --set phases` persists `progressMode: "phases"` to `channels.json`
+- AC2: Error message for an invalid mode lists all four valid values
+- AC3: Help text lists `phases`
+- AC4: Tests cover accept + reject paths; `bun tsc --noEmit` clean
+
+---
+
+## P310 — Bot-Peer Turn Limit: Exempt Status Posts
+
+**Status:** `[ ] proposed`
+**Created:** 2026-07-18
+**SpecClaw change:** `bot-peer-limit-status-exempt`
+
+### Problem
+
+`BotPeerGate` (`src/bot-peers.ts`) counts every inbound message from an allowlisted peer bot toward the consecutive-turn limit (default 5). In the finaudit-agents session on 2026-07-18, dHermes's automated progress ticks (`⏳ Still working... (N min elapsed — iteration X/90)`) consumed the budget, so `🚫 bot-peer turn limit (5) reached` fired twice mid-coordination, stalling legitimate hand-offs until a human posted. Status chatter is not a loop signal.
+
+### Proposed Solution
+
+Classify inbound peer messages before counting. Status/progress posts (matched by configurable `statusPatterns?: string[]` on the `botPeers` block, with anchored built-in defaults for `⏳ Still working`, empty bodies, bare progress ticks) do not increment the consecutive counter and are not injected into the project session. Substantive messages count as today. Per-channel opt-out via `statusPatterns: []`.
+
+### Acceptance Criteria
+
+- AC1: Status flood from a peer bot does not trip the consecutive-turn limit (unit-tested)
+- AC2: Substantive message loop still trips the limit at maxConsecutive
+- AC3: `statusPatterns` configurable on project + defaults `botPeers` schema; empty array disables exemption
+- AC4: Exempted posts are not injected into the project session
+- AC5: `bun tsc --noEmit` clean; `src/bot-peers.test.ts` extended and green
+
+---
+
+## P311 — Heartbeat Live Task Count
+
+**Status:** `[ ] proposed`
+**Created:** 2026-07-18
+**SpecClaw change:** `heartbeat-live-task-count`
+
+### Problem
+
+The heartbeat `specclaw-idle` detector builds its nudge from `readSpecclawStatus()`, which parses `.specclaw/STATUS.md` — only as fresh as the last `specclaw-update-status` run. On 2026-07-18 the finaudit-agents heartbeat injected "build phase (0/14 tasks done) — please resume /specclaw:build" when real state was 13/13 done with PR open. A stale nudge injects false state into an autonomous session with directive framing; a less careful agent could re-run build tasks against a completed change.
+
+### Proposed Solution
+
+Make tasks.md the source of truth for task counts at fire time: `readSpecclawStatus()` counts checkboxes in `.specclaw/changes/<active>/tasks.md` directly, overriding STATUS.md's `tasksDone/tasksTotal` when parseable. Guard the nudge: if tasks.md shows all complete but STATUS.md says build in-progress, suppress the resume-build nudge and emit a milder "tasks complete, phase not advanced — verify/pr may be pending" summary. Parse failure falls back to current behavior.
+
+### Acceptance Criteria
+
+- AC1: Live tasks.md checkbox count overrides stale STATUS.md counts in the heartbeat nudge
+- AC2: All-tasks-complete + STATUS.md build-in-progress → resume-build nudge suppressed, milder summary emitted
+- AC3: tasks.md missing/unparseable → current STATUS.md behavior unchanged
+- AC4: `bun tsc --noEmit` clean; heartbeat tests cover stale-mismatch and fallback paths
+
+---
+
+## P312 — Watchdog Status Noise Collapse
+
+**Status:** `[ ] proposed`
+**Created:** 2026-07-18
+**SpecClaw change:** `watchdog-status-noise-collapse`
+
+### Problem
+
+During long turns the stuck-watchdog fires `progress-skip` on every poll cycle where the transcript advances without a reply; `server.ts:1381-1388` posts each as a new Discord message. On 2026-07-18 this produced ~15 near-identical `⏳ still working` posts in one afternoon (~60% of channel traffic), drowning bot-to-bot dialogue and burning the peer bot's attention.
+
+### Proposed Solution
+
+Reuse the edit-in-place pattern: first `progress-skip` in a stuck episode posts one status message; subsequent events edit it (elapsed-minutes line). Episode ends on reply/kill/reset; next episode starts fresh. Carry a stable episode id on the `progress-skip` payload (`src/project-pool.ts`/`src/claude-process.ts`); `server.ts` keeps `Map<chatId, { episodeId, msgId }>`. Teardown/respawn warnings remain separate posts. Edit failure falls back to posting new messages.
+
+### Acceptance Criteria
+
+- AC1: N consecutive `progress-skip` events in one episode produce exactly one Discord message, edited in place
+- AC2: New episode (after reply or kill) starts a fresh message
+- AC3: Teardown and respawn warnings still post as separate messages
+- AC4: Edit failure falls back to new-message posting
+- AC5: `bun tsc --noEmit` clean; tests cover post-then-edit and episode rollover
+
+---
+
+## P313 — Bot-Peer Dialogue Build (planned 2026-07-16)
+
+**Status:** `[ ] proposed`
+**Created:** 2026-07-18
+**SpecClaw change:** `bot-peer-dialogue` (spec + design + tasks already complete; build pending)
+
+### Problem
+
+The `bot-peer-dialogue` change was fully planned on 2026-07-16 (8 FRs, 8 ACs, 5 tasks in 3 waves) but never built. Since then, `botPeers` gating (`src/bot-peers.ts`) and cross-project dialogue (`ask_project`, `share_learning`, `read_learnings`, `--peers`) shipped independently and may cover part of its scope.
+
+### Proposed Solution
+
+Before building: re-validate spec.md/design.md/tasks.md against current main — mark tasks already satisfied by shipped bot-peers + cross-project-dialogue work as done or drop them, re-plan the remainder if material drift is found. Then build the surviving tasks via the normal specclaw loop.
+
+### Acceptance Criteria
+
+- AC1: Written drift assessment recorded in the change dir (which FRs/tasks are already shipped vs remaining)
+- AC2: Remaining tasks built, verified against the (possibly amended) spec
+- AC3: If fully superseded, change is archived with a supersession note instead of built
