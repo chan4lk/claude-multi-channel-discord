@@ -440,6 +440,74 @@ function writeHaltFixture(dir: string, opts: {
   }
 }
 
+// ── live task count (P311): tasks.md overrides stale STATUS.md counts ────────
+
+{
+  const dir = makeTmpDir()
+  try {
+    mkdirSync(join(dir, '.specclaw', 'changes', 'stale-change'), { recursive: true })
+    writeFile(
+      join(dir, '.specclaw', 'STATUS.md'),
+      buildDashboard({ activeChanges: ['- 🔨 **stale-change** — 0/14 tasks (0%)'] }),
+    )
+    writeFile(
+      join(dir, '.specclaw', 'changes', 'stale-change', 'tasks.md'),
+      [
+        '# Tasks',
+        '',
+        '- [x] T1: done',
+        '- [x] T2: done',
+        '- [ ] T3: pending',
+      ].join('\n'),
+    )
+    const ss = readSpecclawStatus(dir)
+    check('live-count: tasks.md overrides stale dashboard', ss.tasksDone === 2 && ss.tasksTotal === 3, `${ss.tasksDone}/${ss.tasksTotal}`)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// ── live task count: tasks.md absent → dashboard counts unchanged ────────────
+
+{
+  const dir = makeTmpDir()
+  try {
+    mkdirSync(join(dir, '.specclaw'), { recursive: true })
+    writeFile(
+      join(dir, '.specclaw', 'STATUS.md'),
+      buildDashboard({ activeChanges: ['- 🔨 **no-tasks-file** — 4/9 tasks (44%)'] }),
+    )
+    const ss = readSpecclawStatus(dir)
+    check('live-count fallback: missing tasks.md keeps dashboard counts', ss.tasksDone === 4 && ss.tasksTotal === 9, `${ss.tasksDone}/${ss.tasksTotal}`)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// ── resume block: all tasks complete → verify/pr wording, no build directive ─
+
+{
+  const dir = makeTmpDir()
+  try {
+    mkdirSync(join(dir, '.specclaw', 'changes', 'done-change'), { recursive: true })
+    writeFile(
+      join(dir, '.specclaw', 'STATUS.md'),
+      buildDashboard({ activeChanges: ['- 🔨 **done-change** — 0/13 tasks (0%)'] }),
+    )
+    writeFile(
+      join(dir, '.specclaw', 'changes', 'done-change', 'tasks.md'),
+      ['- [x] T1', '- [x] T2', '- [x] T3'].join('\n'),
+    )
+    const block = buildSpecclawResumeBlock(dir)
+    check('resume complete: live counts shown', block.includes('3/3 tasks done'), block)
+    check('resume complete: instructs verify/pr', block.includes('/specclaw:verify'), block)
+    check('resume complete: forbids re-running build', block.includes('do NOT re-run /specclaw:build'), block)
+    check('resume complete: no continue-via-build directive', !block.includes('continue from the first non-completed task'), block)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
 // ── summary ──────────────────────────────────────────────────────────────────
 
 if (failed > 0) {

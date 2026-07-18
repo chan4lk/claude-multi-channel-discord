@@ -7276,7 +7276,7 @@ Classify inbound peer messages before counting. Status/progress posts (matched b
 
 ## P311 — Heartbeat Live Task Count
 
-**Status:** `[ ] proposed`
+**Status:** `[x] done`
 **Created:** 2026-07-18
 **SpecClaw change:** `heartbeat-live-task-count`
 

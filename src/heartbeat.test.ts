@@ -273,6 +273,17 @@ function makeConfig(projects: Record<string, string>): ReturnType<typeof Channel
   const itemsFresh = buildAttentionReport(configFresh, { readSpecclawStatus: () => ssActive })
   const itemFresh = itemsFresh.find(i => i.kind === 'specclaw-idle' && i.slug === SLUG_G)
   check('AC4b: fresh transcript (active) → no specclaw-idle item', itemFresh === undefined)
+
+  // AC4c (P311): all tasks complete → reworded summary, no resume-build framing
+  const ssComplete = { present: true, activeChange: 'x-change', phase: 'build', tasksDone: 13, tasksTotal: 13 }
+  const itemsComplete = buildAttentionReport(config, { readSpecclawStatus: () => ssComplete })
+  const itemComplete = itemsComplete.find(i => i.kind === 'specclaw-idle' && i.slug === SLUG_F)
+  check('AC4c: complete tasks → item present', itemComplete !== undefined)
+  check(
+    'AC4c: complete tasks → verify/pr wording',
+    itemComplete?.summary?.includes('tasks complete (13/13), phase not advanced — verify/pr may be pending') ?? false,
+    `summary=${itemComplete?.summary}`,
+  )
 }
 
 // ─── Sort order + multi-item channel ─────────────────────────────────────────
