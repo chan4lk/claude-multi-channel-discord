@@ -22,6 +22,7 @@ import {
   type Schedule,
 } from './schedules-config.ts'
 import type { InboundEnvelope } from './project-process.ts'
+import type { ChannelsConfig } from './channels-config.ts'
 
 function resolveInjectVars(template: string, slug: string): string {
   const now = new Date()
@@ -60,6 +61,31 @@ function appendSchedulerHistory(
       interval: s.interval ?? s.at ?? null,
       message: s.prompt.slice(0, 200),
       injected,
+      error: error ?? null,
+    }) + '\n'
+    fs.appendFileSync(path.join(mcdDir, 'scheduler-history.jsonl'), entry)
+  } catch {
+    // Non-fatal
+  }
+}
+
+function appendAutopilotHistory(
+  mcdDir: string,
+  slug: string,
+  chatId: string,
+  ts: string,
+  kind: string,
+  error?: string,
+): void {
+  if (!mcdDir) return
+  try {
+    const entry = JSON.stringify({
+      ts,
+      scheduleId: `autopilot-${slug}`,
+      slug,
+      interval: null,
+      message: kind.slice(0, 200),
+      injected: kind === 'seed' || kind === 'nudge',
       error: error ?? null,
     }) + '\n'
     fs.appendFileSync(path.join(mcdDir, 'scheduler-history.jsonl'), entry)
@@ -487,6 +513,135 @@ export class Scheduler {
         this.log(`[goal-reconcile] wrote GOALS.md for ${slug}`)
       } catch (err) {
         this.log(`[goal-reconcile] failed for ${slug}: ${(err as Error).message}`)
+      }
+    }
+  }
+
+  /**
+   * Register a periodic sweep that drives the backlog autopilot state machine
+   * for enabled projects. Safe to call once at startup — re-registering creates
+   * an additional timer, so don't call more than once.
+   */
+  registerAutopilotSweep(opts: {
+    pool: { deliver: (chatId: string, envelope: InboundEnvelope) => Promise<void>; isBusy?: (chatId: string, graceMs: number) => boolean }
+    getChannels: () => ChannelsConfig
+    saveChannels: (cfg: ChannelsConfig) => void
+    projectDirFor: (slug: string) => string
+    checkHalt?: (chatId: string) => { halted: boolean; change?: string; evidence?: string }
+    onEscalate?: (slug: string, chatId: string, reason: 'verify-failed' | 'stall' | 'specclaw-halted', detail: string) => void
+    onAnnounce?: (slug: string, chatId: string, kind: 'complete' | 'rearm', snap: { done: number; total: number }) => void
+    mcdDir: string
+    sweepIntervalMs?: number
+  }): void {
+    const intervalMs = opts.sweepIntervalMs ?? 60_000
+    const timer = setInterval(() => void this.runAutopilotSweep(opts), intervalMs)
+    if (typeof timer.unref === 'function') timer.unref()
+    this.log('autopilot sweep registered')
+  }
+
+  async runAutopilotSweep(opts: {
+    pool: { deliver: (chatId: string, envelope: InboundEnvelope) => Promise<void>; isBusy?: (chatId: string, graceMs: number) => boolean }
+    getChannels: () => ChannelsConfig
+    saveChannels: (cfg: ChannelsConfig) => void
+    projectDirFor: (slug: string) => string
+    checkHalt?: (chatId: string) => { halted: boolean; change?: string; evidence?: string }
+    onEscalate?: (slug: string, chatId: string, reason: 'verify-failed' | 'stall' | 'specclaw-halted', detail: string) => void
+    onAnnounce?: (slug: string, chatId: string, kind: 'complete' | 'rearm', snap: { done: number; total: number }) => void
+    mcdDir: string
+  }): Promise<void> {
+    const { detectBacklogSource, snapshotBacklog, nextAutopilotAction } = await import('./backlog.ts')
+    const config = opts.getChannels()
+    const nowIso = new Date().toISOString()
+
+    for (const [chatId, project] of Object.entries(config.projects)) {
+      const autopilot = project.autopilot
+      if (!autopilot?.enabled) continue
+
+      // Defensively skip master channel
+      if (config.master?.chatId === chatId) continue
+
+      // Busy gate (5-min grace)
+      if (opts.pool.isBusy?.(chatId, 5 * 60_000)) {
+        this.log(`[autopilot] ${project.slug}: busy-skip`)
+        continue
+      }
+
+      // Specclaw halt probe: only when running state
+      if (opts.checkHalt && autopilot.state === 'running') {
+        const halt = opts.checkHalt(chatId)
+        if (halt.halted) {
+          this.log(`[autopilot] ${project.slug}: specclaw-halted — suspending`)
+          const patch = { state: 'halted' as const }
+          const latest = opts.getChannels()
+          const proj = latest.projects[chatId]
+          if (proj) {
+            opts.saveChannels({
+              ...latest,
+              projects: {
+                ...latest.projects,
+                [chatId]: { ...proj, autopilot: { ...proj.autopilot!, ...patch } },
+              },
+            })
+          }
+          opts.onEscalate?.(project.slug, chatId, 'specclaw-halted', `specclaw loop halted on ${halt.change ?? 'unknown'}: ${halt.evidence ?? 'unknown'}`)
+          continue
+        }
+      }
+
+      const source = detectBacklogSource(opts.projectDirFor(project.slug), autopilot.file)
+      const snap = snapshotBacklog(opts.projectDirFor(project.slug), source, autopilot.file)
+
+      const { action, patch } = nextAutopilotAction({
+        autopilot,
+        defaults: config.defaults?.autopilot,
+        source,
+        snap,
+        slug: project.slug,
+        nowIso,
+        heartbeatWindow: project.heartbeat?.window,
+      })
+
+      this.log(`[autopilot] ${project.slug}: ${action.kind}`)
+
+      // Execute side effects
+      if (action.kind === 'seed' || action.kind === 'nudge') {
+        const nowMs = Date.now()
+        const envelope: InboundEnvelope = {
+          messageId: `autopilot-${chatId}-${nowMs}`,
+          userId: '__mcd_autopilot__',
+          username: 'autopilot',
+          content: action.prompt,
+          ts: new Date(nowMs).toISOString(),
+        }
+        let deliverError: string | undefined
+        try {
+          await opts.pool.deliver(chatId, envelope)
+        } catch (err) {
+          deliverError = (err as Error).message
+          this.log(`[autopilot] ${project.slug}: deliver failed — ${deliverError}`)
+        }
+        appendAutopilotHistory(opts.mcdDir, project.slug, chatId, nowIso, action.kind, deliverError)
+      } else if (action.kind === 'verify-failed') {
+        opts.onEscalate?.(project.slug, chatId, 'verify-failed', 'no backlog appeared after seed window')
+      } else if (action.kind === 'stall') {
+        opts.onEscalate?.(project.slug, chatId, 'stall', `backlog stalled at ${snap.done}/${snap.total}`)
+      } else if (action.kind === 'complete' || action.kind === 'rearm') {
+        opts.onAnnounce?.(project.slug, chatId, action.kind, snap)
+      }
+
+      // Persist patch when non-empty
+      if (Object.keys(patch).length > 0) {
+        const latest = opts.getChannels()
+        const proj = latest.projects[chatId]
+        if (proj) {
+          opts.saveChannels({
+            ...latest,
+            projects: {
+              ...latest.projects,
+              [chatId]: { ...proj, autopilot: { ...proj.autopilot!, ...patch } },
+            },
+          })
+        }
       }
     }
   }
