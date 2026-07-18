@@ -7252,7 +7252,7 @@ New `progressMode: "phases"`: on the existing 2s poll cycle, snapshot/diff `.spe
 
 ## P310 — Bot-Peer Turn Limit: Exempt Status Posts
 
-**Status:** `[ ] proposed`
+**Status:** `[x] done`
 **Created:** 2026-07-18
 **SpecClaw change:** `bot-peer-limit-status-exempt`
 

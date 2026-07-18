@@ -3,7 +3,7 @@
  * Unit tests for BotPeerGate and effectiveBotPeerLimits.
  * Run: bun src/bot-peers.test.ts
  */
-import { BotPeerGate, effectiveBotPeerLimits } from './bot-peers.ts'
+import { BotPeerGate, effectiveBotPeerLimits, effectiveStatusPatterns, isStatusPost } from './bot-peers.ts'
 
 let failed = 0
 function check(label: string, cond: boolean, detail?: string) {
@@ -188,6 +188,68 @@ function check(label: string, cond: boolean, detail?: string) {
   const rb = gate.check('ch-b', limits)
   check('isolation: ch-a at limit', ra.action === 'limit')
   check('isolation: ch-b unaffected → deliver', rb.action === 'deliver')
+}
+
+// ---------------------------------------------------------------------------
+// isStatusPost — status-post classification (P310)
+// ---------------------------------------------------------------------------
+{
+  // Built-in defaults match observed shapes
+  check('status: ⏳ progress tick matches built-ins', isStatusPost('⏳ Still working... (12 min elapsed — iteration 34/90)'))
+  check('status: (no content) matches built-ins', isStatusPost('(no content)'))
+  check('status: empty body matches built-ins', isStatusPost(''))
+  check('status: whitespace-only body matches built-ins', isStatusPost('   '))
+  check('status: substantive message does not match', !isStatusPost('Can you review PR #2? The fraud-scoring change is ready.'))
+  check('status: hourglass mid-sentence does not match (anchored)', !isStatusPost('the ⏳ emoji means waiting'))
+}
+{
+  // Explicit empty array disables the exemption
+  check('status: [] disables exemption for ⏳ tick', !isStatusPost('⏳ Still working...', []))
+  check('status: [] disables exemption for empty body', !isStatusPost('', []))
+}
+{
+  // Custom patterns replace built-ins; invalid regex skipped silently
+  check('status: custom pattern matches', isStatusPost('HEARTBEAT tick 42', ['^HEARTBEAT ']))
+  check('status: custom patterns replace built-ins', !isStatusPost('⏳ Still working...', ['^HEARTBEAT ']))
+  check('status: invalid regex skipped, valid one still applies', isStatusPost('HEARTBEAT tick', ['[invalid(', '^HEARTBEAT ']))
+  check('status: all-invalid patterns → not status', !isStatusPost('anything', ['[invalid(']))
+}
+{
+  // effectiveStatusPatterns resolution: project > defaults > undefined
+  check('status patterns: none set → undefined (built-ins)', effectiveStatusPatterns({}, {}) === undefined)
+  const viaDefaults = effectiveStatusPatterns({ botPeers: { statusPatterns: ['^A'] } }, {})
+  check('status patterns: defaults win over built-ins', viaDefaults?.length === 1 && viaDefaults[0] === '^A')
+  const viaProject = effectiveStatusPatterns(
+    { botPeers: { statusPatterns: ['^A'] } },
+    { botPeers: { allow: [], statusPatterns: [] } },
+  )
+  check('status patterns: project [] wins over defaults', Array.isArray(viaProject) && viaProject.length === 0)
+}
+{
+  // AC1/AC2: status flood never trips the limit; substantive loop still does
+  const gate = new BotPeerGate(() => 0)
+  const limits = { maxConsecutive: 3, cooldownSeconds: 0 }
+  // Simulate the server path: status posts are dropped before check/recordDelivery
+  const flood = Array.from({ length: 10 }, () => '⏳ Still working... (2 min elapsed)')
+  let delivered = 0
+  for (const body of flood) {
+    if (isStatusPost(body)) continue
+    if (gate.check('ch-s', limits).action === 'deliver') {
+      gate.recordDelivery('ch-s')
+      delivered++
+    }
+  }
+  check('flood: 10 status ticks → 0 counted deliveries', delivered === 0)
+  check('flood: substantive message after flood still delivers', gate.check('ch-s', limits).action === 'deliver')
+
+  // Substantive loop still trips at maxConsecutive
+  let limited = false
+  for (let i = 0; i < 5; i++) {
+    const r = gate.check('ch-s', limits)
+    if (r.action === 'limit') { limited = true; break }
+    gate.recordDelivery('ch-s')
+  }
+  check('flood: substantive loop trips at maxConsecutive=3', limited)
 }
 
 // ---------------------------------------------------------------------------

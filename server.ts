@@ -59,7 +59,7 @@ import { voiceSlashCommands, handleVoiceInteraction } from './src/voice-commands
 import { modelSlashCommands, handleModelInteraction } from './src/model-command.ts'
 import { providerSlashCommands, handleProviderInteraction } from './src/provider-command.ts'
 import { insertVoiceTurn } from './src/voice-db.ts'
-import { BotPeerGate, effectiveBotPeerLimits } from './src/bot-peers.ts'
+import { BotPeerGate, effectiveBotPeerLimits, effectiveStatusPatterns, isStatusPost } from './src/bot-peers.ts'
 
 // Single-source state dir. MCD_CHANNELS_DIR is the multi-channel-discord
 // override and wins; falls back to upstream's DISCORD_STATE_DIR for in-place
@@ -2117,6 +2117,14 @@ async function handleBotInbound(msg: Message): Promise<void> {
 
   // AC3: master channel is always excluded (hard-coded)
   if (cfg.master?.chatId === chatId) return
+
+  // Status/progress posts are invisible to the gate: no counter increment,
+  // no cooldown update, no injection. Attachments make a message substantive
+  // regardless of body.
+  if (msg.attachments.size === 0 && isStatusPost(msg.content, effectiveStatusPatterns(cfg.defaults, project))) {
+    process.stderr.write(`discord: bot-peer status drop msg=${msg.id} chat=${chatId} user=${msg.author.id}\n`)
+    return
+  }
 
   const limits = effectiveBotPeerLimits(cfg.defaults, project)
   const gateResult = botPeerGate.check(chatId, limits)
