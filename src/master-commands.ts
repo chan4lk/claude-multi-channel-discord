@@ -245,7 +245,7 @@ function helpText(prefix: string): string {
     `${prefix} schedule pause/resume/rm <id>          — toggle or delete a schedule`,
     `${prefix} provider <chat_id-or-slug> [--set ALIAS | --clear]    — switch a project to a different provider (or back to Claude subscription)`,
     `${prefix} model    <chat_id-or-slug> [--set NAME [--force] | --clear]    — set or clear the project's --model arg`,
-    `${prefix} progress <chat_id-or-slug> [--set off|edit|post | --clear]    — show/set live tool-call progress mode`,
+    `${prefix} progress <chat_id-or-slug> [--set off|edit|post|phases | --clear]    — show/set live tool-call progress mode`,
     `${prefix} teams-setup <APP_ID> <APP_SECRET>                      — write Teams bot credentials to .env (run without args for instructions)`,
     `${prefix} memory stats                     — show memory counts by type and channel`,
     `${prefix} memory backup                    — trigger immediate R2 backup`,
@@ -2112,8 +2112,8 @@ async function handleProgress(rest: string[], ctx: MasterContext): Promise<strin
   const setMode = typeof flags.set === 'string' ? (flags.set as ProgressMode) : null
   const clear = flags.clear === true
   if (setMode && clear) return 'pass either `--set <mode>` or `--clear`, not both'
-  if (setMode && !['off', 'edit', 'post'].includes(setMode)) {
-    return '`--set` must be one of: `off`, `edit`, `post`'
+  if (setMode && !['off', 'edit', 'post', 'phases'].includes(setMode)) {
+    return '`--set` must be one of: `off`, `edit`, `post`, `phases`'
   }
 
   const config = loadConfig()

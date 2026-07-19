@@ -406,12 +406,16 @@ export function buildAttentionReport(config: ChannelsConfig, deps: AttentionDeps
             const phase = ss.phase ?? 'unknown'
             const tasksDone = ss.tasksDone ?? 0
             const tasksTotal = ss.tasksTotal ?? 0
+            const summary =
+              tasksTotal > 0 && tasksDone === tasksTotal
+                ? `specclaw change ${ss.activeChange} tasks complete (${tasksDone}/${tasksTotal}), phase not advanced — verify/pr may be pending; idle ${age}`
+                : `specclaw change ${ss.activeChange} (${phase}, ${tasksDone}/${tasksTotal}) idle ${age}`
             items.push({
               slug,
               chatId,
               severity: 'info',
               kind: 'specclaw-idle',
-              summary: `specclaw change ${ss.activeChange} (${phase}, ${tasksDone}/${tasksTotal}) idle ${age}`,
+              summary,
             })
           }
         } catch {

@@ -12,8 +12,8 @@
 | Spec | ✅ Complete | 8 FRs, 8 ACs |
 | Design | ✅ Complete | BotPeerGate module; server.ts thin wiring |
 | Tasks | ✅ Complete | 5 tasks, 3 waves |
-| Build | ⏳ Pending | |
-| Verify | ⏳ Pending | |
+| Build | ✅ Complete | 5/5 tasks (built 2026-07-16; status was stale) |
+| Verify | ✅ Passed | 8/8 ACs (retroactive 2026-07-18) |
 
 ## Task Progress
 

@@ -100,6 +100,7 @@ const BotPeersSchema = z.object({
   allow: z.array(z.string().regex(/^\d{17,20}$/, 'each bot-peer id must be a Discord snowflake (17-20 digits)')),
   maxConsecutive: z.number().int().positive().optional(),
   cooldownSeconds: z.number().int().positive().optional(),
+  statusPatterns: z.array(z.string()).optional(),
 })
 export type BotPeers = z.infer<typeof BotPeersSchema>
 
@@ -110,6 +111,7 @@ export type BotPeers = z.infer<typeof BotPeersSchema>
 const BotPeerLimitsSchema = z.object({
   maxConsecutive: z.number().int().positive().optional(),
   cooldownSeconds: z.number().int().positive().optional(),
+  statusPatterns: z.array(z.string()).optional(),
 })
 export type BotPeerLimits = z.infer<typeof BotPeerLimitsSchema>
 

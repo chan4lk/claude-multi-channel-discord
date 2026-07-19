@@ -1504,6 +1504,30 @@ const apChatId = '888888888888888888'
   )
 }
 
+// --- progress --set phases (P309) ------------------------------------------
+{
+  const setPhases = await handleMasterCommand('!project progress ap-test --set phases', mctx())
+  check(
+    'progress --set phases: success reply',
+    setPhases.kind === 'reply' && setPhases.text.includes('`phases`'),
+    setPhases.kind === 'reply' ? setPhases.text : setPhases.kind,
+  )
+  check(
+    'progress --set phases: persisted to channels.json',
+    loadConfig().projects[apChatId]?.progressMode === 'phases',
+  )
+  const setBogus = await handleMasterCommand('!project progress ap-test --set bogus', mctx())
+  check(
+    'progress --set bogus: rejected with 4-value error',
+    setBogus.kind === 'reply' &&
+      setBogus.text.includes('`off`') &&
+      setBogus.text.includes('`edit`') &&
+      setBogus.text.includes('`post`') &&
+      setBogus.text.includes('`phases`'),
+    setBogus.kind === 'reply' ? setBogus.text : setBogus.kind,
+  )
+}
+
 // Restore config after autopilot tests
 saveConfig(config)
 

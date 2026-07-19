@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { countCheckboxes } from './backlog.ts'
 
 export interface SpecclawStatus {
   present: boolean
@@ -89,6 +90,18 @@ export function buildSpecclawResumeBlock(projectCwd: string): string {
   const counts = ss.tasksDone !== undefined && ss.tasksTotal !== undefined
     ? `, ${ss.tasksDone}/${ss.tasksTotal} tasks done`
     : ''
+  const allDone =
+    ss.tasksDone !== undefined && ss.tasksTotal !== undefined &&
+    ss.tasksTotal > 0 && ss.tasksDone === ss.tasksTotal
+  if (allDone) {
+    return [
+      'SPECCLAW RESUME: This project uses specclaw. Authoritative state is on disk, not in this brief.',
+      `Active change: ${ss.activeChange} (${phase}${counts}).`,
+      'All build tasks are complete — do NOT re-run /specclaw:build.',
+      `Read .specclaw/changes/${ss.activeChange}/status.md, then run /specclaw:verify (and /specclaw:pr once verified).`,
+      'Do not re-run /specclaw:propose or /specclaw:plan for this change.',
+    ].join('\n')
+  }
   return [
     'SPECCLAW RESUME: This project uses specclaw. Authoritative state is on disk, not in this brief.',
     `Active change: ${ss.activeChange} (${phase}${counts}).`,
@@ -156,6 +169,17 @@ export function readSpecclawStatus(projectCwd: string): SpecclawStatus {
   if (tasksTotal !== undefined) result.tasksTotal = tasksTotal
   if (failedTasks !== undefined) result.failedTasks = failedTasks
   if (pendingProposals !== undefined) result.pendingProposals = pendingProposals
+
+  // STATUS.md is only as fresh as the last dashboard regeneration; tasks.md is
+  // the ground truth during an active build. Live checkbox counts win when the
+  // file has at least one task line (missing/empty file keeps dashboard counts).
+  if (activeChange !== undefined) {
+    const live = countCheckboxes(join(projectCwd, '.specclaw', 'changes', activeChange, 'tasks.md'))
+    if (live.total >= 1) {
+      result.tasksDone = live.done
+      result.tasksTotal = live.total
+    }
+  }
 
   // FR3: resolve phase from change's status.md
   if (activeChange !== undefined) {

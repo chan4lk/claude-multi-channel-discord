@@ -97,7 +97,7 @@ export function snapshotBacklog(
 }
 
 /** Count done / total checkbox lines in a single file. */
-function countCheckboxes(filePath: string): { done: number; total: number } {
+export function countCheckboxes(filePath: string): { done: number; total: number } {
   if (!existsSync(filePath)) return { done: 0, total: 0 }
   let done = 0
   let total = 0

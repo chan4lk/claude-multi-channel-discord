@@ -9,11 +9,11 @@
 // Structural type compatible with channels-config.ts ProjectSchema and DefaultsSchema
 // without importing them (T1 is parallel; we accept duck-typed params).
 export interface BotPeersLimitsConfig {
-  botPeers?: { maxConsecutive?: number; cooldownSeconds?: number }
+  botPeers?: { maxConsecutive?: number; cooldownSeconds?: number; statusPatterns?: string[] }
 }
 
 export interface BotPeersProjectConfig {
-  botPeers?: { allow?: string[]; maxConsecutive?: number; cooldownSeconds?: number }
+  botPeers?: { allow?: string[]; maxConsecutive?: number; cooldownSeconds?: number; statusPatterns?: string[] }
 }
 
 export interface EffectiveLimits {
@@ -42,6 +42,47 @@ export function effectiveBotPeerLimits(
       config.botPeers?.cooldownSeconds ??
       DEFAULT_COOLDOWN_SECONDS,
   }
+}
+
+/**
+ * Built-in status-post shapes observed in the wild (finaudit 2026-07-18):
+ * automated progress ticks, placeholder bodies, and empty messages. Anchored
+ * so ordinary prose that merely mentions an hourglass still counts.
+ */
+export const DEFAULT_STATUS_PATTERNS: string[] = [
+  '^\\s*$',
+  '^⏳',
+  '^\\(no content\\)$',
+]
+
+/**
+ * Resolve the effective status-pattern list: project > defaults > undefined.
+ * `undefined` means "use built-ins"; an explicit empty array disables the
+ * exemption entirely.
+ */
+export function effectiveStatusPatterns(
+  config: BotPeersLimitsConfig,
+  project: BotPeersProjectConfig,
+): string[] | undefined {
+  return project.botPeers?.statusPatterns ?? config.botPeers?.statusPatterns
+}
+
+/**
+ * True when the message body is a status/progress post that must be invisible
+ * to the gate: no counter increment, no cooldown update, no injection.
+ * Invalid regex strings are skipped; a too-broad pattern would re-open loop
+ * risk, so callers should keep patterns anchored.
+ */
+export function isStatusPost(content: string, patterns?: string[]): boolean {
+  const list = patterns ?? DEFAULT_STATUS_PATTERNS
+  for (const src of list) {
+    try {
+      if (new RegExp(src, 'u').test(content)) return true
+    } catch {
+      // invalid pattern — skip it, keep checking the rest
+    }
+  }
+  return false
 }
 
 export type GateResult =

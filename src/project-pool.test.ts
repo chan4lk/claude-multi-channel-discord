@@ -301,6 +301,25 @@ function envelope(content: string): InboundEnvelope {
     ),
   )
 
+  // P312: episodeStartMs is the pending-turn start, stable across poll cycles
+  const firstSkip = events.find((e) => e.kind === 'progress-skip')
+  check(
+    '9b: progress-skip carries episodeStartMs = turn start',
+    firstSkip?.kind === 'progress-skip' && firstSkip.episodeStartMs === 1_000_000,
+    firstSkip?.kind === 'progress-skip' ? String(firstSkip.episodeStartMs) : 'no event',
+  )
+  now += 60_000
+  created[0]!.setTranscriptMtimeMs(now - 30_000)
+  pool.evictIdle()
+  await sleep(5)
+  const skips = events.filter((e) => e.kind === 'progress-skip')
+  check(
+    '9c: second poll same turn → same episodeStartMs',
+    skips.length >= 2 &&
+      skips.every((e) => e.kind === 'progress-skip' && e.episodeStartMs === 1_000_000),
+    skips.map((e) => (e.kind === 'progress-skip' ? e.episodeStartMs : '?')).join(','),
+  )
+
   await pool.shutdown()
 }
 

@@ -1,13 +1,13 @@
 # Goals: claude-mcd
 
 ## Scheduling
-- **Recommended interval:** 295 min
-- **Peak hour:** 06:00 UTC
-- **Avg turns/day:** 4.9
-- **Last updated:** 2026-07-17T02:01:08.611Z
+- **Recommended interval:** 306 min
+- **Peak hour:** 13:00 UTC
+- **Avg turns/day:** 4.7
+- **Last updated:** 2026-07-18T02:01:41.857Z
 
 ## Proposals
-- [ ] bot-peer-dialogue
+- [x] bot-peer-dialogue
 - [ ] cross-project-dialogue
 - [ ] heartbeat-attention-report
 - [ ] idle-gated-schedules
