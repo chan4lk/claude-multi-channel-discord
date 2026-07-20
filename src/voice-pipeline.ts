@@ -9,20 +9,49 @@ import {
   type VoiceConnection,
   type AudioPlayer,
 } from '@discordjs/voice'
-import { OpusEncoder } from '@discordjs/opus'
+import type { OpusEncoder } from '@discordjs/opus'
 import { writeFileSync, readFileSync, readdirSync, mkdirSync, existsSync, unlinkSync, createReadStream } from 'node:fs'
 import { resolve, join, relative } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
+import { createRequire } from 'node:module'
 import type { VoiceProjectConfig } from './channels-config.ts'
+
+// @discordjs/opus is a native addon (node-pre-gyp). Its prebuilt binary is not
+// always present for the running platform/ABI (e.g. Bun on macOS arm64), and a
+// bare `import` would throw at module load and crash the entire bot before it
+// ever connects to Discord. Load it lazily so a missing binary just disables
+// voice instead of taking the whole process down. `undefined` = not yet probed,
+// `null` = probed and unavailable.
+type OpusEncoderCtor = new (rate: number, channels: number) => OpusEncoder
+const requireOpus = createRequire(import.meta.url)
+let opusCtor: OpusEncoderCtor | null | undefined
+function getOpusEncoderCtor(): OpusEncoderCtor | null {
+  if (opusCtor === undefined) {
+    try {
+      opusCtor = requireOpus('@discordjs/opus').OpusEncoder as OpusEncoderCtor
+    } catch (err) {
+      opusCtor = null
+      process.stderr.write(`voice: @discordjs/opus native binary unavailable — voice disabled: ${(err as Error).message}\n`)
+    }
+  }
+  return opusCtor
+}
+
+/** True when the @discordjs/opus native addon loads — i.e. audio voice can run. */
+export function isVoiceAvailable(): boolean {
+  return getOpusEncoderCtor() !== null
+}
 
 function voicePython(): string {
   return process.env.MCD_VOICE_PYTHON ?? `${homedir()}/.openclaw/voice-venv/bin/python`
 }
 
 function decodeOpusFramesToPcm16Mono(frames: Buffer[]): Buffer {
-  const encoder = new OpusEncoder(48000, 2)
+  const Ctor = getOpusEncoderCtor()
+  if (!Ctor) return Buffer.alloc(0)
+  const encoder = new Ctor(48000, 2)
   const decoded: Buffer[] = []
   for (const frame of frames) {
     try { decoded.push(encoder.decode(frame)) } catch { /* skip malformed */ }
@@ -296,7 +325,12 @@ export class VoicePipeline {
       return
     }
 
-    session.realtimeEncoder = new OpusEncoder(48000, 2)
+    const Ctor = getOpusEncoderCtor()
+    if (!Ctor) {
+      process.stderr.write(`voice: opus unavailable — cannot start realtime session in guild ${session.guildId}\n`)
+      return
+    }
+    session.realtimeEncoder = new Ctor(48000, 2)
     session.realtimeAudioChunks = []
 
     const realtimeModel = process.env.MCD_REALTIME_MODEL ?? 'gpt-realtime'

@@ -54,7 +54,7 @@ import { MemoryStore } from './src/memory-store.ts'
 import { backupMemory, type R2Config } from './src/memory-backup.ts'
 import { Scheduler } from './src/scheduler.ts'
 import { HealthAlertMonitor } from './src/health-alert-monitor.ts'
-import { VoicePipeline } from './src/voice-pipeline.ts'
+import { VoicePipeline, isVoiceAvailable } from './src/voice-pipeline.ts'
 import { voiceSlashCommands, handleVoiceInteraction } from './src/voice-commands.ts'
 import { modelSlashCommands, handleModelInteraction } from './src/model-command.ts'
 import { providerSlashCommands, handleProviderInteraction } from './src/provider-command.ts'
@@ -1646,6 +1646,11 @@ async function maybeInitProjectsBackend(): Promise<void> {
   })
   healthAlertMonitor.start()
 
+  if (!isVoiceAvailable()) {
+    process.stderr.write('discord: voice pipeline disabled (@discordjs/opus native binary unavailable)\n')
+    return
+  }
+
   voicePipeline = new VoicePipeline({
     onTurnComplete: async (result) => {
       try {
@@ -2374,7 +2379,8 @@ async function handleInbound(msg: Message): Promise<void> {
 }
 
 function registerVoiceCommands(guild: Guild) {
-  guild.commands.set([...voiceSlashCommands, ...modelSlashCommands, ...providerSlashCommands]).catch(err => {
+  const voiceCmds = isVoiceAvailable() ? voiceSlashCommands : []
+  guild.commands.set([...voiceCmds, ...modelSlashCommands, ...providerSlashCommands]).catch(err => {
     process.stderr.write(`discord: failed to register slash commands in guild ${guild.id}: ${err}\n`)
   })
 }
