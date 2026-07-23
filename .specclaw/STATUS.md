@@ -1,7 +1,7 @@
 # 🦞 SpecClaw Dashboard
 
 **Project:** claude-mcd
-**Last Updated:** 2026-07-18 17:04 UTC
+**Last Updated:** 2026-07-23 04:23 UTC
 
 ## Active Changes
 
@@ -14,6 +14,7 @@
 - ✅ **idle-gated-schedules** — 4/4 tasks (100%) | 0 failed
 - ✅ **loop-halt-escalation** — 4/4 tasks (100%) | 0 failed
 - ✅ **mcd-reliability-fixes** — 5/5 tasks (100%) | 0 failed
+- ✅ **orphan-session-sweep** — 4/4 tasks (100%) | 0 failed
 - ✅ **pr-credential-store** — 5/5 tasks (100%) | 0 failed
 - ✅ **progress-mode-phases** — 6/6 tasks (100%) | 0 failed
 - ✅ **progress-set-phases** — 2/2 tasks (100%) | 0 failed
@@ -35,6 +36,6 @@ _None._
 
 ## Stats
 
-- **Total changes:** 18
-- **Active:** 16
+- **Total changes:** 19
+- **Active:** 17
 - **Completed:** 2
