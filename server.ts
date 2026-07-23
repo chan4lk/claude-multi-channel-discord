@@ -47,6 +47,7 @@ import { chunk as chunkText, DISCORD_HARD_CHUNK_LIMIT } from './src/discord-chun
 import { handleMasterCommand } from './src/master-commands.ts'
 import { MasterMcpServer } from './src/master-mcp-server.ts'
 import { ProjectPool } from './src/project-pool.ts'
+import { sweepOrphanSessions, type SweepResult } from './src/orphan-sweep.ts'
 import type { OutboundReply, ToolProgressEvent } from './src/project-process.ts'
 import { projectDir, memoryDbFile, channelsDir } from './src/paths.ts'
 import { detectSpecclawHalt } from './src/specclaw-status.ts'
@@ -2385,12 +2386,42 @@ function registerVoiceCommands(guild: Guild) {
   })
 }
 
+// Boot-time orphan sweep — kill stale `mcd-<slug>-<ts>` tmux sessions leaked
+// by previous server generations. Must run before login: the pool only spawns
+// on inbound messages, so pre-login is strictly before any spawn.
+let orphanSweepResult: SweepResult | null = null
+try {
+  if (loadChannelsConfig().defaults.orphanSweep !== false) {
+    orphanSweepResult = sweepOrphanSessions()
+  } else {
+    process.stderr.write('orphan-sweep: disabled\n')
+  }
+} catch (err) {
+  process.stderr.write(`orphan-sweep: skipped — ${err}\n`)
+}
+
 // clientReady fires after all GUILD_CREATE events — guilds.cache is fully populated here
 // (the deprecated 'ready' alias fires on the gateway READY packet, before guilds are cached)
 client.once('clientReady', c => {
   process.stderr.write(`discord channel: gateway connected as ${c.user.tag}\n`)
   process.stderr.write(`discord: registering slash commands in ${c.guilds.cache.size} guild(s)\n`)
   c.guilds.cache.forEach(guild => registerVoiceCommands(guild))
+  if (orphanSweepResult && orphanSweepResult.killed.length > 0) {
+    const n = orphanSweepResult.killed.length
+    void (async () => {
+      try {
+        const masterChatId = loadChannelsConfig().master?.chatId
+        if (!masterChatId) return
+        const ch = await client.channels.fetch(masterChatId)
+        if (!ch || !('send' in ch)) return
+        await (ch as import('discord.js').TextChannel).send({
+          content: `🧹 orphan sweep: killed ${n} stale claude session${n === 1 ? '' : 's'} from a previous server generation`,
+        })
+      } catch (err) {
+        process.stderr.write(`orphan-sweep: summary post failed: ${err}\n`)
+      }
+    })()
+  }
 })
 
 // Also register when bot joins a new guild
