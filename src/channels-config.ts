@@ -326,6 +326,12 @@ const DefaultsSchema = z.object({
   provider: z.string().optional(),
   /** Global default for progressMode. Projects can override per-channel. */
   progressMode: ProgressModeSchema.default('off'),
+  /**
+   * Kill stale `mcd-<slug>-<ts>` tmux sessions from previous server
+   * generations on boot. Disable when multiple MCD instances share one
+   * tmux server. Absent ⇒ enabled.
+   */
+  orphanSweep: z.boolean().optional(),
   /** Global default for per-project `handoff`. Off unless opted in. */
   handoff: z.boolean().default(false),
   /** Default context-warning threshold % (0–100). Default 80. */
