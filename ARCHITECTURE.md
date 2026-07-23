@@ -168,6 +168,10 @@ Lifecycle:
 - **`acceptReply`** — entry point used by the master MCP server's `reply` callback. Looks up the matching process, calls its internal `acceptReply` to bump activity and fan out, which itself fires the pool's `onReply` (the canonical Discord-dispatch path).
 - **`snapshot()`** — used by `!project usage`. Iterates tracked processes and calls each `getStats()` best-effort.
 
+### Orphan session sweep (`src/orphan-sweep.ts`)
+
+The pool's map is in-memory and tmux sessions are detached, so a server restart orphans the whole previous generation of `mcd-<slug>-<ts>` sessions — invisible to idle-evict and the watchdog. At boot, before `client.login()` (and therefore before the pool can spawn anything), `sweepOrphanSessions()` lists tmux sessions and kills every name matching `/^mcd-.+-[a-z0-9]{4,12}$/` — a fresh server owns none, so every match is a leftover. The bare `mcd` server session has no timestamp tail and never matches. Kills are logged to stderr; a summary posts to the master channel on `clientReady` when ≥1 died. tmux errors (no server, no sessions) mean "nothing to sweep", never a boot failure. `defaults.orphanSweep: false` disables it — required if multiple MCD instances share one tmux server. `findOrphanSessions()` is pure and covered by `src/orphan-sweep.test.ts`.
+
 ### `SharedLearnings` (`src/shared-learnings.ts`)
 
 Manages `<MCD_CHANNELS_DIR>/shared/learnings.md` — a markdown log shared across all project sessions that have peer access. No database; the file is human-editable and grep-able.

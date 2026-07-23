@@ -165,6 +165,12 @@ Each `ClaudeProjectProcess` captures the claude session UUID after TUI-ready by 
 
 ---
 
+## Orphan session sweep (boot)
+
+Server restarts used to leak one warm claude subprocess per active channel: the pool's session map is in-memory, tmux sessions are detached, and session names embed a spawn timestamp, so a new server generation spawns fresh sessions and the old ones run forever (observed 2026-07-23: 17 orphans, ~4.9GB RSS). On boot — before `client.login()`, so strictly before any spawn — `sweepOrphanSessions()` (`src/orphan-sweep.ts`) kills every tmux session matching `mcd-<slug>-<base36ts>`; a fresh server owns none, so all matches are orphans. Conversations resume via `.session-id` on next message, same as idle-evict. When ≥1 killed, a `🧹 orphan sweep: ...` summary posts to the master channel on ready. Opt out with `defaults.orphanSweep: false` (required when multiple MCD instances share one tmux server).
+
+---
+
 ## Watchdog (stuck-agent protection)
 
 `ClaudeProjectProcess` runs a stuck-watchdog timer (5 min threshold). A "stuck" check now AND-gates two conditions before killing:
