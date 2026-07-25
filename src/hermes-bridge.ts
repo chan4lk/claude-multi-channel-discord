@@ -14,7 +14,7 @@ export function newRunId(): string {
 export function wrapHermesPrompt(
   rawPrompt: string,
   runId: string,
-  masterChatId: string,
+  reportChatId: string,
   opts?: { report?: boolean },
 ): string {
   const report = opts?.report !== false
@@ -28,7 +28,7 @@ export function wrapHermesPrompt(
   if (report) {
     parts.push('')
     parts.push(
-      `When finished, report the outcome by running: hermes send --to discord:${masterChatId} "[hermes:${runId}] <one-line outcome>"`,
+      `When finished, report the outcome by running: hermes send --to discord:${reportChatId} "[hermes:${runId}] <one-line outcome>"`,
     )
   }
   return parts.join('\n')
@@ -52,11 +52,14 @@ export function launchHermesRun(opts: {
   prompt: string
   cfg: HermesConfig
   masterChatId: string
+  /** Channel the run reports back to. Defaults to masterChatId. */
+  reportChatId?: string
   model?: string
   report?: boolean
   spawnFn?: typeof nodeSpawn
 }): { runId: string; logPath: string } {
   const { prompt, cfg, masterChatId, model, report, spawnFn = nodeSpawn } = opts
+  const reportChatId = opts.reportChatId ?? masterChatId
 
   if (!cfg.enabled) {
     throw new Error('hermes bridge disabled')
@@ -75,7 +78,7 @@ export function launchHermesRun(opts: {
 
   const fd = openSync(logPath, 'a')
 
-  const wrappedPrompt = wrapHermesPrompt(prompt, runId, masterChatId, { report })
+  const wrappedPrompt = wrapHermesPrompt(prompt, runId, reportChatId, { report })
   const argv = buildHermesArgv(cfg, wrappedPrompt, { model })
 
   let child: ReturnType<typeof nodeSpawn>
@@ -109,6 +112,7 @@ export function launchHermesRun(opts: {
     pid: child.pid ?? null,
     startedAt: new Date().toISOString(),
     masterChatId,
+    reportChatId,
   }
   writeFileSync(metaPath, JSON.stringify(meta, null, 2) + '\n')
 
