@@ -233,6 +233,8 @@ function helpText(prefix: string): string {
     `${prefix} set    <chat_id-or-slug> --peers <slug,slug,...>     — set cross-project peer allow list (slugs must exist, no self/master)`,
     `${prefix} set    <chat_id-or-slug> --peers none               — remove cross-project peer allow list`,
     `${prefix} set    <chat_id-or-slug> --autopilot on|off [--seed "<goal>"] [--autopilot-interval N] [--backlog-file <path>]  — enable/disable backlog autopilot`,
+    `${prefix} set    <chat_id-or-slug> --hermes on --yes             — grant this project's Claude the hermes_run tool (requires --yes)`,
+    `${prefix} set    <chat_id-or-slug> --hermes off                  — revoke the project's hermes access`,
     `${prefix} backlog <chat_id-or-slug>                            — show backlog source, progress, and autopilot state`,
     `${prefix} rename <chat_id-or-slug> --slug NEW                    — rename slug + dir`,
     `${prefix} remote <chat_id-or-slug> [--set URL] [--creds NAME]    — show/set git remote`,
@@ -732,8 +734,25 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
     }
   }
 
-  if (prompt === null && stuckMinutes === null && heartbeatMode === null && heartbeatWindow === null && heartbeatStale === null && goalRaw === null && distillOnStop === null && developBranch === null && prApi === null && botPeersAction === null && peersAction === null && autopilotAction === null && autopilotInterval === null && backlogFile === null) {
-    return '`set` requires `--prompt "..."`, `--stuck-threshold-minutes N`, `--heartbeat-mode <supervised|autonomous>`, `--heartbeat-window <HH:MM-HH:MM>`, `--heartbeat-stale-minutes N`, `--goal "..."`, `--distill-on-stop`, `--develop-branch on|off`, `--pr-token-github <token>`, `--pr-token-azdo <token> --azdo-org X --azdo-project Y`, `--bot-peers <id,...>|none`, `--peers <slug,...>|none`, or `--autopilot on|off [--seed "<goal>"] [--autopilot-interval N] [--backlog-file <path>]`'
+  // --hermes on|off — per-project hermes_run access
+  const hermesRaw = typeof flags['hermes'] === 'string' ? flags['hermes'] : null
+  if (hermesRaw !== null && hermesRaw !== 'on' && hermesRaw !== 'off') {
+    return '`--hermes` must be `on` or `off`'
+  }
+  const hermesAction: 'on' | 'off' | null = hermesRaw as 'on' | 'off' | null
+  if (hermesAction !== null) {
+    // Master already has hermes_run unconditionally — toggling is meaningless
+    if (isMasterChannel(config, entry.chatId)) {
+      return 'master already has hermes access — nothing to change'
+    }
+    // Requires --yes (grants host-level ops reach)
+    if (hermesAction === 'on' && flags.yes !== true) {
+      return '`set --hermes on` requires `--yes` (grants host-level ops reach via the Hermes bridge)'
+    }
+  }
+
+  if (prompt === null && stuckMinutes === null && heartbeatMode === null && heartbeatWindow === null && heartbeatStale === null && goalRaw === null && distillOnStop === null && developBranch === null && prApi === null && botPeersAction === null && peersAction === null && autopilotAction === null && autopilotInterval === null && backlogFile === null && hermesAction === null) {
+    return '`set` requires `--prompt "..."`, `--stuck-threshold-minutes N`, `--heartbeat-mode <supervised|autonomous>`, `--heartbeat-window <HH:MM-HH:MM>`, `--heartbeat-stale-minutes N`, `--goal "..."`, `--distill-on-stop`, `--develop-branch on|off`, `--pr-token-github <token>`, `--pr-token-azdo <token> --azdo-org X --azdo-project Y`, `--bot-peers <id,...>|none`, `--peers <slug,...>|none`, `--autopilot on|off [--seed "<goal>"] [--autopilot-interval N] [--backlog-file <path>]`, or `--hermes on|off`'
   }
 
   const results: string[] = []
@@ -895,6 +914,19 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
       saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: { ...latestEntry, autopilot: updated } } })
       if (autopilotInterval !== null) results.push(`✅ set \`autopilot.intervalMinutes\` = ${autopilotInterval} for **${latestEntry.slug}**.`)
       if (backlogFile !== null) results.push(`✅ set \`autopilot.file\` = "${backlogFile}" for **${latestEntry.slug}**.`)
+    }
+  }
+
+  if (hermesAction !== null) {
+    const latestConfig = loadConfig()
+    const latestEntry = latestConfig.projects[entry.chatId] ?? entry.project
+    if (hermesAction === 'on') {
+      saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: { ...latestEntry, hermes: { enabled: true } } } })
+      results.push(`✅ hermes access **enabled** for **${latestEntry.slug}** — this project's Claude can now launch Hermes runs.`)
+    } else {
+      const { hermes: _removed, ...rest } = latestEntry
+      saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: rest } })
+      results.push(`✅ hermes access **disabled** for **${latestEntry.slug}**.`)
     }
   }
 
