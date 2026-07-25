@@ -14,6 +14,7 @@
 | Tasks | 🟢 Done | 5 tasks, 2 waves |
 | Build | 🟢 Done | 5/5 complete, commits 202bc2b..5882e76 |
 | Verify | ✅ Passed | 6/6 ACs, all suites green, tsc clean |
+| PR | ✅ Raised | https://github.com/chan4lk/claude-multi-channel-discord/pull/316 |
 
 ## Task Progress
 
@@ -24,6 +25,14 @@
 
 | Task | Agent | Model | Status | Duration |
 |------|-------|-------|--------|----------|
+| T1 | coder | claude-fable-5 | complete | 184s |
+| T2 | coder | claude-fable-5 | complete | 77s |
+| T3 | coder | claude-fable-5 | complete | 204s |
+| T4 | coder | claude-fable-5 | complete | 52s |
+| T5 | coder | claude-fable-5 | complete | 421s |
 
 ## Issues
 
+_None._
+
+**PR:** https://github.com/chan4lk/claude-multi-channel-discord/pull/316
