@@ -107,6 +107,7 @@ Tests: `src/master-commands.test.ts`, `src/project-pool.test.ts`, `src/master-mc
 - `defaults.botPeers.{maxConsecutive?, cooldownSeconds?}` — limits-only defaults (no `allow`); built-in fallback is maxConsecutive=5, cooldownSeconds=30
 - `defaults.peers.{maxHops?, cooldownSeconds?}` — limits-only defaults for cross-project dialogue (no `allow`); built-in fallback is maxHops=6, cooldownSeconds=15
 - `projects[*].autopilot.{enabled, file?, intervalMinutes?, stallThreshold?, respectHeartbeatWindow?}` + MCD-maintained runtime (`state`, `seededAt`, `seedGoal`, `lastFireAt`, `zeroDeltaCount`, `lastSnapshot`) — backlog autopilot; `defaults.autopilot.{intervalMinutes?, stallThreshold?}` limits-only (built-in fallback 30 min / 3)
+- `projects[*].backlogWatch.{enabled?, staleBacklogDays?}` + MCD-maintained runtime (`lastSnapshot`, `lastDeltaAt`, `lastAlertAt`) — passive backlog stall watch (on by default when a backlog source exists); `defaults.backlogWatch.{enabled?, staleBacklogDays?}` limits-only (built-in fallback enabled / 3 days)
 
 ---
 
@@ -119,6 +120,12 @@ Tests: `src/master-commands.test.ts`, `src/project-pool.test.ts`, `src/master-mc
 Mutation verbs require `userId ∈ access.allowFrom`. Destructive verbs (`rm`, `rename`, `remote --set`) require `--yes`.
 
 The master project's Claude also exposes `mcp__mcd__run_master_command` so the operator can describe commands in natural language and have master Claude execute them.
+
+---
+
+## Backlog stall watch (passive)
+
+Independent of autopilot: an hourly `Scheduler.registerBacklogWatchSweep()` scans every non-master project with a detectable backlog source (`.specclaw/changes` or `BACKLOG.md`) and alerts the master channel when open items stop moving for `staleBacklogDays` (default 3; values <1 clamp to 3). Skips projects with `autopilot.enabled` (autopilot owns stall escalation there) or `backlogWatch.enabled: false`. Zero delta on the done/total snapshot for a full window ⇒ `📋 **<slug>**: backlog stalled — N open item(s)...` digest naming the open items (cap 10, then `(+N more)`); re-alerts throttled to once per window; any delta clears the alert latch. Runtime (`lastSnapshot`/`lastDeltaAt`/`lastAlertAt`) persists in `channels.json`. Rationale: a dstm-apps backlog item sat "pending merge" 10 days unnoticed (2026-07-25) — activity on other changes masked the stale signal. Pure decision logic in `src/backlog.ts` (`evaluateBacklogWatch`, `listOpenItems`); IO in `src/scheduler.ts`; alert wiring in `server.ts`.
 
 ---
 
