@@ -14,6 +14,7 @@
 | Tasks | ✅ Complete | 5 tasks, 3 waves |
 | Build | ✅ Complete | 5/5 tasks, 0 failed |
 | Verify | ✅ Passed | 8/8 ACs — see verify-report.md |
+| PR | ✅ Raised | https://github.com/chan4lk/claude-multi-channel-discord/pull/317 |
 
 ## Task Progress
 
@@ -39,3 +40,5 @@
 ## Issues
 
 None. Two minor verify notes (CLAUDE.md inline field list — fixed on branch; unknown-target `--hermes` test — accepted, shared code path).
+
+**PR:** https://github.com/chan4lk/claude-multi-channel-discord/pull/317
