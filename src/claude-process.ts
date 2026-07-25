@@ -1129,7 +1129,9 @@ export class ClaudeProjectProcess implements ProjectProcess {
     const poll = () => {
       if (!this._alive) return
       this.pollSpecclawProgress()
-      if (this.toolProgressHandlers.size === 0 && this.limitHitHandlers.size === 0) return
+      // Keep parsing while a deliver is pending even with zero handlers
+      // (progressMode off) — turn-completion detection needs the lines.
+      if (this.toolProgressHandlers.size === 0 && this.limitHitHandlers.size === 0 && this._pendingDeliverAt === null) return
       const sessionId = this.resolveSessionId()
       if (!sessionId || !this.projectCwd) return
       const path = join(homedir(), '.claude', 'projects', encodeProjectCwd(this.projectCwd), `${sessionId}.jsonl`)
@@ -1172,6 +1174,11 @@ export class ClaudeProjectProcess implements ProjectProcess {
             this.lastLimitRaw = text
             this.fireLimitHit(parseLimitMessage(text))
           }
+        }
+        if ((rec as any).type === 'system' && (rec as any).subtype === 'turn_duration') {
+          const d = (rec as any).durationMs
+          this.noteTurnComplete(typeof d === 'number' ? d : null)
+          continue
         }
         const msg = obj.message as { role?: string; content?: unknown[] } | undefined
         if (!msg) continue
@@ -1227,6 +1234,23 @@ export class ClaudeProjectProcess implements ProjectProcess {
     this._lastActivity = now
     this._pendingDeliverAt = null
     for (const h of this.replyHandlers) h(reply)
+  }
+
+  /**
+   * Called by the transcript watcher when a `turn_duration` system event
+   * lands. A turn that ends without a reply tool call (e.g. a heartbeat
+   * answered with "no reply") must not leave the pending-deliver flag
+   * armed, or the watchdog kills a healthy idle session (observed as an
+   * hourly kill-loop 2026-07-25).
+   */
+  private noteTurnComplete(durationMs: number | null): void {
+    if (this._pendingDeliverAt === null) return
+    const duration = durationMs ?? (Date.now() - this._pendingDeliverAt)
+    this.turnHistory.push(duration)
+    if (this.turnHistory.length > MAX_TURN_HISTORY) this.turnHistory.shift()
+    this._pendingDeliverAt = null
+    this._lastActivity = Date.now()
+    this.log('turn-complete (no reply)')
   }
 
   adaptiveThresholdMs(baseMs: number): number {
