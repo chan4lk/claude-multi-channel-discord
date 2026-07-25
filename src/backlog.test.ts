@@ -14,6 +14,8 @@ import {
   buildNudgePrompt,
   withinWindow,
   nextAutopilotAction,
+  evaluateBacklogWatch,
+  listOpenItems,
 } from './backlog.ts'
 
 let failed = 0
@@ -502,9 +504,239 @@ function baseAutopilot(overrides: Partial<import('./channels-config.ts').Autopil
 }
 
 // ---------------------------------------------------------------------------
+// evaluateBacklogWatch — AC1 matrix
+// ---------------------------------------------------------------------------
+
+const DAY_MS = 86_400_000
+const T0 = Date.parse('2026-07-01T00:00:00.000Z')
+
+// 51: first observation (no runtime) → init, clock set
+{
+  const { action, patch } = evaluateBacklogWatch({
+    snap: { done: 1, total: 5 },
+    runtime: {},
+    staleBacklogDays: 3,
+    nowMs: T0,
+  })
+  check('watch-51: no runtime → init', action.kind === 'init')
+  check('watch-51b: init patch lastSnapshot = snap',
+    patch.lastSnapshot?.done === 1 && patch.lastSnapshot?.total === 5)
+  check('watch-51c: init patch lastDeltaAt = iso(now)',
+    patch.lastDeltaAt === new Date(T0).toISOString())
+}
+
+// 52: lastSnapshot present but lastDeltaAt missing → still init
+{
+  const { action } = evaluateBacklogWatch({
+    snap: { done: 1, total: 5 },
+    runtime: { lastSnapshot: { done: 1, total: 5 } },
+    staleBacklogDays: 3,
+    nowMs: T0,
+  })
+  check('watch-52: missing lastDeltaAt → init', action.kind === 'init')
+}
+
+// 53: done changed → delta, latch cleared
+{
+  const { action, patch } = evaluateBacklogWatch({
+    snap: { done: 2, total: 5 },
+    runtime: {
+      lastSnapshot: { done: 1, total: 5 },
+      lastDeltaAt: new Date(T0).toISOString(),
+      lastAlertAt: new Date(T0 + 3 * DAY_MS).toISOString(),
+    },
+    staleBacklogDays: 3,
+    nowMs: T0 + 4 * DAY_MS,
+  })
+  check('watch-53: done change → delta', action.kind === 'delta')
+  check('watch-53b: delta patch lastSnapshot updated',
+    patch.lastSnapshot?.done === 2 && patch.lastSnapshot?.total === 5)
+  check('watch-53c: delta patch lastDeltaAt = iso(now)',
+    patch.lastDeltaAt === new Date(T0 + 4 * DAY_MS).toISOString())
+  check('watch-53d: delta clears latch (explicit lastAlertAt undefined key)',
+    'lastAlertAt' in patch && patch.lastAlertAt === undefined)
+}
+
+// 54: total changed (new items) → delta
+{
+  const { action } = evaluateBacklogWatch({
+    snap: { done: 1, total: 7 },
+    runtime: { lastSnapshot: { done: 1, total: 5 }, lastDeltaAt: new Date(T0).toISOString() },
+    staleBacklogDays: 3,
+    nowMs: T0 + DAY_MS,
+  })
+  check('watch-54: total change → delta', action.kind === 'delta')
+}
+
+// 55: unchanged, stale below threshold → none, empty patch
+{
+  const { action, patch } = evaluateBacklogWatch({
+    snap: { done: 1, total: 5 },
+    runtime: { lastSnapshot: { done: 1, total: 5 }, lastDeltaAt: new Date(T0).toISOString() },
+    staleBacklogDays: 3,
+    nowMs: T0 + Math.floor(2.9 * DAY_MS),
+  })
+  check('watch-55: below threshold → none', action.kind === 'none')
+  check('watch-55b: below threshold → empty patch', Object.keys(patch).length === 0)
+}
+
+// 56: unchanged, stale past threshold → alert with openCount + staleDays
+{
+  const { action, patch } = evaluateBacklogWatch({
+    snap: { done: 3, total: 5 },
+    runtime: { lastSnapshot: { done: 3, total: 5 }, lastDeltaAt: new Date(T0).toISOString() },
+    staleBacklogDays: 3,
+    nowMs: T0 + 3 * DAY_MS,
+  })
+  check('watch-56: past threshold → alert', action.kind === 'alert')
+  if (action.kind === 'alert') {
+    check('watch-56b: alert openCount = 2', action.openCount === 2)
+    check('watch-56c: alert staleDays = 3', action.staleDays === 3)
+  }
+  check('watch-56d: alert patch lastAlertAt = iso(now)',
+    patch.lastAlertAt === new Date(T0 + 3 * DAY_MS).toISOString())
+}
+
+// 57: second evaluate inside alert window → none (throttled)
+{
+  const { action, patch } = evaluateBacklogWatch({
+    snap: { done: 3, total: 5 },
+    runtime: {
+      lastSnapshot: { done: 3, total: 5 },
+      lastDeltaAt: new Date(T0).toISOString(),
+      lastAlertAt: new Date(T0 + 3 * DAY_MS).toISOString(),
+    },
+    staleBacklogDays: 3,
+    nowMs: T0 + 4 * DAY_MS,  // only 1 day since last alert
+  })
+  check('watch-57: inside alert window → none (throttled)',
+    action.kind === 'none' && Object.keys(patch).length === 0)
+}
+
+// 58: full window after last alert → alert again
+{
+  const { action } = evaluateBacklogWatch({
+    snap: { done: 3, total: 5 },
+    runtime: {
+      lastSnapshot: { done: 3, total: 5 },
+      lastDeltaAt: new Date(T0).toISOString(),
+      lastAlertAt: new Date(T0 + 3 * DAY_MS).toISOString(),
+    },
+    staleBacklogDays: 3,
+    nowMs: T0 + 6 * DAY_MS,  // 3 days since last alert
+  })
+  check('watch-58: alert window elapsed → alert again', action.kind === 'alert')
+}
+
+// 59: zero open items, however stale → never alert
+{
+  const { action, patch } = evaluateBacklogWatch({
+    snap: { done: 5, total: 5 },
+    runtime: { lastSnapshot: { done: 5, total: 5 }, lastDeltaAt: new Date(T0).toISOString() },
+    staleBacklogDays: 3,
+    nowMs: T0 + 10 * DAY_MS,
+  })
+  check('watch-59: zero open items stale → none',
+    action.kind === 'none' && Object.keys(patch).length === 0)
+}
+
+// 60: staleBacklogDays=0 clamps to 3
+{
+  const runtime = { lastSnapshot: { done: 1, total: 5 }, lastDeltaAt: new Date(T0).toISOString() }
+  const { action: below } = evaluateBacklogWatch({
+    snap: { done: 1, total: 5 }, runtime, staleBacklogDays: 0, nowMs: T0 + 2 * DAY_MS,
+  })
+  check('watch-60: clamp 0→3 — 2 days stale → none', below.kind === 'none')
+  const { action: past } = evaluateBacklogWatch({
+    snap: { done: 1, total: 5 }, runtime, staleBacklogDays: 0, nowMs: T0 + 3 * DAY_MS,
+  })
+  check('watch-60b: clamp 0→3 — 3 days stale → alert', past.kind === 'alert')
+  if (past.kind === 'alert') {
+    check('watch-60c: alert carries clamped staleDays=3', past.staleDays === 3)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// listOpenItems — AC2
+// ---------------------------------------------------------------------------
+
+// 61: file source — unchecked lines' text, trimmed; checked excluded
+{
+  const dir = tmpProject()
+  writeFileSync(join(dir, 'BACKLOG.md'), [
+    '- [ ] open one',
+    '- [x] done one',
+    '  - [ ]   spaced open  ',
+    '* [ ] star open',
+    'Not a task line',
+  ].join('\n'))
+  const items = listOpenItems(dir, 'file')
+  check('watch-61: file source unchecked texts trimmed',
+    items.length === 3 && items[0] === 'open one' && items[1] === 'spaced open' && items[2] === 'star open',
+    JSON.stringify(items))
+  check('watch-61b: checked lines excluded', !items.some(i => i.includes('done one')))
+  rmSync(dir, { recursive: true, force: true })
+}
+
+// 62: file source — missing file → []
+{
+  const dir = tmpProject()
+  check('watch-62: missing backlog file → []', listOpenItems(dir, 'file').length === 0)
+  rmSync(dir, { recursive: true, force: true })
+}
+
+// 63: specclaw source — not-done change dir names; done + archive excluded
+{
+  const dir = tmpProject()
+  const changesDir = join(dir, '.specclaw', 'changes')
+  mkdirSync(changesDir, { recursive: true })
+  mkdirSync(join(changesDir, 'archive'))
+  writeFileSync(join(changesDir, 'archive', 'tasks.md'), '- [ ] archive task\n')
+  mkdirSync(join(changesDir, 'change-a'))
+  writeFileSync(join(changesDir, 'change-a', 'tasks.md'), '- [x] t1\n- [ ] t2\n')
+  mkdirSync(join(changesDir, 'change-b'))
+  writeFileSync(join(changesDir, 'change-b', 'proposal.md'), '# Proposal B\n')
+  mkdirSync(join(changesDir, 'change-c'))
+  writeFileSync(join(changesDir, 'change-c', 'tasks.md'), '- [x] t1\n- [x] t2\n')
+  const items = listOpenItems(dir, 'specclaw')
+  check('watch-63: specclaw open change names',
+    items.length === 2 && items.includes('change-a') && items.includes('change-b'),
+    JSON.stringify(items))
+  check('watch-63b: done change + archive excluded',
+    !items.includes('change-c') && !items.includes('archive'))
+  rmSync(dir, { recursive: true, force: true })
+}
+
+// 64: specclaw source — missing changes dir → []
+{
+  const dir = tmpProject()
+  check('watch-64: missing .specclaw/changes → []', listOpenItems(dir, 'specclaw').length === 0)
+  rmSync(dir, { recursive: true, force: true })
+}
+
+// 65: cap at 10 + (+N more)
+{
+  const dir = tmpProject()
+  const lines = Array.from({ length: 12 }, (_, i) => `- [ ] item ${i + 1}`)
+  writeFileSync(join(dir, 'BACKLOG.md'), lines.join('\n'))
+  const items = listOpenItems(dir, 'file')
+  check('watch-65: 12 open → 10 entries + overflow marker', items.length === 11, `got ${items.length}`)
+  check('watch-65b: first 10 kept in order', items[0] === 'item 1' && items[9] === 'item 10')
+  check('watch-65c: final entry is (+2 more)', items[10] === '(+2 more)')
+  rmSync(dir, { recursive: true, force: true })
+}
+
+// 66: source=none → []
+{
+  const dir = tmpProject()
+  check('watch-66: source=none → []', listOpenItems(dir, 'none').length === 0)
+  rmSync(dir, { recursive: true, force: true })
+}
+
+// ---------------------------------------------------------------------------
 if (failed > 0) {
   console.error(`\n${failed} test(s) FAILED`)
   process.exit(1)
 } else {
-  console.log(`\nAll ${50} checks passed.`)
+  console.log(`\nAll ${81} checks passed.`)
 }

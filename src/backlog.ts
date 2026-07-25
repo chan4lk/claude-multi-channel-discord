@@ -40,6 +40,12 @@ export type AutopilotAction =
   | { kind: 'rearm' }
   | { kind: 'none' }
 
+export type BacklogWatchAction =
+  | { kind: 'init' }
+  | { kind: 'delta' }
+  | { kind: 'alert'; openCount: number; staleDays: number }
+  | { kind: 'none' }
+
 // ---------------------------------------------------------------------------
 // Source detection
 // ---------------------------------------------------------------------------
@@ -129,18 +135,128 @@ function snapshotSpecclaw(projectCwd: string): { done: number; total: number } {
   }
   for (const name of entries) {
     if (name === 'archive') continue
-    const changeDir = join(changesDir, name)
-    const tasksPath = join(changeDir, 'tasks.md')
-    if (existsSync(tasksPath)) {
-      const counts = countCheckboxes(tasksPath)
-      done += counts.done
-      total += counts.total
-    } else if (existsSync(join(changeDir, 'proposal.md'))) {
-      // Pending proposal with no plan yet → one open item
-      total += 1
-    }
+    const counts = snapshotChangeDir(join(changesDir, name))
+    if (!counts) continue
+    done += counts.done
+    total += counts.total
   }
   return { done, total }
+}
+
+/**
+ * Done / total for a single specclaw change dir.
+ * tasks.md present → its checkbox counts; else proposal.md present (pending
+ * proposal, no plan yet) → one open item; neither → null (not a change dir).
+ */
+function snapshotChangeDir(changeDir: string): { done: number; total: number } | null {
+  const tasksPath = join(changeDir, 'tasks.md')
+  if (existsSync(tasksPath)) return countCheckboxes(tasksPath)
+  if (existsSync(join(changeDir, 'proposal.md'))) return { done: 0, total: 1 }
+  return null
+}
+
+// ---------------------------------------------------------------------------
+// Backlog stall watch
+// ---------------------------------------------------------------------------
+
+/** Fallback stall window when staleBacklogDays is missing/invalid (< 1). */
+const BUILT_IN_STALE_BACKLOG_DAYS = 3
+const DAY_MS = 86_400_000
+/** Max open items returned by listOpenItems before truncating with `(+N more)`. */
+const MAX_OPEN_ITEMS = 10
+
+/**
+ * Pure stall-watch transition. Compares the current snapshot against the
+ * persisted runtime and decides whether to initialize, record movement,
+ * alert on staleness, or do nothing. Callers pass `nowMs` so tests can
+ * inject the clock; no fs, no Date.now().
+ *
+ * A `delta` patch carries an explicit `lastAlertAt: undefined` key so the
+ * sweep deletes the alert latch — a backlog that moves then re-stalls
+ * re-alerts after a fresh full window.
+ */
+export function evaluateBacklogWatch(opts: {
+  snap: { done: number; total: number }
+  runtime: { lastSnapshot?: { done: number; total: number }; lastDeltaAt?: string; lastAlertAt?: string }
+  staleBacklogDays: number
+  nowMs: number
+}): {
+  action: BacklogWatchAction
+  patch: { lastSnapshot?: { done: number; total: number }; lastDeltaAt?: string; lastAlertAt?: string | undefined }
+} {
+  const { snap, runtime, nowMs } = opts
+  const staleDays = opts.staleBacklogDays < 1 ? BUILT_IN_STALE_BACKLOG_DAYS : opts.staleBacklogDays
+  const nowIso = new Date(nowMs).toISOString()
+
+  // First observation — set the clock, no fabricated history
+  if (!runtime.lastSnapshot || !runtime.lastDeltaAt) {
+    return { action: { kind: 'init' }, patch: { lastSnapshot: snap, lastDeltaAt: nowIso } }
+  }
+
+  // Movement — record it and clear the alert latch
+  if (snap.done !== runtime.lastSnapshot.done || snap.total !== runtime.lastSnapshot.total) {
+    return {
+      action: { kind: 'delta' },
+      patch: { lastSnapshot: snap, lastDeltaAt: nowIso, lastAlertAt: undefined },
+    }
+  }
+
+  // Stale check — open items, no movement for a full window, alert window clear
+  const openCount = snap.total - snap.done
+  const windowMs = staleDays * DAY_MS
+  const stale = nowMs - Date.parse(runtime.lastDeltaAt) >= windowMs
+  const alertClear = !runtime.lastAlertAt || nowMs - Date.parse(runtime.lastAlertAt) >= windowMs
+  if (openCount > 0 && stale && alertClear) {
+    return { action: { kind: 'alert', openCount, staleDays }, patch: { lastAlertAt: nowIso } }
+  }
+
+  return { action: { kind: 'none' }, patch: {} }
+}
+
+/**
+ * List the open (not-done) backlog items for an alert digest.
+ *
+ * file flavor: unchecked task lines' text (after the checkbox), trimmed.
+ * specclaw flavor: change dir names that are not done, using the same
+ * classification as snapshotSpecclaw (via snapshotChangeDir).
+ * Capped at 10 entries; when more exist a final `(+N more)` entry is appended.
+ * Any fs error → [].
+ */
+export function listOpenItems(
+  projectCwd: string,
+  source: BacklogSource,
+  file: string = 'BACKLOG.md',
+): string[] {
+  try {
+    let items: string[] = []
+    if (source === 'file') {
+      const filePath = join(projectCwd, file)
+      if (!existsSync(filePath)) return []
+      for (const line of readFileSync(filePath, 'utf8').split('\n')) {
+        const m = TASK_LINE_RE.exec(line)
+        if (!m || m[1].toLowerCase() === 'x') continue
+        items.push(line.slice(m[0].length).trim())
+      }
+    } else if (source === 'specclaw') {
+      const changesDir = join(projectCwd, '.specclaw', 'changes')
+      if (!existsSync(changesDir)) return []
+      for (const name of readdirSync(changesDir)) {
+        if (name === 'archive') continue
+        const counts = snapshotChangeDir(join(changesDir, name))
+        if (counts && counts.done < counts.total) items.push(name)
+      }
+    } else {
+      return []
+    }
+    if (items.length > MAX_OPEN_ITEMS) {
+      const extra = items.length - MAX_OPEN_ITEMS
+      items = items.slice(0, MAX_OPEN_ITEMS)
+      items.push(`(+${extra} more)`)
+    }
+    return items
+  } catch {
+    return []
+  }
 }
 
 // ---------------------------------------------------------------------------
