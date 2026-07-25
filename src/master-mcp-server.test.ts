@@ -345,6 +345,143 @@ check(
 
 await serverHermesDisabled.stop()
 
+// ─── hermes_run project-channel access (AC2–AC5) ──────────────────────────
+// Real launches write run metadata under hermesRunsDir(); point
+// MCD_CHANNELS_DIR at a temp dir for the duration of this block.
+{
+  const { mkdtempSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const hermesTmpDir = mkdtempSync(require('path').join(tmpdir(), 'mcd-hermes-test-'))
+  const origChannelsDir = process.env.MCD_CHANNELS_DIR
+  process.env.MCD_CHANNELS_DIR = hermesTmpDir
+
+  const HPI_MASTER = '990000000000000001'
+  const HPI_ON     = '990000000000000002'  // project with hermes.enabled: true
+  const HPI_OFF    = '990000000000000003'  // project with hermes.enabled: false
+  const HPI_NONE   = '990000000000000004'  // project without a hermes block
+
+  const hpiConfig = {
+    version: 1 as const,
+    master: { chatId: HPI_MASTER, commandPrefix: '!project' },
+    defaults: {
+      model: 'sonnet',
+      idleEvictMinutes: 15,
+      maxConcurrent: 8,
+      git: { userName: 'bot', userEmail: 'bot@local', branchPrefix: 'claude/' },
+      claude: { permissionMode: 'auto' as const },
+      providers: {},
+      progressMode: 'off' as const,
+      handoff: false,
+      contextWarningThresholdPct: 80,
+    },
+    projects: {
+      [HPI_ON]: { slug: 'proj-on', hermes: { enabled: true } },
+      [HPI_OFF]: { slug: 'proj-off', hermes: { enabled: false } },
+      [HPI_NONE]: { slug: 'proj-none' },
+    },
+  } as unknown as import('./channels-config.ts').ChannelsConfig
+
+  const hpiReplies: OutboundReply[] = []
+  const hpiBridgeOn = new MasterMcpServer({
+    onReply: (r) => hpiReplies.push(r),
+    getMasterChatId: () => HPI_MASTER,
+    getHermesConfig: () => enabledHermesCfg,
+    getConfig: () => hpiConfig,
+    hermesSpawnFn: mockSpawn as any,
+    log: () => {},
+  })
+  const hpiBridgeOff = new MasterMcpServer({
+    onReply: (r) => hpiReplies.push(r),
+    getMasterChatId: () => HPI_MASTER,
+    getHermesConfig: () => ({ ...enabledHermesCfg, enabled: false }),
+    getConfig: () => hpiConfig,
+    hermesSpawnFn: mockSpawn as any,
+    log: () => {},
+  })
+  const { host: onH, port: onP } = await hpiBridgeOn.start()
+  const { host: offH, port: offP } = await hpiBridgeOff.start()
+
+  async function hpiTools(srv: MasterMcpServer, h: string, p: number, chatId: string): Promise<string[]> {
+    const list = await rpc(`http://${h}:${p}/mcp/${chatId}`, srv.tokenFor(chatId), 'tools/list', {})
+    return (list.result?.tools ?? []).map((t: { name: string }) => t.name)
+  }
+  async function hpiCall(srv: MasterMcpServer, h: string, p: number, chatId: string, prompt: string) {
+    return rpc(`http://${h}:${p}/mcp/${chatId}`, srv.tokenFor(chatId), 'tools/call', {
+      name: 'hermes_run',
+      arguments: { prompt },
+    })
+  }
+
+  // AC2: tool-list matrix
+  check('AC2: master + bridge-on → hermes_run listed', (await hpiTools(hpiBridgeOn, onH, onP, HPI_MASTER)).includes('hermes_run'))
+  check('AC2: master + bridge-off → hermes_run NOT listed', !(await hpiTools(hpiBridgeOff, offH, offP, HPI_MASTER)).includes('hermes_run'))
+  check('AC2: project flag-on + bridge-on → hermes_run listed', (await hpiTools(hpiBridgeOn, onH, onP, HPI_ON)).includes('hermes_run'))
+  check('AC2: project flag-on + bridge-off → hermes_run NOT listed', !(await hpiTools(hpiBridgeOff, offH, offP, HPI_ON)).includes('hermes_run'))
+  check('AC2: project flag-off + bridge-on → hermes_run NOT listed', !(await hpiTools(hpiBridgeOn, onH, onP, HPI_OFF)).includes('hermes_run'))
+  check('AC2: project no hermes block + bridge-on → hermes_run NOT listed', !(await hpiTools(hpiBridgeOn, onH, onP, HPI_NONE)).includes('hermes_run'))
+
+  // AC3 + AC4 + AC5: master + bridge-on → launched, prompt reports to master, no audit notice
+  spawnCalls.length = 0
+  hpiReplies.length = 0
+  const hpiMasterRes = await hpiCall(hpiBridgeOn, onH, onP, HPI_MASTER, 'restart the mcd server')
+  const hpiMasterText = hpiMasterRes.result?.content?.[0]?.text ?? ''
+  check('AC3: master + bridge-on → launched', !hpiMasterRes.result?.isError && hpiMasterText.includes('launched'), JSON.stringify(hpiMasterRes).slice(0, 200))
+  check('AC3: master + bridge-on → spawnFn called', spawnCalls.length === 1, JSON.stringify(spawnCalls.length))
+  const masterWrapped = spawnCalls[0]?.args[1] ?? ''
+  check('AC4: master run reports to master chat', masterWrapped.includes(`hermes send --to discord:${HPI_MASTER}`), masterWrapped)
+  check('AC5: master launch → no audit notice', hpiReplies.length === 0, JSON.stringify(hpiReplies))
+
+  // AC3 + AC4 + AC5: project flag-on + bridge-on → launched, prompt reports to project, one audit notice
+  spawnCalls.length = 0
+  hpiReplies.length = 0
+  const hpiOnRes = await hpiCall(hpiBridgeOn, onH, onP, HPI_ON, 'deploy the docker image')
+  const hpiOnText = hpiOnRes.result?.content?.[0]?.text ?? ''
+  check('AC3: project flag-on + bridge-on → launched', !hpiOnRes.result?.isError && hpiOnText.includes('launched'), JSON.stringify(hpiOnRes).slice(0, 200))
+  check('AC3: project flag-on + bridge-on → spawnFn called', spawnCalls.length === 1, JSON.stringify(spawnCalls.length))
+  const projWrapped = spawnCalls[0]?.args[1] ?? ''
+  check('AC4: project run reports to project chat', projWrapped.includes(`hermes send --to discord:${HPI_ON}`), projWrapped)
+  check('AC4: project run does NOT report to master chat', !projWrapped.includes(HPI_MASTER), projWrapped)
+  const hpiRunId = /run (h-\S+) launched/.exec(hpiOnText)?.[1] ?? ''
+  check('AC5: project launch → exactly one audit notice to master', hpiReplies.length === 1 && hpiReplies[0]?.chatId === HPI_MASTER, JSON.stringify(hpiReplies))
+  const auditText = hpiReplies[0]?.kind === 'text' ? hpiReplies[0].text : ''
+  check(
+    'AC5: audit notice has runId + slug + prompt preview',
+    hpiRunId.startsWith('h-') && auditText.includes(hpiRunId) && auditText.includes('proj-on') && auditText.includes('deploy the docker image'),
+    auditText,
+  )
+
+  // AC5: prompt longer than 120 chars is truncated to 120 in the notice
+  spawnCalls.length = 0
+  hpiReplies.length = 0
+  const longPrompt = 'x'.repeat(150)
+  await hpiCall(hpiBridgeOn, onH, onP, HPI_ON, longPrompt)
+  const longAudit = hpiReplies[0]?.kind === 'text' ? hpiReplies[0].text : ''
+  check(
+    'AC5: audit notice truncates prompt to 120 chars',
+    hpiReplies.length === 1 && longAudit.includes(`"${'x'.repeat(120)}"`) && !longAudit.includes('x'.repeat(121)),
+    longAudit,
+  )
+
+  // AC3: denied cases — error result, spawnFn NOT called
+  spawnCalls.length = 0
+  hpiReplies.length = 0
+  const hpiOffBridgeMaster = await hpiCall(hpiBridgeOff, offH, offP, HPI_MASTER, 'nope')
+  check('AC3: master + bridge-off → isError', hpiOffBridgeMaster.result?.isError === true, JSON.stringify(hpiOffBridgeMaster).slice(0, 200))
+  const hpiOffBridgeProj = await hpiCall(hpiBridgeOff, offH, offP, HPI_ON, 'nope')
+  check('AC3: project flag-on + bridge-off → isError', hpiOffBridgeProj.result?.isError === true, JSON.stringify(hpiOffBridgeProj).slice(0, 200))
+  const hpiFlagOff = await hpiCall(hpiBridgeOn, onH, onP, HPI_OFF, 'nope')
+  check('AC3: project flag-off + bridge-on → isError', hpiFlagOff.result?.isError === true, JSON.stringify(hpiFlagOff).slice(0, 200))
+  const hpiNoBlock = await hpiCall(hpiBridgeOn, onH, onP, HPI_NONE, 'nope')
+  check('AC3: project no hermes block + bridge-on → isError', hpiNoBlock.result?.isError === true, JSON.stringify(hpiNoBlock).slice(0, 200))
+  check('AC3: denied cases never reach spawnFn', spawnCalls.length === 0, JSON.stringify(spawnCalls.length))
+  check('AC3: denied cases emit no audit notice', hpiReplies.length === 0, JSON.stringify(hpiReplies))
+
+  await hpiBridgeOn.stop()
+  await hpiBridgeOff.stop()
+  process.env.MCD_CHANNELS_DIR = origChannelsDir
+  rmSync(hermesTmpDir, { recursive: true, force: true })
+}
+
 // ─── ask_project + learnings tests ───────────────────────────────────────────
 
 const PEER_MASTER  = '555555555555555555'
