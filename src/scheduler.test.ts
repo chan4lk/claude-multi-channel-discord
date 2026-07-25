@@ -1095,6 +1095,224 @@ function makeAutopilotOpts(opts: {
 }
 
 // ============================================================
+// runBacklogWatchSweep — AC3 skip cases + AC4 lifecycle
+// ============================================================
+
+/**
+ * Build a minimal ChannelsConfig with a single project for backlog-watch tests.
+ */
+function makeWatchConfig(overrides: {
+  chatId?: string
+  slug?: string
+  backlogWatch?: Record<string, unknown>
+  defaultsBacklogWatch?: Record<string, unknown>
+  autopilot?: Record<string, unknown>
+  masterChatId?: string
+} = {}): { config: ChannelsConfig; chatId: string } {
+  const chatId = overrides.chatId ?? '333333333333333333'
+  const slug = overrides.slug ?? 'watchproj'
+  const config: ChannelsConfig = {
+    version: 1,
+    master: overrides.masterChatId ? { chatId: overrides.masterChatId, commandPrefix: '!project' } : undefined,
+    defaults: {
+      model: 'sonnet',
+      idleEvictMinutes: 15,
+      maxConcurrent: 8,
+      git: { userName: 'bot', userEmail: 'bot@local', branchPrefix: 'claude/' },
+      claude: { permissionMode: 'auto' },
+      providers: {},
+      progressMode: 'off',
+      handoff: false,
+      contextWarningThresholdPct: 80,
+      ...(overrides.defaultsBacklogWatch
+        ? { backlogWatch: overrides.defaultsBacklogWatch as ChannelsConfig['defaults']['backlogWatch'] }
+        : {}),
+    },
+    projects: {
+      [chatId]: {
+        slug,
+        ...(overrides.backlogWatch
+          ? { backlogWatch: overrides.backlogWatch as ChannelsConfig['projects'][string]['backlogWatch'] }
+          : {}),
+        ...(overrides.autopilot
+          ? { autopilot: overrides.autopilot as ChannelsConfig['projects'][string]['autopilot'] }
+          : {}),
+      },
+    },
+  }
+  return { config, chatId }
+}
+
+/**
+ * Build minimal backlog-watch sweep opts with mocked deps.
+ */
+function makeWatchOpts(opts: { config: ChannelsConfig; projectDir?: string; mcdDir?: string }): {
+  getChannels: () => ChannelsConfig
+  saveChannels: (cfg: ChannelsConfig) => void
+  projectDirFor: (slug: string) => string
+  onAlert: (slug: string, chatId: string, info: { snap: { done: number; total: number }; staleDays: number; openItems: string[] }) => void
+  mcdDir: string
+  saved: ChannelsConfig[]
+  alerts: Array<{ slug: string; chatId: string; snap: { done: number; total: number }; staleDays: number; openItems: string[] }>
+} {
+  const saved: ChannelsConfig[] = []
+  const alerts: Array<{ slug: string; chatId: string; snap: { done: number; total: number }; staleDays: number; openItems: string[] }> = []
+  let currentConfig = opts.config
+  return {
+    getChannels: () => currentConfig,
+    saveChannels: (cfg: ChannelsConfig) => { saved.push(cfg); currentConfig = cfg },
+    projectDirFor: () => opts.projectDir ?? '/nonexistent',
+    onAlert: (slug, chatId, info) => { alerts.push({ slug, chatId, ...info }) },
+    mcdDir: opts.mcdDir ?? '/tmp',
+    saved,
+    alerts,
+  }
+}
+
+// BW-1: master project skipped — no save, no alert (even with a live backlog)
+{
+  const tmpDir = mkdtempSync(join(tmpdir(), 'mcd-bw-test-'))
+  try {
+    writeFileSync(join(tmpDir, 'BACKLOG.md'), '- [ ] task one\n')
+    const { config, chatId } = makeWatchConfig({ masterChatId: '333333333333333333' })
+    void chatId
+    const sweepOpts = makeWatchOpts({ config, projectDir: tmpDir, mcdDir: tmpDir })
+    const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+    await scheduler.runBacklogWatchSweep(sweepOpts)
+    check('BW-1: master → no save', sweepOpts.saved.length === 0)
+    check('BW-1: master → no alert', sweepOpts.alerts.length === 0)
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+}
+
+// BW-2: autopilot-enabled project skipped — autopilot owns stall signaling
+{
+  const tmpDir = mkdtempSync(join(tmpdir(), 'mcd-bw-test-'))
+  try {
+    writeFileSync(join(tmpDir, 'BACKLOG.md'), '- [ ] task one\n')
+    const { config } = makeWatchConfig({ autopilot: { enabled: true } })
+    const sweepOpts = makeWatchOpts({ config, projectDir: tmpDir, mcdDir: tmpDir })
+    const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+    await scheduler.runBacklogWatchSweep(sweepOpts)
+    check('BW-2: autopilot enabled → no save', sweepOpts.saved.length === 0)
+    check('BW-2: autopilot enabled → no alert', sweepOpts.alerts.length === 0)
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+}
+
+// BW-3: project backlogWatch.enabled false → skipped
+{
+  const tmpDir = mkdtempSync(join(tmpdir(), 'mcd-bw-test-'))
+  try {
+    writeFileSync(join(tmpDir, 'BACKLOG.md'), '- [ ] task one\n')
+    const { config } = makeWatchConfig({ backlogWatch: { enabled: false } })
+    const sweepOpts = makeWatchOpts({ config, projectDir: tmpDir, mcdDir: tmpDir })
+    const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+    await scheduler.runBacklogWatchSweep(sweepOpts)
+    check('BW-3: project enabled=false → no save', sweepOpts.saved.length === 0)
+    check('BW-3: project enabled=false → no alert', sweepOpts.alerts.length === 0)
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+}
+
+// BW-4: defaults.backlogWatch.enabled false with no project override → skipped
+{
+  const tmpDir = mkdtempSync(join(tmpdir(), 'mcd-bw-test-'))
+  try {
+    writeFileSync(join(tmpDir, 'BACKLOG.md'), '- [ ] task one\n')
+    const { config } = makeWatchConfig({ defaultsBacklogWatch: { enabled: false } })
+    const sweepOpts = makeWatchOpts({ config, projectDir: tmpDir, mcdDir: tmpDir })
+    const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+    await scheduler.runBacklogWatchSweep(sweepOpts)
+    check('BW-4: defaults enabled=false → no save', sweepOpts.saved.length === 0)
+    check('BW-4: defaults enabled=false → no alert', sweepOpts.alerts.length === 0)
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+}
+
+// BW-5: source 'none' (empty project dir) → skipped, nothing persisted
+{
+  const tmpDir = mkdtempSync(join(tmpdir(), 'mcd-bw-test-'))
+  try {
+    const { config } = makeWatchConfig()
+    const sweepOpts = makeWatchOpts({ config, projectDir: tmpDir, mcdDir: tmpDir })
+    const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+    await scheduler.runBacklogWatchSweep(sweepOpts)
+    check('BW-5: source none → no save', sweepOpts.saved.length === 0)
+    check('BW-5: source none → no alert', sweepOpts.alerts.length === 0)
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+}
+
+// BW-6: AC4 lifecycle — init → stale alert → throttle → delta clears latch
+{
+  const tmpDir = mkdtempSync(join(tmpdir(), 'mcd-bw-test-'))
+  try {
+    writeFileSync(join(tmpDir, 'BACKLOG.md'), '- [x] task one\n- [ ] task two\n- [ ] task three\n')
+    const { config, chatId } = makeWatchConfig()
+    const sweepOpts = makeWatchOpts({ config, projectDir: tmpDir, mcdDir: tmpDir })
+    const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+
+    // Sweep 1 — first observation: init persisted, no alert
+    await scheduler.runBacklogWatchSweep(sweepOpts)
+    check('BW-6: init persisted', sweepOpts.saved.length === 1)
+    const bwInit = sweepOpts.saved[sweepOpts.saved.length - 1]?.projects[chatId]?.backlogWatch
+    check('BW-6: init lastSnapshot', bwInit?.lastSnapshot?.done === 1 && bwInit?.lastSnapshot?.total === 3)
+    check('BW-6: init lastDeltaAt set', typeof bwInit?.lastDeltaAt === 'string')
+    check('BW-6: init no alert', sweepOpts.alerts.length === 0)
+
+    // Hand-set lastDeltaAt 4 days ago (staleBacklogDays default 3) to simulate a stall
+    const afterInit = sweepOpts.saved[sweepOpts.saved.length - 1]!
+    const proj = afterInit.projects[chatId]!
+    sweepOpts.saveChannels({
+      ...afterInit,
+      projects: {
+        ...afterInit.projects,
+        [chatId]: {
+          ...proj,
+          backlogWatch: {
+            ...proj.backlogWatch!,
+            lastDeltaAt: new Date(Date.now() - 4 * 86_400_000).toISOString(),
+          },
+        },
+      },
+    })
+
+    // Sweep 2 — stale: alert fires with openCount/staleDays/openItems, lastAlertAt persisted
+    await scheduler.runBacklogWatchSweep(sweepOpts)
+    check('BW-6: stale alert fired', sweepOpts.alerts.length === 1)
+    check('BW-6: alert slug', sweepOpts.alerts[0]?.slug === 'watchproj')
+    check('BW-6: alert snap open count', (sweepOpts.alerts[0]!.snap.total - sweepOpts.alerts[0]!.snap.done) === 2)
+    check('BW-6: alert staleDays', sweepOpts.alerts[0]?.staleDays === 3)
+    check('BW-6: alert openItems', JSON.stringify(sweepOpts.alerts[0]?.openItems) === JSON.stringify(['task two', 'task three']))
+    const bwAlert = sweepOpts.saved[sweepOpts.saved.length - 1]?.projects[chatId]?.backlogWatch
+    check('BW-6: lastAlertAt persisted', typeof bwAlert?.lastAlertAt === 'string')
+
+    // Sweep 3 — immediately again: throttled by the alert latch, no second alert
+    const savedBeforeThrottle = sweepOpts.saved.length
+    await scheduler.runBacklogWatchSweep(sweepOpts)
+    check('BW-6: throttled — no second alert', sweepOpts.alerts.length === 1)
+    check('BW-6: throttled — nothing persisted', sweepOpts.saved.length === savedBeforeThrottle)
+
+    // Tick a checkbox — next sweep records the delta and clears the alert latch
+    writeFileSync(join(tmpDir, 'BACKLOG.md'), '- [x] task one\n- [x] task two\n- [ ] task three\n')
+    await scheduler.runBacklogWatchSweep(sweepOpts)
+    check('BW-6: delta — still one alert', sweepOpts.alerts.length === 1)
+    const bwDelta = sweepOpts.saved[sweepOpts.saved.length - 1]?.projects[chatId]?.backlogWatch
+    check('BW-6: delta lastSnapshot updated', bwDelta?.lastSnapshot?.done === 2 && bwDelta?.lastSnapshot?.total === 3)
+    check('BW-6: delta lastDeltaAt refreshed', typeof bwDelta?.lastDeltaAt === 'string' && Date.now() - Date.parse(bwDelta.lastDeltaAt) < 60_000)
+    check('BW-6: delta clears lastAlertAt key', bwDelta !== undefined && !Object.prototype.hasOwnProperty.call(bwDelta, 'lastAlertAt'))
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+}
+
+// ============================================================
 // Final result
 // ============================================================
 

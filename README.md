@@ -140,6 +140,8 @@ Detects: unanswered questions (🔴), stuck tool calls (🟡), schedule-noop loo
 
 Specclaw projects loop pending changes/tasks instead of BACKLOG.md (specclaw wins when both exist). The sweep nudges only when the project is idle, respects `heartbeat.window`, suspends on specclaw guardrail halts, escalates to master after 3 zero-progress fires ("stalled at X/Y"), announces 🏁 completion, and re-arms automatically when new items appear. Optional flags: `--autopilot-interval <min>` (default 30), `--backlog-file <path>` (default `BACKLOG.md`).
 
+**Backlog stall watch** — even without autopilot, an hourly sweep watches every project that has a backlog (`BACKLOG.md` or specclaw changes) and posts a 📋 digest to the master channel when open items haven't moved for 3+ days (configurable via `backlogWatch.staleBacklogDays`, listing up to 10 open items). Enabled by default; opt a project out with `backlogWatch.enabled: false` in `channels.json`. Projects running autopilot are skipped — autopilot escalates its own stalls. Catches the "one item quietly stuck for a week while everything else moves" case.
+
 ---
 
 ## WhatsApp setup (optional)

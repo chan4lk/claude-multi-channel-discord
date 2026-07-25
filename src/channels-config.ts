@@ -158,6 +158,41 @@ const DefaultsAutopilotSchema = z.object({
 })
 export type DefaultsAutopilot = z.infer<typeof DefaultsAutopilotSchema>
 
+/**
+ * Passive days-scale backlog stall watch config for a project.
+ * `enabled`: activates the watch sweep for this project (default true when
+ * a backlog source exists — omit to keep it on, set false to opt out).
+ * `staleBacklogDays`: days without backlog movement before an alert fires;
+ * falls back to defaults.backlogWatch then built-in (3).
+ * Skipped entirely when autopilot is enabled for the project — autopilot
+ * owns stall signaling there.
+ * Runtime fields (MCD-maintained, persisted in channels.json):
+ * `lastSnapshot`, `lastDeltaAt`, `lastAlertAt` are updated by the sweep,
+ * not by the operator.
+ */
+const BacklogWatchSchema = z.object({
+  enabled: z.boolean().optional(),
+  staleBacklogDays: z.number().optional(),
+  // Runtime fields — maintained by the watch sweep, not by the operator.
+  lastSnapshot: z.object({
+    done: z.number(),
+    total: z.number(),
+  }).optional(),
+  lastDeltaAt: z.string().optional(),
+  lastAlertAt: z.string().optional(),
+}).strict()
+export type BacklogWatchConfig = z.infer<typeof BacklogWatchSchema>
+
+/**
+ * Limits-only variant for defaults.backlogWatch — no runtime fields (those
+ * are always per-project). Built-in fallbacks: enabled true, staleBacklogDays 3.
+ */
+const DefaultsBacklogWatchSchema = z.object({
+  enabled: z.boolean().optional(),
+  staleBacklogDays: z.number().optional(),
+}).strict()
+export type DefaultsBacklogWatch = z.infer<typeof DefaultsBacklogWatchSchema>
+
 const ProjectSchema = z.object({
   slug: SlugSchema,
   /**
@@ -265,6 +300,16 @@ const ProjectSchema = z.object({
    * persisted here — do not edit them by hand. Absent = autopilot off.
    */
   autopilot: AutopilotSchema.optional(),
+  /**
+   * Passive backlog stall watch config. When a backlog source exists, the
+   * hourly sweep snapshots done/total counts and alerts the master channel
+   * after `staleBacklogDays` without movement while open items remain.
+   * On by default (absent = enabled); set `enabled: false` to opt out.
+   * Skipped when `autopilot.enabled` is true. Runtime fields
+   * (`lastSnapshot`, `lastDeltaAt`, `lastAlertAt`) are maintained by the
+   * sweep and persisted here — do not edit them by hand.
+   */
+  backlogWatch: BacklogWatchSchema.optional(),
 }).superRefine((val, ctx) => {
   if (val.platform === 'whatsapp' && !val.whatsappJid) {
     ctx.addIssue({
@@ -365,6 +410,11 @@ const DefaultsSchema = z.object({
    * stallThreshold 3.
    */
   autopilot: DefaultsAutopilotSchema.optional(),
+  /**
+   * Default backlog stall watch settings. No runtime fields — those are
+   * always per-project. Built-in fallbacks: enabled true, staleBacklogDays 3.
+   */
+  backlogWatch: DefaultsBacklogWatchSchema.optional(),
 })
 
 const MasterSchema = z.object({

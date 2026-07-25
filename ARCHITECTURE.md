@@ -110,6 +110,23 @@ State machine: `seeding → running → halted | complete`. Fresh enable with no
 
 Backlog source auto-detection: `.specclaw/STATUS.md` present → specclaw flavor (pending proposals + active-change `tasks.md` checkboxes); else markdown checkboxes in the backlog file. All parsing/transition logic is pure (`src/backlog.ts`, clock injected) — the sweep in `scheduler.ts` only does IO and side effects. Envelopes use `userId = "__mcd_autopilot__"`, `messageId = "autopilot-<chatId>-<ts>"`; fires append to `scheduler-history.jsonl`.
 
+### Backlog stall watch (`src/backlog.ts` + `Scheduler.registerBacklogWatchSweep()`)
+
+Passive, days-scale counterpart to autopilot: it never injects prompts, it only watches snapshots and alerts master when a backlog stops moving. Motivation: a project's backlog item sat "pending merge" for 10 days unnoticed because activity on *other* changes masked the stale one (dstm-apps, 2026-07-25).
+
+`registerBacklogWatchSweep({ getChannels, saveChannels, projectDirFor, onAlert?, mcdDir, sweepIntervalMs? })` starts an unref'd `setInterval` (default 1 h) over `runBacklogWatchSweep`. Per project the sweep skips, in order: the master project; projects with `autopilot.enabled` (one stall owner per project — autopilot escalates its own stalls); `backlogWatch.enabled === false` (resolution: project → `defaults.backlogWatch` → built-in `true`); and projects where `detectBacklogSource()` returns `'none'` (same source detection as autopilot — specclaw wins over `BACKLOG.md`). `staleBacklogDays` resolves project → defaults → built-in 3; values < 1 clamp back to 3 inside the pure evaluator.
+
+Decision logic is pure: `evaluateBacklogWatch({ snap, runtime, staleBacklogDays, nowMs })` returns one of four `BacklogWatchAction` kinds plus a runtime patch —
+
+- `init` — no persisted history yet; sets `lastSnapshot` + `lastDeltaAt` to now (no fabricated staleness).
+- `delta` — done/total moved; records the new snapshot, resets `lastDeltaAt`, and clears the alert latch (`lastAlertAt: undefined` in the patch → key deleted on merge), so a backlog that moves then re-stalls re-alerts after a fresh full window.
+- `alert { openCount, staleDays }` — open items exist, no movement for ≥ `staleBacklogDays`, and no alert within the same window (re-alert throttle); sets `lastAlertAt`.
+- `none` — nothing to do, empty patch.
+
+Runtime (`lastSnapshot`, `lastDeltaAt`, `lastAlertAt`) lives on the project's `backlogWatch` block in `channels.json` — same MCD-maintained mutable-config precedent as autopilot's runtime fields. The sweep re-reads the config before persisting each patch (read-merge-write, `undefined` keys deleted) so it never clobbers concurrent edits with a stale copy.
+
+On `alert`, `server.ts` renders the digest and posts it to the master channel: `📋 **<slug>**: backlog stalled — N open item(s), no movement for D+ day(s)` followed by the open items from `listOpenItems()` (unchecked task text for file flavor, not-done change-dir names for specclaw; capped at 10 with a `(+N more)` tail) and a disable hint (`backlogWatch.enabled: false`). Per-project errors are logged and never abort the sweep.
+
 ### Provider routing
 
 Projects default to the operator's Claude Code subscription auth (no API key, no env override at spawn). To route specific projects to a different Anthropic-compatible API:

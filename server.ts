@@ -1628,6 +1628,23 @@ async function maybeInitProjectsBackend(): Promise<void> {
     mcdDir: channelsDir(),
   })
 
+  // Backlog-watch sweep: alert master when passive (non-autopilot) backlogs stall for days
+  scheduler.registerBacklogWatchSweep({
+    getChannels: () => loadChannelsConfig(),
+    saveChannels: (cfg) => saveConfig(cfg),
+    projectDirFor: (slug) => projectDir(slug),
+    onAlert: (slug, _chatId, info) => {
+      const cfg = loadChannelsConfig()
+      const masterChatId = cfg.master?.chatId
+      if (!masterChatId) return
+      const open = info.snap.total - info.snap.done
+      const items = info.openItems.map((i) => `• ${i}`).join('\n')
+      const text = `📋 **${slug}**: backlog stalled — ${open} open item(s), no movement for ${info.staleDays}+ day(s)\n${items}\n_Check the channel or merge pending PRs. Disable: \`backlogWatch.enabled: false\` on the project._`
+      routeNotification(cfg, { kind: 'text', chatId: masterChatId, text }, 'backlog-watch alert')
+    },
+    mcdDir: channelsDir(),
+  })
+
   // Nightly GOALS.md reconcile cron (02:00 local)
   void import('./src/pattern-mining.ts').then(({ minePatterns }) => {
     scheduler!.registerGoalReconcileCron({

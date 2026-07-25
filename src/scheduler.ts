@@ -22,7 +22,7 @@ import {
   type Schedule,
 } from './schedules-config.ts'
 import type { InboundEnvelope } from './project-process.ts'
-import type { ChannelsConfig } from './channels-config.ts'
+import type { BacklogWatchConfig, ChannelsConfig } from './channels-config.ts'
 
 function resolveInjectVars(template: string, slug: string): string {
   const now = new Date()
@@ -642,6 +642,99 @@ export class Scheduler {
             },
           })
         }
+      }
+    }
+  }
+
+  /**
+   * Register a periodic sweep that watches passive (non-autopilot) backlogs
+   * for days-scale staleness and alerts when open items stop moving.
+   * Safe to call once at startup — re-registering creates an additional
+   * timer, so don't call more than once.
+   */
+  registerBacklogWatchSweep(opts: {
+    getChannels: () => ChannelsConfig
+    saveChannels: (cfg: ChannelsConfig) => void
+    projectDirFor: (slug: string) => string
+    onAlert?: (slug: string, chatId: string, info: { snap: { done: number; total: number }; staleDays: number; openItems: string[] }) => void
+    mcdDir: string
+    sweepIntervalMs?: number
+  }): void {
+    const intervalMs = opts.sweepIntervalMs ?? 3_600_000
+    const timer = setInterval(() => void this.runBacklogWatchSweep(opts), intervalMs)
+    if (typeof timer.unref === 'function') timer.unref()
+    this.log('backlog-watch sweep registered')
+  }
+
+  async runBacklogWatchSweep(opts: {
+    getChannels: () => ChannelsConfig
+    saveChannels: (cfg: ChannelsConfig) => void
+    projectDirFor: (slug: string) => string
+    onAlert?: (slug: string, chatId: string, info: { snap: { done: number; total: number }; staleDays: number; openItems: string[] }) => void
+    mcdDir: string
+  }): Promise<void> {
+    const { detectBacklogSource, snapshotBacklog, evaluateBacklogWatch, listOpenItems } = await import('./backlog.ts')
+    const config = opts.getChannels()
+    const nowMs = Date.now()
+
+    for (const [chatId, project] of Object.entries(config.projects)) {
+      try {
+        // Master never carries a passive backlog watch
+        if (config.master?.chatId === chatId) continue
+
+        // Autopilot owns stall signaling when enabled — one owner per project
+        if (project.autopilot?.enabled) continue
+
+        const enabled =
+          project.backlogWatch?.enabled ?? config.defaults?.backlogWatch?.enabled ?? true
+        if (!enabled) continue
+
+        const staleDays =
+          project.backlogWatch?.staleBacklogDays ?? config.defaults?.backlogWatch?.staleBacklogDays ?? 3
+
+        const dir = opts.projectDirFor(project.slug)
+        const source = detectBacklogSource(dir)
+        if (source === 'none') continue
+
+        const snap = snapshotBacklog(dir, source)
+        const { action, patch } = evaluateBacklogWatch({
+          snap,
+          runtime: project.backlogWatch ?? {},
+          staleBacklogDays: staleDays,
+          nowMs,
+        })
+
+        if (action.kind !== 'none') this.log(`[backlog-watch] ${project.slug}: ${action.kind}`)
+
+        // Persist patch when it carries keys. Keys explicitly set to undefined
+        // (the delta lastAlertAt clear) are deleted from the merged block.
+        if (Object.keys(patch).length > 0) {
+          const latest = opts.getChannels()
+          const proj = latest.projects[chatId]
+          if (proj) {
+            const merged: Record<string, unknown> = { ...(proj.backlogWatch ?? {}), ...patch }
+            for (const key of Object.keys(patch)) {
+              if ((patch as Record<string, unknown>)[key] === undefined) delete merged[key]
+            }
+            opts.saveChannels({
+              ...latest,
+              projects: {
+                ...latest.projects,
+                [chatId]: { ...proj, backlogWatch: merged as BacklogWatchConfig },
+              },
+            })
+          }
+        }
+
+        if (action.kind === 'alert') {
+          opts.onAlert?.(project.slug, chatId, {
+            snap,
+            staleDays: action.staleDays,
+            openItems: listOpenItems(dir, source),
+          })
+        }
+      } catch (err) {
+        this.log(`[backlog-watch] ${project.slug}: sweep error — ${(err as Error).message}`)
       }
     }
   }
