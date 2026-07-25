@@ -177,6 +177,21 @@ export class MockProjectProcess implements ProjectProcess {
     this.turnHistory = [...durations]
   }
 
+  /**
+   * Test-only hook mirroring ClaudeProjectProcess.noteTurnComplete: a turn
+   * that completes (turn_duration transcript event) without a reply tool
+   * call clears the pending-deliver flag, feeds the turn duration into
+   * turnHistory, and bumps activity. No-op when no deliver is pending.
+   */
+  completeTurn(durationMs?: number): void {
+    if (this._pendingDeliverAt === null) return
+    const at = this.now()
+    this.turnHistory.push(durationMs ?? at - this._pendingDeliverAt)
+    if (this.turnHistory.length > 5) this.turnHistory.shift()
+    this._pendingDeliverAt = null
+    this._lastActivity = at
+  }
+
   adaptiveThresholdMs(baseMs: number): number {
     if (this.turnHistory.length === 0) return baseMs
     const maxTurn = Math.max(...this.turnHistory)
