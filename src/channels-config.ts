@@ -193,6 +193,18 @@ const DefaultsBacklogWatchSchema = z.object({
 }).strict()
 export type DefaultsBacklogWatch = z.infer<typeof DefaultsBacklogWatchSchema>
 
+/**
+ * Per-project Hermes access. When enabled (and defaults.hermes.enabled is
+ * true), this project's Claude session gains the `hermes_run` MCP tool —
+ * detached host-level ops runs via the Hermes bridge. Off by default:
+ * hermes runs with --yolo on the host, so the operator must opt each
+ * project in explicitly (`!project set <target> --hermes on --yes`).
+ */
+const ProjectHermesSchema = z.object({
+  enabled: z.boolean().default(false),
+}).strict()
+export type ProjectHermesConfig = z.infer<typeof ProjectHermesSchema>
+
 const ProjectSchema = z.object({
   slug: SlugSchema,
   /**
@@ -233,6 +245,8 @@ const ProjectSchema = z.object({
    * operator must opt each source project in (or flip defaults.handoff).
    */
   handoff: z.boolean().optional(),
+  /** Per-project Hermes bridge access (see ProjectHermesSchema). */
+  hermes: ProjectHermesSchema.optional(),
   /**
    * Override the watchdog base threshold for this project. Default is 5 min.
    * Set higher for channels that run long pipelines (TTS, video rendering).
