@@ -58,7 +58,7 @@ Discord Gateway (WSS)
 | `src/paths.ts` | Filesystem layout (all paths, `MCD_CHANNELS_DIR` override) |
 | `src/claude-process.ts` | `ClaudeProjectProcess` — real tmux/claude subprocess wrapper |
 | `src/project-process.ts` | `ProjectProcess` interface + `MockProjectProcess` |
-| `src/project-pool.ts` | Lazy spawn, LRU eviction, idle eviction, msg-id dedup |
+| `src/project-pool.ts` | Lazy spawn, LRU eviction, idle eviction (transcript-mtime veto → `evict-skip`), msg-id dedup |
 | `src/master-mcp-server.ts` | HTTP MCP server, multiplexed by chat_id URL |
 | `src/master-commands.ts` | `!project ...` parser + verb handlers |
 | `src/git-ops.ts` | `buildGitEnv()`, `gitStatusSummary()`, `gitPull()` |
@@ -178,6 +178,10 @@ Server restarts used to leak one warm claude subprocess per active channel: the 
 2. The active session `.jsonl` transcript has not been written to within that window
 
 This prevents false-positive kills during long legitimate turns (subagent work, parallel `Agent` calls). If transcript is advancing, a `progress-skip` event fires instead of a kill. Fixed in commits `2da3e63` (AND-gate), `9a6f572` (fallback when `.session-id` missing), `7b99786` (symlink realpath for transcript path).
+
+**Guard A — turn-completion detection:** the transcript watcher recognizes the `turn_duration` system event as end-of-turn and clears the pending-deliver flag (`noteTurnComplete()`, which also feeds `turnHistory`). A turn that completes WITHOUT calling the reply tool — e.g. a heartbeat answered "no reply" — is therefore never counted as stuck. Previously the flag stayed armed and caused an hourly kill/respawn loop (observed 2026-07-25, dstm-apps).
+
+**Guard B — idle-evict transcript veto:** idle-evict now vetoes the kill when `transcriptMtimeMs()` shows the session transcript was written within the idle window, emitting an `evict-skip` pool event instead. `lastActivityMs` only tracks deliveries + MCP tool calls, so a long turn making no MCP calls looked idle — idle-evict killed a session mid-build (observed 2026-07-25, specclaw channel).
 
 The `resolveSessionId()` three-tier resolution:
 1. In-memory cache

@@ -826,6 +826,206 @@ function envelope(content: string): InboundEnvelope {
   await pool.shutdown()
 }
 
+// --- 24. Turn-guard AC1: completeTurn clears pending deliver, no stuck kill ----
+// AC2 (turn-completion detection runs even with zero tool-progress/limit
+// handlers subscribed, i.e. progressMode "off") is internal to the
+// ClaudeProjectProcess transcript watcher's early-return condition and is
+// not reachable through the pool + mock harness — verified by code review
+// of src/claude-process.ts (watcher only returns early when no handlers
+// AND no pending deliver).
+{
+  const config = makeConfig({ idleEvictMinutes: 60 })
+  let now = 1_000_000
+  const events: PoolEvent[] = []
+  const created: MockProjectProcess[] = []
+  const pool = new ProjectPool({
+    factory: ({ chatId, project }) => {
+      const p = new MockProjectProcess({ chatId, slug: project.slug, now: () => now, hangs: true })
+      created.push(p)
+      return p
+    },
+    getConfig: () => config,
+    onReply: () => {},
+    onEvent: (e) => events.push(e),
+    now: () => now,
+  })
+
+  // Deliver; the mock hangs — no reply tool call will ever clear the flag.
+  await pool.deliver('111111111111111111', envelope('no-reply-turn'))
+  check('24: pending deliver armed after deliver', created[0]!.pendingDeliverAtMs() === 1_000_000)
+
+  // Transcript records turn_duration — turn completed without a reply (20 min turn).
+  created[0]!.completeTurn(20 * 60_000)
+  check('24: pendingDeliverAtMs null after completeTurn', created[0]!.pendingDeliverAtMs() === null)
+
+  // turnHistory was fed: adaptive threshold grows past the 5-min base
+  // (max(5min, ceil(20min * 1.5)) capped at 30 min → 30 min).
+  const base = 5 * 60_000
+  check(
+    '24: completeTurn fed turnHistory (adaptive threshold above base)',
+    created[0]!.adaptiveThresholdMs(base) === 30 * 60_000,
+    String(created[0]!.adaptiveThresholdMs(base)),
+  )
+
+  // Sweep well past even the 30-min adaptive cap — watchdog must not fire.
+  now += 31 * 60_000
+  pool.evictIdle()
+  await sleep(5)
+  check('24: still alive after post-turn sweep', pool.has('111111111111111111'))
+  check('24: no stuck event after completed turn', !events.some((e) => e.kind === 'stuck'))
+
+  await pool.shutdown()
+}
+
+// --- 25. Turn-guard AC3: idle past cutoff + fresh transcript → evict-skip ------
+{
+  const config = makeConfig({ idleEvictMinutes: 1 })
+  let now = 1_000_000
+  const events: PoolEvent[] = []
+  const created: MockProjectProcess[] = []
+  const pool = new ProjectPool({
+    factory: ({ chatId, project }) => {
+      const p = new MockProjectProcess({ chatId, slug: project.slug, now: () => now })
+      created.push(p)
+      return p
+    },
+    getConfig: () => config,
+    onReply: () => {},
+    onEvent: (e) => events.push(e),
+    now: () => now,
+  })
+
+  await pool.deliver('111111111111111111', envelope('mid-build'))
+  await sleep(5) // let the reply land — clears pendingDeliverAtMs
+
+  // 90 s idle (past the 1-min window) but transcript written 30 s ago —
+  // agent is mid-turn (long build with no MCP calls). Must not evict.
+  now += 90_000
+  created[0]!.setTranscriptMtimeMs(now - 30_000)
+  pool.evictIdle()
+  await sleep(5)
+  check('25: not killed when transcript fresh inside idle window', pool.has('111111111111111111'))
+  check('25: process still alive', created[0]!.isAlive())
+  check('25: no evict event', !events.some((e) => e.kind === 'evict'))
+  check(
+    '25: evict-skip fired with sinceActivityMs/sinceTranscriptMs',
+    events.some(
+      (e) =>
+        e.kind === 'evict-skip' &&
+        e.chatId === '111111111111111111' &&
+        e.sinceActivityMs === 90_000 &&
+        e.sinceTranscriptMs === 30_000,
+    ),
+  )
+
+  await pool.shutdown()
+}
+
+// --- 26. Turn-guard AC4: idle + stale/null transcript → evict as before --------
+{
+  // Sub-case 1: transcript mtime older than the idle cutoff.
+  const config = makeConfig({ idleEvictMinutes: 1 })
+  let now = 1_000_000
+  const events: PoolEvent[] = []
+  const created: MockProjectProcess[] = []
+  const pool = new ProjectPool({
+    factory: ({ chatId, project }) => {
+      const p = new MockProjectProcess({ chatId, slug: project.slug, now: () => now })
+      created.push(p)
+      return p
+    },
+    getConfig: () => config,
+    onReply: () => {},
+    onEvent: (e) => events.push(e),
+    now: () => now,
+  })
+
+  await pool.deliver('111111111111111111', envelope('idle-stale'))
+  await sleep(5) // clears pendingDeliverAtMs
+
+  now += 90_000
+  created[0]!.setTranscriptMtimeMs(now - 70_000) // older than the 60s cutoff
+  pool.evictIdle()
+  await sleep(5)
+  check('26: killed when transcript stale', !pool.has('111111111111111111'))
+  check(
+    '26: idle-evict event fired for stale transcript',
+    events.some((e) => e.kind === 'evict' && e.reason === 'idle-evict'),
+  )
+  check('26: kill reason was idle-evict', created[0]!.killReasons.includes('idle-evict'))
+
+  await pool.shutdown()
+}
+{
+  // Sub-case 2: transcript mtime null (session id never captured).
+  const config = makeConfig({ idleEvictMinutes: 1 })
+  let now = 1_000_000
+  const events: PoolEvent[] = []
+  const created: MockProjectProcess[] = []
+  const pool = new ProjectPool({
+    factory: ({ chatId, project }) => {
+      const p = new MockProjectProcess({ chatId, slug: project.slug, now: () => now })
+      created.push(p)
+      return p
+    },
+    getConfig: () => config,
+    onReply: () => {},
+    onEvent: (e) => events.push(e),
+    now: () => now,
+  })
+
+  await pool.deliver('111111111111111111', envelope('idle-null'))
+  await sleep(5) // clears pendingDeliverAtMs
+
+  now += 90_000
+  // Mock defaults to transcriptMtimeMs() === null — no need to set.
+  pool.evictIdle()
+  await sleep(5)
+  check('26: killed when transcript null', !pool.has('111111111111111111'))
+  check(
+    '26: idle-evict event fired for null transcript',
+    events.some((e) => e.kind === 'evict' && e.reason === 'idle-evict'),
+  )
+  check('26: no evict-skip for null transcript', !events.some((e) => e.kind === 'evict-skip'))
+
+  await pool.shutdown()
+}
+
+// --- 27. Turn-guard AC5: genuinely stuck session still watchdog-killed ---------
+{
+  const config = makeConfig({ idleEvictMinutes: 60 })
+  let now = 1_000_000
+  const events: PoolEvent[] = []
+  const created: MockProjectProcess[] = []
+  const pool = new ProjectPool({
+    factory: ({ chatId, project }) => {
+      const p = new MockProjectProcess({ chatId, slug: project.slug, now: () => now, hangs: true })
+      created.push(p)
+      return p
+    },
+    getConfig: () => config,
+    onReply: () => {},
+    onEvent: (e) => events.push(e),
+    now: () => now,
+  })
+
+  // Pending deliver, no turn-completion, transcript stale past the 5-min
+  // effective threshold — the watchdog path must be unchanged by the guards.
+  await pool.deliver('111111111111111111', envelope('genuinely-stuck'))
+  now += 6 * 60_000
+  created[0]!.setTranscriptMtimeMs(now - 7 * 60_000)
+  pool.evictIdle()
+  await sleep(5)
+  check('27: genuinely stuck session killed', !pool.has('111111111111111111'))
+  check(
+    '27: stuck event fired for genuinely stuck session',
+    events.some((e) => e.kind === 'stuck' && e.chatId === '111111111111111111'),
+  )
+  check('27: kill reason was watchdog', created[0]!.killReasons.includes('watchdog'))
+
+  await pool.shutdown()
+}
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)
   process.exit(1)

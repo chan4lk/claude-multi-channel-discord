@@ -7,6 +7,7 @@ import type { InboundEnvelope, OutboundReply, ProjectProcess, SpecclawProgressEv
 export type PoolEvent =
   | { kind: 'spawn'; chatId: string; slug: string }
   | { kind: 'evict'; chatId: string; slug: string; reason: 'idle-evict' | 'pool-full' }
+  | { kind: 'evict-skip'; chatId: string; slug: string; sinceActivityMs: number; sinceTranscriptMs: number }
   | { kind: 'rejected'; chatId: string; reason: 'unknown-project' | 'pool-full-no-evict-candidate' }
   | { kind: 'crashed'; chatId: string; slug: string; code: number | null; signal: NodeJS.Signals | null }
   | { kind: 'stuck'; chatId: string; slug: string; sinceLastReplyMs: number; effectiveThresholdMs: number }
@@ -423,6 +424,28 @@ export class ProjectPool {
       }
 
       if (proc.lastActivityMs() < idleCutoff) {
+        // Transcript-freshness veto (mirror of the watchdog's above):
+        // lastActivityMs only bumps on deliveries and MCP tool calls, not
+        // on turn work — idle-evict killed a healthy session mid-build on
+        // 2026-07-25 because a long turn made no MCP calls. If the session
+        // transcript was written within the idle window, the agent is
+        // mid-turn: skip the kill and report instead.
+        let transcriptMtime: number | null = null
+        try {
+          transcriptMtime = typeof proc.transcriptMtimeMs === 'function' ? proc.transcriptMtimeMs() : null
+        } catch {
+          transcriptMtime = null
+        }
+        if (transcriptMtime !== null && transcriptMtime >= idleCutoff) {
+          this.fireEvent({
+            kind: 'evict-skip',
+            chatId,
+            slug: proc.slug,
+            sinceActivityMs: now - proc.lastActivityMs(),
+            sinceTranscriptMs: now - transcriptMtime,
+          })
+          continue
+        }
         this.fireEvent({ kind: 'evict', chatId, slug: proc.slug, reason: 'idle-evict' })
         void proc.kill('idle-evict')
       }
