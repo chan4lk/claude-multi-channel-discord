@@ -315,6 +315,15 @@ Hermes itself must already be set up on the host (provider auth + Discord gatewa
 
 Run logs and metadata live under `<MCD_CHANNELS_DIR>/hermes-runs/`.
 
+**3. (Optional) Grant a project channel access** — by default only the master session sees `hermes_run`. To let a project's Claude launch Hermes runs itself (e.g. a deploy from its own channel):
+
+```
+!project set <slug> --hermes on --yes      — grant (requires --yes: host-level ops reach)
+!project set <slug> --hermes off           — revoke
+```
+
+Project-initiated runs report back to the project's own channel, and every launch posts an audit notice to the master channel (`🛰 hermes run <id> launched by <slug>: "..."`). Report-back is Discord-only — Teams/WhatsApp projects can be opted in, but the Hermes-side report won't reach those channels.
+
 **Restart-MCD recipe:** `!project hermes "Restart the MCD Discord bot: kill the bun server.ts process whose cwd is */multi-channel-discord, then start it again with MCD_CHANNELS_DIR=~/.claude/channels/discord-multi bun server.ts inside the mcd tmux session, verify it comes up"` — the wrapped prompt already tells Hermes to wait 5 seconds before destructive steps and to report back via `hermes send` when done.
 
 MCD never kills a Hermes run (it can't own the pid across its own restarts). If a run hangs: `--tail` to inspect, then kill manually — find it with `pgrep -af 'hermes.*-z'`.

@@ -103,11 +103,12 @@ Tests: `src/master-commands.test.ts`, `src/project-pool.test.ts`, `src/master-mc
 **`channels.json` key fields:**
 - `master.chatId` + `master.commandPrefix` (default `!project`)
 - `defaults.{model, idleEvictMinutes, maxConcurrent, git.{userName,userEmail,credentials,branchPrefix}, claude.{permissionMode,allowedTools,disallowedTools,extraArgs}, providers.<alias>.{baseUrl,apiKeyEnv}, provider?}`
-- `projects[<chat_id>].{slug, model?, git?, claude?, provider?, platform?, whatsappJid?, botPeers?, peers?}` — `platform` is `'discord' | 'teams' | 'whatsapp'` (default `'discord'`); `whatsappJid` is required when `platform === 'whatsapp'` (contact's E.164 JID, e.g. `15551234567@s.whatsapp.net`); `botPeers: { allow: string[], maxConsecutive?, cooldownSeconds? }` enables allowlisted bot-peer inbound with loop-prevention; `peers: { allow: string[], maxHops?, cooldownSeconds? }` enables cross-project dialogue (mutual consent required on both sides)
+- `projects[<chat_id>].{slug, model?, git?, claude?, provider?, platform?, whatsappJid?, botPeers?, peers?, hermes?}` — `platform` is `'discord' | 'teams' | 'whatsapp'` (default `'discord'`); `whatsappJid` is required when `platform === 'whatsapp'` (contact's E.164 JID, e.g. `15551234567@s.whatsapp.net`); `botPeers: { allow: string[], maxConsecutive?, cooldownSeconds? }` enables allowlisted bot-peer inbound with loop-prevention; `peers: { allow: string[], maxHops?, cooldownSeconds? }` enables cross-project dialogue (mutual consent required on both sides)
 - `defaults.botPeers.{maxConsecutive?, cooldownSeconds?}` — limits-only defaults (no `allow`); built-in fallback is maxConsecutive=5, cooldownSeconds=30
 - `defaults.peers.{maxHops?, cooldownSeconds?}` — limits-only defaults for cross-project dialogue (no `allow`); built-in fallback is maxHops=6, cooldownSeconds=15
 - `projects[*].autopilot.{enabled, file?, intervalMinutes?, stallThreshold?, respectHeartbeatWindow?}` + MCD-maintained runtime (`state`, `seededAt`, `seedGoal`, `lastFireAt`, `zeroDeltaCount`, `lastSnapshot`) — backlog autopilot; `defaults.autopilot.{intervalMinutes?, stallThreshold?}` limits-only (built-in fallback 30 min / 3)
 - `projects[*].backlogWatch.{enabled?, staleBacklogDays?}` + MCD-maintained runtime (`lastSnapshot`, `lastDeltaAt`, `lastAlertAt`) — passive backlog stall watch (on by default when a backlog source exists); `defaults.backlogWatch.{enabled?, staleBacklogDays?}` limits-only (built-in fallback enabled / 3 days)
+- `projects[*].hermes.{enabled}` — per-project Hermes bridge access (off by default); when true AND `defaults.hermes.enabled`, the project's Claude gains the `hermes_run` MCP tool
 
 ---
 
@@ -115,7 +116,7 @@ Tests: `src/master-commands.test.ts`, `src/project-pool.test.ts`, `src/master-mc
 
 `list`, `show`/`status`, `create`, `clone`, `set`, `rename`, `remote`, `pull`, `usage`/`ps`/`top`, `stop`, `schedule add/inject/list/pause/resume/rm`, `provider`, `model`, `progress`, `branch`, `backlog`, `memory`, `heartbeat`, `hermes`, `teams-setup`, `rm --yes`, `help`
 
-`set` flags include `--bot-peers <id,id,...> --yes` (set/replace allowlist) and `--bot-peers none` (remove block, no `--yes` needed); `--peers <slug,...>` (set/replace peer allow list, slugs must exist, no self/master) and `--peers none` (remove peers block); `--autopilot on|off [--seed "<goal>"] [--autopilot-interval <min>] [--backlog-file <path>]` (backlog autopilot — MCD seeds BACKLOG.md via the project's Claude, then nudge-loops until done; refused on master). `backlog <target>` shows source, X/Y done, autopilot state.
+`set` flags include `--bot-peers <id,id,...> --yes` (set/replace allowlist) and `--bot-peers none` (remove block, no `--yes` needed); `--peers <slug,...>` (set/replace peer allow list, slugs must exist, no self/master) and `--peers none` (remove peers block); `--autopilot on|off [--seed "<goal>"] [--autopilot-interval <min>] [--backlog-file <path>]` (backlog autopilot — MCD seeds BACKLOG.md via the project's Claude, then nudge-loops until done; refused on master); `--hermes on --yes` / `--hermes off` (grant/revoke the project's `hermes_run` MCP tool; `on` requires `--yes` because it grants host-level ops reach; master target is a warn no-op). `backlog <target>` shows source, X/Y done, autopilot state.
 
 Mutation verbs require `userId ∈ access.allowFrom`. Destructive verbs (`rm`, `rename`, `remote --set`) require `--yes`.
 
@@ -160,7 +161,9 @@ To bind a project to a WhatsApp contact, set `platform: "whatsapp"` and `whatsap
 
 ## Hermes bridge (out-of-band ops)
 
-Opt-in via `defaults.hermes.{enabled, binPath, yolo, extraArgs}` in `channels.json` (disabled by default). `!project hermes "<prompt>"` (master channel, allowFrom-gated) and the master-only `mcp__mcd__hermes_run` MCP tool spawn a **detached** one-shot `hermes -z "<wrapped prompt>" --yolo` run via `src/hermes-bridge.ts`. The run outlives MCD — this is the sanctioned way to restart the MCD server: delegate to Hermes, which kills/restarts the bot and reports back to the master channel via `hermes send` (its own Discord credentials, no MCD needed). Logs + metadata per run under `<MCD_CHANNELS_DIR>/hermes-runs/`; inspect with `!project hermes --tail <run-id>`. MCD never kills detached runs; hung runs are killed manually (`pgrep -af 'hermes.*-z'`). Prompt passes as a single argv element — never through a shell.
+Opt-in via `defaults.hermes.{enabled, binPath, yolo, extraArgs}` in `channels.json` (disabled by default). `!project hermes "<prompt>"` (master channel, allowFrom-gated) and the `mcp__mcd__hermes_run` MCP tool spawn a **detached** one-shot `hermes -z "<wrapped prompt>" --yolo` run via `src/hermes-bridge.ts`. The run outlives MCD — this is the sanctioned way to restart the MCD server: delegate to Hermes, which kills/restarts the bot and reports back via `hermes send` (its own Discord credentials, no MCD needed). Logs + metadata per run under `<MCD_CHANNELS_DIR>/hermes-runs/`; inspect with `!project hermes --tail <run-id>`. MCD never kills detached runs; hung runs are killed manually (`pgrep -af 'hermes.*-z'`). Prompt passes as a single argv element — never through a shell.
+
+`hermes_run` is available to the master session always (when the bridge is enabled) and to project sessions the operator opts in via `projects[*].hermes.enabled` (`!project set <slug> --hermes on --yes`). Project-initiated runs report back to the **originating channel** (`hermes send --to discord:<project_chat_id>`), and every project launch posts a master audit notice: `🛰 hermes run <id> launched by <slug>: "<prompt ≤120 chars>"`. Limitation: report-back is Discord-only — Teams/WhatsApp projects can be opted in, but the Hermes-side report lands nowhere useful there.
 
 ---
 

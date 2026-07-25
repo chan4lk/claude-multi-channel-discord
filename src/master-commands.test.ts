@@ -1050,6 +1050,99 @@ check('set: heartbeat accepted', setHb.kind === 'reply' && setHb.text.includes('
   )
 }
 
+// --- AC6 (hermes-project-invoke): set --hermes verb ---------------------------
+
+// Missing --yes when enabling → refusal, config unchanged
+{
+  const res = await handleMasterCommand(
+    '!project set support --hermes on',
+    mctx(),
+  )
+  check(
+    'set --hermes on: missing --yes returns refusal',
+    res.kind === 'reply' && res.text.includes('--yes'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  check(
+    'set --hermes on: not persisted when --yes missing',
+    loadConfig().projects['999888777666555444']?.hermes === undefined,
+  )
+}
+
+// Invalid value → usage error
+{
+  const res = await handleMasterCommand(
+    '!project set support --hermes maybe',
+    mctx(),
+  )
+  check(
+    'set --hermes: invalid value rejected',
+    res.kind === 'reply' && res.text.includes('`--hermes` must be `on` or `off`'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+}
+
+// --hermes on --yes → persists hermes.enabled: true
+{
+  const res = await handleMasterCommand(
+    '!project set support --hermes on --yes',
+    mctx(),
+  )
+  check(
+    'set --hermes on --yes: succeeds',
+    res.kind === 'reply' && res.text.includes('hermes access **enabled**'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  check(
+    'set --hermes on --yes: hermes.enabled persisted to channels.json',
+    loadConfig().projects['999888777666555444']?.hermes?.enabled === true,
+    JSON.stringify(loadConfig().projects['999888777666555444']?.hermes),
+  )
+}
+
+// --hermes off (no --yes required) → removes the block
+{
+  const res = await handleMasterCommand(
+    '!project set support --hermes off',
+    mctx(),
+  )
+  check(
+    'set --hermes off: succeeds without --yes',
+    res.kind === 'reply' && res.text.includes('hermes access **disabled**'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  check(
+    'set --hermes off: hermes block removed from channels.json',
+    loadConfig().projects['999888777666555444']?.hermes === undefined,
+  )
+}
+
+// Master channel as target → warn no-op (both on and off)
+{
+  const resOn = await handleMasterCommand(
+    '!project set master-test --hermes on --yes',
+    mctx(),
+  )
+  check(
+    'set --hermes on: master target is warn no-op',
+    resOn.kind === 'reply' && resOn.text.includes('master already has hermes access — nothing to change'),
+    resOn.kind === 'reply' ? resOn.text : resOn.kind,
+  )
+  const resOff = await handleMasterCommand(
+    '!project set master-test --hermes off',
+    mctx(),
+  )
+  check(
+    'set --hermes off: master target is warn no-op',
+    resOff.kind === 'reply' && resOff.text.includes('master already has hermes access — nothing to change'),
+    resOff.kind === 'reply' ? resOff.text : resOff.kind,
+  )
+  check(
+    'set --hermes: master config unchanged',
+    loadConfig().projects['123456789012345678']?.hermes === undefined,
+  )
+}
+
 // --- peers config schema + effectivePeerLimits (FR1) -------------------------
 
 // Round-trip: project with full peers block
