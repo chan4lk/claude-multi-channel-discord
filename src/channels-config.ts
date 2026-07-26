@@ -90,6 +90,31 @@ const PeerLimitsSchema = z.object({
 export type PeerLimits = z.infer<typeof PeerLimitsSchema>
 
 /**
+ * Collab handoff config for a project.
+ * `roles`: stable role names (e.g. "reviewer") mapping to either an internal
+ * project slug or an external bot-peer id (must be in this project's
+ * `botPeers.allow` to resolve). Role config itself grants no reach — the
+ * `handoff` flag does.
+ * `timeoutMinutes`: per-project override for the handoff timeout sweep;
+ * falls back to defaults.collab then built-in (30).
+ */
+const CollabSchema = z.object({
+  roles: z.record(z.string(), z.string()).optional(),
+  timeoutMinutes: z.number().int().positive().optional(),
+}).strict()
+export type CollabConfig = z.infer<typeof CollabSchema>
+
+/**
+ * Limits-only variant for defaults.collab — no `roles` field (role maps are
+ * always per-project; there is no safe global default for handoff targets).
+ * Built-in fallback: timeoutMinutes 30.
+ */
+const CollabLimitsSchema = z.object({
+  timeoutMinutes: z.number().int().positive().optional(),
+}).strict()
+export type CollabLimits = z.infer<typeof CollabLimitsSchema>
+
+/**
  * Bot-peer dialogue config for a project.
  * `allow`: explicit list of Discord user-id snowflakes permitted to deliver
  * messages into this project's session as a machine peer.
@@ -305,6 +330,13 @@ const ProjectSchema = z.object({
    */
   peers: PeersSchema.optional(),
   /**
+   * Collab handoff config: role names → internal slug or external bot-peer
+   * id, plus a per-project handoff timeout. Configuring roles grants no
+   * reach by itself — the `handoff` flag gates the tool. Absent = no roles;
+   * `handoff` still works with literal slugs.
+   */
+  collab: CollabSchema.optional(),
+  /**
    * Backlog autopilot config. When present with `enabled: true`, MCD drives
    * the "create a backlog, then loop through all items" workflow for this
    * project: seeding a backlog if none exists, periodically injecting nudges
@@ -438,6 +470,11 @@ const DefaultsSchema = z.object({
    * cooldownSeconds 15.
    */
   peers: PeerLimitsSchema.optional(),
+  /**
+   * Default collab handoff limits. No `roles` field — role maps are always
+   * per-project. Built-in fallback: timeoutMinutes 30.
+   */
+  collab: CollabLimitsSchema.optional(),
   /**
    * Default autopilot sweep limits. No `enabled` field — autopilot is always
    * opted in per-project. Built-in fallbacks: intervalMinutes 30,
@@ -599,6 +636,66 @@ export function effectivePeerLimits(
       project.peers?.cooldownSeconds ??
       config.defaults.peers?.cooldownSeconds ??
       PEER_LIMITS_BUILT_IN.cooldownSeconds,
+  }
+}
+
+const COLLAB_TIMEOUT_BUILT_IN_MINUTES = 30
+
+/**
+ * Resolve the effective handoff timeout (minutes) for a project.
+ * Resolution order: project.collab → defaults.collab → built-in (30).
+ */
+export function effectiveCollabTimeout(config: ChannelsConfig, project: Project): number {
+  return (
+    project.collab?.timeoutMinutes ??
+    config.defaults.collab?.timeoutMinutes ??
+    COLLAB_TIMEOUT_BUILT_IN_MINUTES
+  )
+}
+
+export type CollabTarget =
+  | { kind: 'project'; slug: string; chatId: string }
+  | { kind: 'botPeer'; botId: string; chatId: string }
+  | { error: string }
+
+/**
+ * Resolve a handoff target for a source project. `roleOrSlug` is first
+ * looked up in the source project's `collab.roles`; when no role matches,
+ * the input itself is treated as the value (a literal slug or bot-peer id).
+ * The value then resolves, in order:
+ * - an existing project slug (never master, never the source itself) →
+ *   `{ kind: 'project' }`
+ * - an id in the source project's `botPeers.allow` → `{ kind: 'botPeer' }`
+ *   (chatId is the source channel — bot peers share the project channel)
+ * - otherwise `{ error }` naming the unresolvable value and the configured
+ *   role names (catches stale roles after a rename/delete).
+ */
+export function resolveCollabTarget(
+  config: ChannelsConfig,
+  sourceChatId: string,
+  roleOrSlug: string,
+): CollabTarget {
+  const source = findProjectByChatId(config, sourceChatId)
+  if (!source) return { error: `no project configured for chat ${sourceChatId}` }
+  const roles = source.collab?.roles ?? {}
+  const value = roles[roleOrSlug] ?? roleOrSlug
+  const roleNames = Object.keys(roles)
+  const rolesHint = roleNames.length > 0 ? roleNames.join(', ') : '(none)'
+  const hit = findProjectBySlug(config, value)
+  if (hit) {
+    if (isMasterChannel(config, hit.chatId)) {
+      return { error: `handoff target "${value}" is the master project — not a valid target` }
+    }
+    if (hit.chatId === sourceChatId) {
+      return { error: `handoff target "${value}" is the source project itself — not a valid target` }
+    }
+    return { kind: 'project', slug: hit.project.slug, chatId: hit.chatId }
+  }
+  if (source.botPeers?.allow.includes(value)) {
+    return { kind: 'botPeer', botId: value, chatId: sourceChatId }
+  }
+  return {
+    error: `cannot resolve handoff target "${value}": not an existing project slug or an id in botPeers.allow. configured roles: ${rolesHint}`,
   }
 }
 
