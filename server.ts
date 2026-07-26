@@ -1554,6 +1554,13 @@ async function maybeInitProjectsBackend(): Promise<void> {
       }
       routeNotification(cfg, notice, 'specclaw-halt escalate')
     },
+    isProjectDisabled: (chatId) => {
+      try {
+        return loadChannelsConfig().projects[chatId]?.disabled === true
+      } catch {
+        return false
+      }
+    },
   })
   scheduler.start()
 

@@ -253,6 +253,59 @@ function makeScheduler(opts: {
 }
 
 // ============================================================
+// isProjectDisabled dep — tick skip
+// ============================================================
+
+// PD-1: due schedule + isProjectDisabled=true → deliver NOT called, lastSkippedAt set
+{
+  const dir = mkdtempSync(join(tmpdir(), 'mcd-sched-test-'))
+  const prev = process.env.MCD_CHANNELS_DIR
+  process.env.MCD_CHANNELS_DIR = dir
+  try {
+    const DISABLED_CHAT = '444444444444444444'
+    const ENABLED_CHAT  = '555555555555555555'
+    writeSchedulesFile(dir, [
+      makeSchedule({ id: 's_disabled', chatId: DISABLED_CHAT }),
+      makeSchedule({ id: 's_enabled',  chatId: ENABLED_CHAT }),
+    ])
+    const delivered: Array<{ chatId: string }> = []
+    const scheduler = new Scheduler({
+      deliver: async (chatId, envelope) => { delivered.push({ chatId }) },
+      log: () => {},
+      isProjectDisabled: (chatId) => chatId === DISABLED_CHAT,
+    })
+    await scheduler.tick()
+    check('PD-1: disabled project → deliver NOT called for that chatId', !delivered.some(d => d.chatId === DISABLED_CHAT))
+    check('PD-1: enabled project → deliver IS called',                   delivered.some(d => d.chatId === ENABLED_CHAT))
+    const after = readSchedulesFile(dir)
+    const disabled = after.schedules.find(s => s.id === 's_disabled')!
+    check('PD-1: disabled → lastRunAt still null', disabled.lastRunAt === null)
+    check('PD-1: disabled → runCount still 0',     disabled.runCount === 0)
+    check('PD-1: disabled → lastSkippedAt set',    typeof disabled.lastSkippedAt === 'string' && disabled.lastSkippedAt.length > 0)
+  } finally {
+    process.env.MCD_CHANNELS_DIR = prev
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// PD-2: isProjectDisabled dep absent → fires as before (fail-open)
+// (Every existing test without the dep implicitly covers this; we verify explicitly)
+{
+  const dir = mkdtempSync(join(tmpdir(), 'mcd-sched-test-'))
+  const prev = process.env.MCD_CHANNELS_DIR
+  process.env.MCD_CHANNELS_DIR = dir
+  try {
+    writeSchedulesFile(dir, [makeSchedule()])
+    const { scheduler, delivered } = makeScheduler({ dir }) // no isProjectDisabled
+    await scheduler.tick()
+    check('PD-2: no dep → deliver called (fail-open)', delivered.length === 1)
+  } finally {
+    process.env.MCD_CHANNELS_DIR = prev
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// ============================================================
 // noteReply — AC1 schema round-trip (stopOnReply)
 // ============================================================
 
@@ -1094,6 +1147,40 @@ function makeAutopilotOpts(opts: {
   }
 }
 
+// AP-disabled: project with disabled=true is skipped by autopilot sweep — no deliver, no save
+{
+  const tmpDir = mkdtempSync(join(tmpdir(), 'mcd-ap-test-'))
+  try {
+    writeFileSync(join(tmpDir, 'BACKLOG.md'), '- [ ] task one\n')
+    const lastFireAt = new Date(Date.now() - 35 * 60_000).toISOString()
+    const { config, chatId } = makeAutopilotConfig({
+      autopilot: {
+        enabled: true,
+        state: 'running',
+        lastFireAt,
+        intervalMinutes: 30,
+        lastSnapshot: { done: 0, total: 1 },
+        zeroDeltaCount: 0,
+      },
+    })
+    // Inject disabled flag into the project
+    const disabledConfig: ChannelsConfig = {
+      ...config,
+      projects: {
+        ...config.projects,
+        [chatId]: { ...config.projects[chatId]!, disabled: true },
+      },
+    }
+    const sweepOpts = makeAutopilotOpts({ config: disabledConfig, projectDir: tmpDir, mcdDir: tmpDir })
+    const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+    await scheduler.runAutopilotSweep(sweepOpts)
+    check('AP-disabled: disabled project → no deliver', sweepOpts.delivered.length === 0)
+    check('AP-disabled: disabled project → no save',    sweepOpts.saved.length === 0)
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+}
+
 // ============================================================
 // runBacklogWatchSweep — AC3 skip cases + AC4 lifecycle
 // ============================================================
@@ -1244,6 +1331,30 @@ function makeWatchOpts(opts: { config: ChannelsConfig; projectDir?: string; mcdD
     await scheduler.runBacklogWatchSweep(sweepOpts)
     check('BW-5: source none → no save', sweepOpts.saved.length === 0)
     check('BW-5: source none → no alert', sweepOpts.alerts.length === 0)
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+}
+
+// BW-disabled: project with disabled=true skipped — no save, no alert
+{
+  const tmpDir = mkdtempSync(join(tmpdir(), 'mcd-bw-test-'))
+  try {
+    writeFileSync(join(tmpDir, 'BACKLOG.md'), '- [ ] task one\n')
+    const { config, chatId } = makeWatchConfig()
+    // Inject disabled flag
+    const disabledConfig: ChannelsConfig = {
+      ...config,
+      projects: {
+        ...config.projects,
+        [chatId]: { ...config.projects[chatId]!, disabled: true },
+      },
+    }
+    const sweepOpts = makeWatchOpts({ config: disabledConfig, projectDir: tmpDir, mcdDir: tmpDir })
+    const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+    await scheduler.runBacklogWatchSweep(sweepOpts)
+    check('BW-disabled: disabled project → no save',  sweepOpts.saved.length === 0)
+    check('BW-disabled: disabled project → no alert', sweepOpts.alerts.length === 0)
   } finally {
     rmSync(tmpDir, { recursive: true, force: true })
   }

@@ -671,6 +671,9 @@ export class MasterMcpServer {
             const target = findProjectBySlug(config, targetSlug)
             if (!target) return errorResult(`no project with slug "${targetSlug}"`)
 
+            // Refuse delivery to disabled projects
+            if (target.project.disabled) return errorResult('target project is disabled')
+
             // FR2: mutual consent — target must also allow source
             const srcProject = config.projects[chatId]!
             const srcAllows = srcProject.peers?.allow ?? []

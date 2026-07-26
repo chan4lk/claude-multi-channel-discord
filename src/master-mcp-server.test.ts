@@ -707,6 +707,57 @@ const noPeerCallRes = await rpc(peerUrl(PEER_C_CHAT), peerToken(PEER_C_CHAT), 't
 })
 check('AC6: project without peers.allow: ask_project → isError', noPeerCallRes.result?.isError === true, JSON.stringify(noPeerCallRes).slice(0, 200))
 
+// AC6-disabled: ask_project to a disabled target → isError, nothing delivered
+{
+  // Build a fresh server with project-b marked disabled
+  const DISABLED_MASTER = '111111111111111120'
+  const DISABLED_A      = '111111111111111121'
+  const DISABLED_B      = '111111111111111122'  // target; disabled
+
+  const disabledPeerConfig = {
+    version: 1 as const,
+    master: { chatId: DISABLED_MASTER, commandPrefix: '!project' },
+    defaults: {
+      model: 'sonnet',
+      idleEvictMinutes: 15,
+      maxConcurrent: 8,
+      git: { userName: 'bot', userEmail: 'bot@local', branchPrefix: 'claude/' },
+      claude: { permissionMode: 'auto' as const },
+      providers: {},
+      progressMode: 'off' as const,
+      handoff: false,
+      contextWarningThresholdPct: 80,
+    },
+    projects: {
+      [DISABLED_A]: { slug: 'da-src', peers: { allow: ['da-tgt'] } },
+      [DISABLED_B]: { slug: 'da-tgt', peers: { allow: ['da-src'] }, disabled: true },
+    },
+  } as unknown as import('./channels-config.ts').ChannelsConfig
+
+  const disabledInjected: Array<{ chatId: string }> = []
+  const disabledPool = {
+    deliver: async (chatId: string) => { disabledInjected.push({ chatId }) },
+  } as unknown as import('./project-pool.ts').ProjectPool
+
+  const serverDisabled = new MasterMcpServer({
+    onReply: () => {},
+    getMasterChatId: () => DISABLED_MASTER,
+    getPool: () => disabledPool,
+    getConfig: () => disabledPeerConfig,
+    log: () => {},
+  })
+  const { host: dh, port: dp } = await serverDisabled.start()
+
+  const disabledRes = await rpc(`http://${dh}:${dp}/mcp/${DISABLED_A}`, serverDisabled.tokenFor(DISABLED_A), 'tools/call', {
+    name: 'ask_project',
+    arguments: { target_slug: 'da-tgt', text: 'hello to disabled' },
+  })
+  check('AC6-disabled: ask_project to disabled target → isError', disabledRes.result?.isError === true, JSON.stringify(disabledRes).slice(0, 200))
+  check('AC6-disabled: disabled target → nothing delivered', disabledInjected.length === 0)
+
+  await serverDisabled.stop()
+}
+
 // ─── AC7: share_learning + read_learnings tool-level tests ───────────────────
 // Use a temp dir so we don't write to the real MCD_CHANNELS_DIR.
 {

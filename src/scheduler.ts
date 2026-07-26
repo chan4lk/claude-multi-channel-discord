@@ -131,6 +131,12 @@ export interface SchedulerDeps {
    * Used by the server to post a 🛑 notice to the master channel.
    */
   onEscalate?: (schedule: Schedule, change: string, evidence: string) => void
+  /**
+   * Returns true when the target project is disabled. Due schedules for
+   * disabled projects are skipped (not deleted). Absent = fail-open
+   * (schedules fire as before regardless of project state).
+   */
+  isProjectDisabled?: (chatId: string) => boolean
 }
 
 export class Scheduler {
@@ -230,6 +236,16 @@ export class Scheduler {
           dirty = true
           continue
         }
+      }
+
+      // Skip schedules for disabled projects. The schedule stays registered
+      // and lastSkippedAt is updated so it doesn't re-fire on the next tick.
+      if (this.deps.isProjectDisabled?.(s.chatId)) {
+        this.log(`skipping schedule ${s.id} → chat ${s.chatId} (project disabled)`)
+        appendScheduleLog(s.chatId, s.at ?? s.interval ?? 'unknown', now.toISOString(), 'skipped', 0, 'project disabled')
+        s.lastSkippedAt = now.toISOString()
+        dirty = true
+        continue
       }
 
       this.log(`firing schedule ${s.id} → chat ${s.chatId}`)
@@ -560,6 +576,9 @@ export class Scheduler {
       // Defensively skip master channel
       if (config.master?.chatId === chatId) continue
 
+      // Skip disabled projects — autopilot should not drive a disabled session
+      if (project.disabled) continue
+
       // Busy gate (5-min grace)
       if (opts.pool.isBusy?.(chatId, 5 * 60_000)) {
         this.log(`[autopilot] ${project.slug}: busy-skip`)
@@ -684,6 +703,9 @@ export class Scheduler {
 
         // Autopilot owns stall signaling when enabled — one owner per project
         if (project.autopilot?.enabled) continue
+
+        // Skip disabled projects — no watch alerts for disabled sessions
+        if (project.disabled) continue
 
         const enabled =
           project.backlogWatch?.enabled ?? config.defaults?.backlogWatch?.enabled ?? true
