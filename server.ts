@@ -1467,6 +1467,20 @@ async function maybeInitProjectsBackend(): Promise<void> {
       if (evt.kind === 'budget-exhausted') {
         process.stderr.write(`pool: budget-exhausted for ${evt.slug}, queue=${evt.queuedCount}\n`)
       }
+      if (evt.kind === 'disabled-drop') {
+        process.stderr.write(`pool: disabled-drop for ${evt.slug} (${evt.chatId})\n`)
+        const now = Date.now()
+        if (now - (disabledNoticeAt.get(evt.chatId) ?? 0) >= 5 * 60_000) {
+          disabledNoticeAt.set(evt.chatId, now)
+          const cfg = loadChannelsConfig()
+          const notice: OutboundReply = {
+            kind: 'text',
+            chatId: evt.chatId,
+            text: 'project disabled. use master to enable',
+          }
+          void routeNotification(cfg, notice, 'disabled-drop notify')
+        }
+      }
       if (evt.kind === 'session-rotated') {
         const kb = Math.round(evt.transcriptBytes / 1024)
         const cfg = loadChannelsConfig()
@@ -1539,6 +1553,13 @@ async function maybeInitProjectsBackend(): Promise<void> {
         text: `🛑 **${slug}**: specclaw loop halted on **${change}** — ${evidence}. schedule **${sched.id}** suspended; \`schedule resume ${sched.id}\` after fixing.`,
       }
       routeNotification(cfg, notice, 'specclaw-halt escalate')
+    },
+    isProjectDisabled: (chatId) => {
+      try {
+        return loadChannelsConfig().projects[chatId]?.disabled === true
+      } catch {
+        return false
+      }
     },
   })
   scheduler.start()
@@ -1643,6 +1664,20 @@ async function maybeInitProjectsBackend(): Promise<void> {
       routeNotification(cfg, { kind: 'text', chatId: masterChatId, text }, 'backlog-watch alert')
     },
     mcdDir: channelsDir(),
+  })
+
+  // Auto-disable sweep: disable projects idle longer than defaults.autoDisable.idleDays
+  scheduler.registerAutoDisableSweep({
+    getChannels: () => loadChannelsConfig(),
+    saveChannels: (cfg) => saveConfig(cfg),
+    projectDirFor: (slug) => projectDir(slug),
+    onAutoDisable: (slug, _chatId, idleDays) => {
+      const cfg = loadChannelsConfig()
+      const masterChatId = cfg.master?.chatId
+      if (!masterChatId) return
+      const text = `⛔ auto-disabled **${slug}** — idle ${idleDays}d+. re-enable: \`!project set ${slug} --disabled off\``
+      routeNotification(cfg, { kind: 'text', chatId: masterChatId, text }, 'auto-disable notify')
+    },
   })
 
   // Nightly GOALS.md reconcile cron (02:00 local)
@@ -1798,6 +1833,8 @@ const postProgressMsgIds = new Map<string, string>()
 const phasesProgressState = new Map<string, { msgId: string; lines: string[] }>()
 /** Watchdog progress-skip: one message per stuck episode, edited in place. */
 const progressSkipState = new Map<string, { episodeId: number; msgId: string }>()
+/** Throttle: last time a disabled-drop notice was sent per chatId (epoch ms). */
+const disabledNoticeAt = new Map<string, number>()
 
 /**
  * Collapse watchdog still-working ticks into one message per stuck episode.

@@ -253,6 +253,59 @@ function makeScheduler(opts: {
 }
 
 // ============================================================
+// isProjectDisabled dep — tick skip
+// ============================================================
+
+// PD-1: due schedule + isProjectDisabled=true → deliver NOT called, lastSkippedAt set
+{
+  const dir = mkdtempSync(join(tmpdir(), 'mcd-sched-test-'))
+  const prev = process.env.MCD_CHANNELS_DIR
+  process.env.MCD_CHANNELS_DIR = dir
+  try {
+    const DISABLED_CHAT = '444444444444444444'
+    const ENABLED_CHAT  = '555555555555555555'
+    writeSchedulesFile(dir, [
+      makeSchedule({ id: 's_disabled', chatId: DISABLED_CHAT }),
+      makeSchedule({ id: 's_enabled',  chatId: ENABLED_CHAT }),
+    ])
+    const delivered: Array<{ chatId: string }> = []
+    const scheduler = new Scheduler({
+      deliver: async (chatId, envelope) => { delivered.push({ chatId }) },
+      log: () => {},
+      isProjectDisabled: (chatId) => chatId === DISABLED_CHAT,
+    })
+    await scheduler.tick()
+    check('PD-1: disabled project → deliver NOT called for that chatId', !delivered.some(d => d.chatId === DISABLED_CHAT))
+    check('PD-1: enabled project → deliver IS called',                   delivered.some(d => d.chatId === ENABLED_CHAT))
+    const after = readSchedulesFile(dir)
+    const disabled = after.schedules.find(s => s.id === 's_disabled')!
+    check('PD-1: disabled → lastRunAt still null', disabled.lastRunAt === null)
+    check('PD-1: disabled → runCount still 0',     disabled.runCount === 0)
+    check('PD-1: disabled → lastSkippedAt set',    typeof disabled.lastSkippedAt === 'string' && disabled.lastSkippedAt.length > 0)
+  } finally {
+    process.env.MCD_CHANNELS_DIR = prev
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// PD-2: isProjectDisabled dep absent → fires as before (fail-open)
+// (Every existing test without the dep implicitly covers this; we verify explicitly)
+{
+  const dir = mkdtempSync(join(tmpdir(), 'mcd-sched-test-'))
+  const prev = process.env.MCD_CHANNELS_DIR
+  process.env.MCD_CHANNELS_DIR = dir
+  try {
+    writeSchedulesFile(dir, [makeSchedule()])
+    const { scheduler, delivered } = makeScheduler({ dir }) // no isProjectDisabled
+    await scheduler.tick()
+    check('PD-2: no dep → deliver called (fail-open)', delivered.length === 1)
+  } finally {
+    process.env.MCD_CHANNELS_DIR = prev
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// ============================================================
 // noteReply — AC1 schema round-trip (stopOnReply)
 // ============================================================
 
@@ -1094,6 +1147,40 @@ function makeAutopilotOpts(opts: {
   }
 }
 
+// AP-disabled: project with disabled=true is skipped by autopilot sweep — no deliver, no save
+{
+  const tmpDir = mkdtempSync(join(tmpdir(), 'mcd-ap-test-'))
+  try {
+    writeFileSync(join(tmpDir, 'BACKLOG.md'), '- [ ] task one\n')
+    const lastFireAt = new Date(Date.now() - 35 * 60_000).toISOString()
+    const { config, chatId } = makeAutopilotConfig({
+      autopilot: {
+        enabled: true,
+        state: 'running',
+        lastFireAt,
+        intervalMinutes: 30,
+        lastSnapshot: { done: 0, total: 1 },
+        zeroDeltaCount: 0,
+      },
+    })
+    // Inject disabled flag into the project
+    const disabledConfig: ChannelsConfig = {
+      ...config,
+      projects: {
+        ...config.projects,
+        [chatId]: { ...config.projects[chatId]!, disabled: true },
+      },
+    }
+    const sweepOpts = makeAutopilotOpts({ config: disabledConfig, projectDir: tmpDir, mcdDir: tmpDir })
+    const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+    await scheduler.runAutopilotSweep(sweepOpts)
+    check('AP-disabled: disabled project → no deliver', sweepOpts.delivered.length === 0)
+    check('AP-disabled: disabled project → no save',    sweepOpts.saved.length === 0)
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+}
+
 // ============================================================
 // runBacklogWatchSweep — AC3 skip cases + AC4 lifecycle
 // ============================================================
@@ -1249,6 +1336,30 @@ function makeWatchOpts(opts: { config: ChannelsConfig; projectDir?: string; mcdD
   }
 }
 
+// BW-disabled: project with disabled=true skipped — no save, no alert
+{
+  const tmpDir = mkdtempSync(join(tmpdir(), 'mcd-bw-test-'))
+  try {
+    writeFileSync(join(tmpDir, 'BACKLOG.md'), '- [ ] task one\n')
+    const { config, chatId } = makeWatchConfig()
+    // Inject disabled flag
+    const disabledConfig: ChannelsConfig = {
+      ...config,
+      projects: {
+        ...config.projects,
+        [chatId]: { ...config.projects[chatId]!, disabled: true },
+      },
+    }
+    const sweepOpts = makeWatchOpts({ config: disabledConfig, projectDir: tmpDir, mcdDir: tmpDir })
+    const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+    await scheduler.runBacklogWatchSweep(sweepOpts)
+    check('BW-disabled: disabled project → no save',  sweepOpts.saved.length === 0)
+    check('BW-disabled: disabled project → no alert', sweepOpts.alerts.length === 0)
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+}
+
 // BW-6: AC4 lifecycle — init → stale alert → throttle → delta clears latch
 {
   const tmpDir = mkdtempSync(join(tmpdir(), 'mcd-bw-test-'))
@@ -1310,6 +1421,256 @@ function makeWatchOpts(opts: { config: ChannelsConfig; projectDir?: string; mcdD
   } finally {
     rmSync(tmpDir, { recursive: true, force: true })
   }
+}
+
+// ============================================================
+// runAutoDisableSweep — AC12–AC14 + enabledAt baseline + clamp edge
+// ============================================================
+
+import type { ChannelsConfig as ChannelsConfigForAD } from './channels-config.ts'
+
+/**
+ * Build a minimal ChannelsConfig for auto-disable sweep tests.
+ */
+function makeAdConfig(overrides: {
+  chatId?: string
+  slug?: string
+  masterChatId?: string
+  disabled?: boolean
+  autoDisable?: boolean
+  enabledAt?: string
+  autoDisableDefaults?: { enabled: boolean; idleDays?: number }
+} = {}): { config: ChannelsConfigForAD; chatId: string } {
+  const chatId = overrides.chatId ?? '444444444444444444'
+  const slug = overrides.slug ?? 'adproj'
+  const config: ChannelsConfigForAD = {
+    version: 1,
+    master: overrides.masterChatId ? { chatId: overrides.masterChatId, commandPrefix: '!project' } : undefined,
+    defaults: {
+      model: 'sonnet',
+      idleEvictMinutes: 15,
+      maxConcurrent: 8,
+      git: { userName: 'bot', userEmail: 'bot@local', branchPrefix: 'claude/' },
+      claude: { permissionMode: 'auto' },
+      providers: {},
+      progressMode: 'off',
+      handoff: false,
+      contextWarningThresholdPct: 80,
+      ...(overrides.autoDisableDefaults
+        ? { autoDisable: overrides.autoDisableDefaults as ChannelsConfigForAD['defaults']['autoDisable'] }
+        : {}),
+    },
+    projects: {
+      [chatId]: {
+        slug,
+        ...(overrides.disabled !== undefined ? { disabled: overrides.disabled } : {}),
+        ...(overrides.autoDisable !== undefined ? { autoDisable: overrides.autoDisable } : {}),
+        ...(overrides.enabledAt !== undefined ? { enabledAt: overrides.enabledAt } : {}),
+      },
+    },
+  }
+  return { config, chatId }
+}
+
+/**
+ * Build minimal auto-disable sweep opts with mocked deps.
+ */
+function makeAdOpts(opts: {
+  config: ChannelsConfigForAD
+  transcriptMtimeFor?: (slug: string) => number | null
+  nowMs?: () => number
+}): {
+  getChannels: () => ChannelsConfigForAD
+  saveChannels: (cfg: ChannelsConfigForAD) => void
+  projectDirFor: (slug: string) => string
+  transcriptMtimeFor?: (slug: string) => number | null
+  nowMs?: () => number
+  onAutoDisable: (slug: string, chatId: string, idleDays: number) => void
+  saved: ChannelsConfigForAD[]
+  disabled: Array<{ slug: string; chatId: string; idleDays: number }>
+} {
+  const saved: ChannelsConfigForAD[] = []
+  const disabled: Array<{ slug: string; chatId: string; idleDays: number }> = []
+  let currentConfig = opts.config
+  return {
+    getChannels: () => currentConfig,
+    saveChannels: (cfg: ChannelsConfigForAD) => { saved.push(cfg); currentConfig = cfg },
+    projectDirFor: () => '/nonexistent-ad',
+    transcriptMtimeFor: opts.transcriptMtimeFor,
+    nowMs: opts.nowMs,
+    onAutoDisable: (slug, chatId, idleDays) => { disabled.push({ slug, chatId, idleDays }) },
+    saved,
+    disabled,
+  }
+}
+
+// AC12a: project idle 8 days (threshold 7) → disabled, enabledAt removed, onAutoDisable called
+{
+  const NOW = 1_000_000_000_000
+  const MTIME_8D_AGO = NOW - 8 * 86_400_000
+  const { config, chatId } = makeAdConfig({
+    autoDisableDefaults: { enabled: true, idleDays: 7 },
+  })
+  const sweepOpts = makeAdOpts({
+    config,
+    transcriptMtimeFor: () => MTIME_8D_AGO,
+    nowMs: () => NOW,
+  })
+  const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+  await scheduler.runAutoDisableSweep(sweepOpts)
+  check('AC12a: idle 8d > 7d → saved once', sweepOpts.saved.length === 1)
+  const savedProj = sweepOpts.saved[0]?.projects[chatId]
+  check('AC12a: disabled set true', savedProj?.disabled === true)
+  check('AC12a: enabledAt removed', !Object.prototype.hasOwnProperty.call(savedProj, 'enabledAt'))
+  check('AC12a: onAutoDisable called', sweepOpts.disabled.length === 1)
+  check('AC12a: onAutoDisable slug', sweepOpts.disabled[0]?.slug === 'adproj')
+  check('AC12a: onAutoDisable chatId', sweepOpts.disabled[0]?.chatId === chatId)
+  check('AC12a: onAutoDisable idleDays', sweepOpts.disabled[0]?.idleDays === 7)
+}
+
+// AC12b: project idle 2 days (threshold 7) → untouched
+{
+  const NOW = 1_000_000_000_000
+  const MTIME_2D_AGO = NOW - 2 * 86_400_000
+  const { config } = makeAdConfig({
+    autoDisableDefaults: { enabled: true, idleDays: 7 },
+  })
+  const sweepOpts = makeAdOpts({
+    config,
+    transcriptMtimeFor: () => MTIME_2D_AGO,
+    nowMs: () => NOW,
+  })
+  const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+  await scheduler.runAutoDisableSweep(sweepOpts)
+  check('AC12b: idle 2d < 7d → no save', sweepOpts.saved.length === 0)
+  check('AC12b: idle 2d → no disable', sweepOpts.disabled.length === 0)
+}
+
+// AC13a: master chatId skipped
+{
+  const NOW = 1_000_000_000_000
+  const MASTER_CHAT_ID = '555555555555555555'
+  const { config } = makeAdConfig({
+    chatId: MASTER_CHAT_ID,
+    masterChatId: MASTER_CHAT_ID,
+    autoDisableDefaults: { enabled: true, idleDays: 7 },
+  })
+  const sweepOpts = makeAdOpts({
+    config,
+    transcriptMtimeFor: () => NOW - 30 * 86_400_000,
+    nowMs: () => NOW,
+  })
+  const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+  await scheduler.runAutoDisableSweep(sweepOpts)
+  check('AC13a: master → no save', sweepOpts.saved.length === 0)
+  check('AC13a: master → no disable', sweepOpts.disabled.length === 0)
+}
+
+// AC13b: already disabled project skipped
+{
+  const NOW = 1_000_000_000_000
+  const { config } = makeAdConfig({
+    disabled: true,
+    autoDisableDefaults: { enabled: true, idleDays: 7 },
+  })
+  const sweepOpts = makeAdOpts({
+    config,
+    transcriptMtimeFor: () => NOW - 30 * 86_400_000,
+    nowMs: () => NOW,
+  })
+  const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+  await scheduler.runAutoDisableSweep(sweepOpts)
+  check('AC13b: already disabled → no save', sweepOpts.saved.length === 0)
+  check('AC13b: already disabled → no disable callback', sweepOpts.disabled.length === 0)
+}
+
+// AC13c: project with autoDisable: false → skipped even with old transcript
+{
+  const NOW = 1_000_000_000_000
+  const { config } = makeAdConfig({
+    autoDisable: false,
+    autoDisableDefaults: { enabled: true, idleDays: 7 },
+  })
+  const sweepOpts = makeAdOpts({
+    config,
+    transcriptMtimeFor: () => NOW - 30 * 86_400_000,
+    nowMs: () => NOW,
+  })
+  const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+  await scheduler.runAutoDisableSweep(sweepOpts)
+  check('AC13c: autoDisable=false → no save', sweepOpts.saved.length === 0)
+  check('AC13c: autoDisable=false → no disable callback', sweepOpts.disabled.length === 0)
+}
+
+// AC13d: no transcript (null mtime) → skipped
+{
+  const NOW = 1_000_000_000_000
+  const { config } = makeAdConfig({
+    autoDisableDefaults: { enabled: true, idleDays: 7 },
+  })
+  const sweepOpts = makeAdOpts({
+    config,
+    transcriptMtimeFor: () => null,
+    nowMs: () => NOW,
+  })
+  const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+  await scheduler.runAutoDisableSweep(sweepOpts)
+  check('AC13d: no transcript → no save', sweepOpts.saved.length === 0)
+  check('AC13d: no transcript → no disable callback', sweepOpts.disabled.length === 0)
+}
+
+// AC14a: defaults.autoDisable absent → no-op
+{
+  const NOW = 1_000_000_000_000
+  const { config } = makeAdConfig({
+    // no autoDisableDefaults
+  })
+  const sweepOpts = makeAdOpts({
+    config,
+    transcriptMtimeFor: () => NOW - 30 * 86_400_000,
+    nowMs: () => NOW,
+  })
+  const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+  await scheduler.runAutoDisableSweep(sweepOpts)
+  check('AC14a: no autoDisable config → no save', sweepOpts.saved.length === 0)
+  check('AC14a: no autoDisable config → no disable callback', sweepOpts.disabled.length === 0)
+}
+
+// AC14b: defaults.autoDisable.enabled false → no-op
+{
+  const NOW = 1_000_000_000_000
+  const { config } = makeAdConfig({
+    autoDisableDefaults: { enabled: false, idleDays: 7 },
+  })
+  const sweepOpts = makeAdOpts({
+    config,
+    transcriptMtimeFor: () => NOW - 30 * 86_400_000,
+    nowMs: () => NOW,
+  })
+  const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+  await scheduler.runAutoDisableSweep(sweepOpts)
+  check('AC14b: enabled=false → no save', sweepOpts.saved.length === 0)
+  check('AC14b: enabled=false → no disable callback', sweepOpts.disabled.length === 0)
+}
+
+// enabledAt baseline: 30d-old transcript + enabledAt 1d ago → idle computed from enabledAt → untouched
+{
+  const NOW = 1_000_000_000_000
+  const MTIME_30D_AGO = NOW - 30 * 86_400_000
+  const ENABLED_AT_1D_AGO = new Date(NOW - 1 * 86_400_000).toISOString()
+  const { config } = makeAdConfig({
+    enabledAt: ENABLED_AT_1D_AGO,
+    autoDisableDefaults: { enabled: true, idleDays: 7 },
+  })
+  const sweepOpts = makeAdOpts({
+    config,
+    transcriptMtimeFor: () => MTIME_30D_AGO,
+    nowMs: () => NOW,
+  })
+  const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+  await scheduler.runAutoDisableSweep(sweepOpts)
+  check('enabledAt baseline: enabledAt 1d ago overrides 30d mtime → no disable', sweepOpts.disabled.length === 0)
+  check('enabledAt baseline: no save', sweepOpts.saved.length === 0)
 }
 
 // ============================================================

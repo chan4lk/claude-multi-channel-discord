@@ -142,6 +142,17 @@ Specclaw projects loop pending changes/tasks instead of BACKLOG.md (specclaw win
 
 **Backlog stall watch** — even without autopilot, an hourly sweep watches every project that has a backlog (`BACKLOG.md` or specclaw changes) and posts a 📋 digest to the master channel when open items haven't moved for 3+ days (configurable via `backlogWatch.staleBacklogDays`, listing up to 10 open items). Enabled by default; opt a project out with `backlogWatch.enabled: false` in `channels.json`. Projects running autopilot are skipped — autopilot escalates its own stalls. Catches the "one item quietly stuck for a week while everything else moves" case.
 
+**Disable a channel** — take a project offline without deleting it:
+
+```
+!project set <slug> --disabled on    — stop the warm session; inbound no longer reaches Claude
+!project set <slug> --disabled off   — re-enable (session resumes on next message)
+```
+
+While disabled, messages get a throttled `project disabled. use master to enable` notice (once per 5 min), schedules are skipped (kept, not deleted), autopilot/backlog-watch/`ask_project` skip the project, and `!project list` marks it `⛔`. The master channel can't be disabled.
+
+Optional **auto-disable sweep** — disable channels idle for a week automatically. In `channels.json` under `defaults`: `"autoDisable": { "enabled": true, "idleDays": 7 }`. The hourly sweep disables any project whose session transcript hasn't been touched in `idleDays` (any activity counts — human messages, schedule fires, autopilot nudges) and posts `⛔ auto-disabled <slug>` to the master channel. Exempt a project with `autoDisable: false` on its entry; re-enabling stamps a fresh idle window.
+
 ---
 
 ## WhatsApp setup (optional)
@@ -314,6 +325,15 @@ Hermes itself must already be set up on the host (provider auth + Discord gatewa
 ```
 
 Run logs and metadata live under `<MCD_CHANNELS_DIR>/hermes-runs/`.
+
+**3. (Optional) Grant a project channel access** — by default only the master session sees `hermes_run`. To let a project's Claude launch Hermes runs itself (e.g. a deploy from its own channel):
+
+```
+!project set <slug> --hermes on --yes      — grant (requires --yes: host-level ops reach)
+!project set <slug> --hermes off           — revoke
+```
+
+Project-initiated runs report back to the project's own channel, and every launch posts an audit notice to the master channel (`🛰 hermes run <id> launched by <slug>: "..."`). Report-back is Discord-only — Teams/WhatsApp projects can be opted in, but the Hermes-side report won't reach those channels.
 
 **Restart-MCD recipe:** `!project hermes "Restart the MCD Discord bot: kill the bun server.ts process whose cwd is */multi-channel-discord, then start it again with MCD_CHANNELS_DIR=~/.claude/channels/discord-multi bun server.ts inside the mcd tmux session, verify it comes up"` — the wrapped prompt already tells Hermes to wait 5 seconds before destructive steps and to report back via `hermes send` when done.
 

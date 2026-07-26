@@ -249,7 +249,7 @@ Verbs and their handlers:
 | `show` / `status` | — | config + prompt preview + live `gitStatusSummary()` if the dir is a working tree |
 | `create` | `channels.json`, `access.json`, `projects/<slug>/`, optional Discord channel | with `--repo-dir` symlinks to an existing checkout instead of mkdir; with `--new-channel` does a find-or-create on the master's guild |
 | `clone` | `channels.json`, `access.json`, `projects/<slug>/.git/...`, optional Discord channel | runs `git clone` with the resolved credential env; rolls back any auto-created channel on failure |
-| `set` | `projects/<slug>/CLAUDE.md`; optionally kills running subprocess; `--bot-peers`/`--peers` update `channels.json` | claude re-reads CLAUDE.md on next spawn; `--bot-peers <csv> --yes` / `--bot-peers none`; `--peers <slug,...>` / `--peers none` |
+| `set` | `projects/<slug>/CLAUDE.md`; optionally kills running subprocess; `--bot-peers`/`--peers`/`--hermes` update `channels.json` | claude re-reads CLAUDE.md on next spawn; `--bot-peers <csv> --yes` / `--bot-peers none`; `--peers <slug,...>` / `--peers none`; `--hermes on --yes` / `--hermes off` (grants/revokes the project's `hermes_run` tool; master target is a warn no-op) |
 | `rename` | `channels.json`, `projects/<slug>/` directory | kills running subprocess first to avoid pulling cwd out from under it |
 | `remote` | `channels.json` git block; optionally `git remote set-url` | view-only when called without `--set` |
 | `pull` | working tree | `git pull --ff-only`; refuses on non-FF |
@@ -293,7 +293,7 @@ The `MasterMutator` interface is the dependency-injection seam — the parser do
 
 - `master.chatId` + `master.commandPrefix` (default `!project`)
 - `defaults.{model, idleEvictMinutes, maxConcurrent, git.{userName,userEmail,credentials,branchPrefix}, claude.{permissionMode,allowedTools,disallowedTools,extraArgs}, providers.<alias>.{baseUrl,apiKeyEnv}, provider?}`
-- `projects[<chat_id>].{slug, model?, git?, claude?, provider?, platform?, whatsappJid?, botPeers?, peers?}` — per-project overrides; `platform` is `'discord' | 'teams' | 'whatsapp'` (default `'discord'`); `whatsappJid` (e.g. `15551234567@s.whatsapp.net`) is required when `platform === 'whatsapp'`; `peers: { allow: slug[], maxHops?, cooldownSeconds? }` enables cross-project dialogue when non-empty and mutual
+- `projects[<chat_id>].{slug, model?, git?, claude?, provider?, platform?, whatsappJid?, botPeers?, peers?, hermes?}` — per-project overrides; `platform` is `'discord' | 'teams' | 'whatsapp'` (default `'discord'`); `whatsappJid` (e.g. `15551234567@s.whatsapp.net`) is required when `platform === 'whatsapp'`; `peers: { allow: slug[], maxHops?, cooldownSeconds? }` enables cross-project dialogue when non-empty and mutual; `hermes: { enabled }` grants the project's Claude the `hermes_run` MCP tool (requires `defaults.hermes.enabled`; project runs report to their own channel and post a master audit notice)
 - `defaults.peers.{maxHops?, cooldownSeconds?}` — limits-only defaults for cross-project dialogue; built-in fallbacks: maxHops 6, cooldownSeconds 15
 
 `git-credentials.json` aliases (mode 0600 enforced by the loader):

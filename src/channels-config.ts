@@ -193,6 +193,18 @@ const DefaultsBacklogWatchSchema = z.object({
 }).strict()
 export type DefaultsBacklogWatch = z.infer<typeof DefaultsBacklogWatchSchema>
 
+/**
+ * Per-project Hermes access. When enabled (and defaults.hermes.enabled is
+ * true), this project's Claude session gains the `hermes_run` MCP tool —
+ * detached host-level ops runs via the Hermes bridge. Off by default:
+ * hermes runs with --yolo on the host, so the operator must opt each
+ * project in explicitly (`!project set <target> --hermes on --yes`).
+ */
+const ProjectHermesSchema = z.object({
+  enabled: z.boolean().default(false),
+}).strict()
+export type ProjectHermesConfig = z.infer<typeof ProjectHermesSchema>
+
 const ProjectSchema = z.object({
   slug: SlugSchema,
   /**
@@ -233,6 +245,8 @@ const ProjectSchema = z.object({
    * operator must opt each source project in (or flip defaults.handoff).
    */
   handoff: z.boolean().optional(),
+  /** Per-project Hermes bridge access (see ProjectHermesSchema). */
+  hermes: ProjectHermesSchema.optional(),
   /**
    * Override the watchdog base threshold for this project. Default is 5 min.
    * Set higher for channels that run long pipelines (TTS, video rendering).
@@ -310,6 +324,26 @@ const ProjectSchema = z.object({
    * sweep and persisted here — do not edit them by hand.
    */
   backlogWatch: BacklogWatchSchema.optional(),
+  /**
+   * When true, inbound messages are silently dropped and the project's
+   * Claude subprocess is never spawned. Absent or false = enabled (normal
+   * operation). Set by `!project set <target> --disabled on|off` or by
+   * the auto-disable sweep.
+   */
+  disabled: z.boolean().optional(),
+  /**
+   * MCD-maintained ISO timestamp written by `set --disabled off` when a
+   * project is re-enabled. Gives the project a fresh idle baseline so the
+   * auto-disable sweep doesn't immediately re-disable it. Removed on any
+   * disable. Not operator-set.
+   */
+  enabledAt: z.string().optional(),
+  /**
+   * Per-project override for the auto-disable sweep.
+   * When false, this project is never auto-disabled regardless of the
+   * defaults.autoDisable setting. Absent = follow defaults.
+   */
+  autoDisable: z.boolean().optional(),
 }).superRefine((val, ctx) => {
   if (val.platform === 'whatsapp' && !val.whatsappJid) {
     ctx.addIssue({
@@ -415,6 +449,16 @@ const DefaultsSchema = z.object({
    * always per-project. Built-in fallbacks: enabled true, staleBacklogDays 3.
    */
   backlogWatch: DefaultsBacklogWatchSchema.optional(),
+  /**
+   * Opt-in hourly sweep that auto-disables projects idle longer than
+   * `idleDays` (default 7). Absent or `enabled: false` = no auto-disable.
+   * Per-project `autoDisable: false` exempts a project from the sweep
+   * even when this default is on.
+   */
+  autoDisable: z.object({
+    enabled: z.boolean(),
+    idleDays: z.number().int().positive().default(7),
+  }).strict().optional(),
 })
 
 const MasterSchema = z.object({

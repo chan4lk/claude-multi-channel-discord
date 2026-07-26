@@ -131,6 +131,12 @@ export interface SchedulerDeps {
    * Used by the server to post a 🛑 notice to the master channel.
    */
   onEscalate?: (schedule: Schedule, change: string, evidence: string) => void
+  /**
+   * Returns true when the target project is disabled. Due schedules for
+   * disabled projects are skipped (not deleted). Absent = fail-open
+   * (schedules fire as before regardless of project state).
+   */
+  isProjectDisabled?: (chatId: string) => boolean
 }
 
 export class Scheduler {
@@ -230,6 +236,16 @@ export class Scheduler {
           dirty = true
           continue
         }
+      }
+
+      // Skip schedules for disabled projects. The schedule stays registered
+      // and lastSkippedAt is updated so it doesn't re-fire on the next tick.
+      if (this.deps.isProjectDisabled?.(s.chatId)) {
+        this.log(`skipping schedule ${s.id} → chat ${s.chatId} (project disabled)`)
+        appendScheduleLog(s.chatId, s.at ?? s.interval ?? 'unknown', now.toISOString(), 'skipped', 0, 'project disabled')
+        s.lastSkippedAt = now.toISOString()
+        dirty = true
+        continue
       }
 
       this.log(`firing schedule ${s.id} → chat ${s.chatId}`)
@@ -560,6 +576,9 @@ export class Scheduler {
       // Defensively skip master channel
       if (config.master?.chatId === chatId) continue
 
+      // Skip disabled projects — autopilot should not drive a disabled session
+      if (project.disabled) continue
+
       // Busy gate (5-min grace)
       if (opts.pool.isBusy?.(chatId, 5 * 60_000)) {
         this.log(`[autopilot] ${project.slug}: busy-skip`)
@@ -685,6 +704,9 @@ export class Scheduler {
         // Autopilot owns stall signaling when enabled — one owner per project
         if (project.autopilot?.enabled) continue
 
+        // Skip disabled projects — no watch alerts for disabled sessions
+        if (project.disabled) continue
+
         const enabled =
           project.backlogWatch?.enabled ?? config.defaults?.backlogWatch?.enabled ?? true
         if (!enabled) continue
@@ -735,6 +757,103 @@ export class Scheduler {
         }
       } catch (err) {
         this.log(`[backlog-watch] ${project.slug}: sweep error — ${(err as Error).message}`)
+      }
+    }
+  }
+
+  /**
+   * Register a periodic sweep that auto-disables projects that have been idle
+   * longer than `defaults.autoDisable.idleDays`. Idle is measured by the mtime
+   * of the newest transcript `.jsonl` file, clamped against `enabledAt` so a
+   * recently re-enabled project gets a fresh baseline.
+   *
+   * Safe to call once at startup — re-registering creates an additional timer,
+   * so don't call more than once.
+   *
+   * @param opts.transcriptMtimeFor - **Test-only injection.** When provided,
+   *   replaces the real `newestTranscriptMtimeMs` filesystem lookup. Allows
+   *   unit tests to control mtime without writing files into the real homedir.
+   */
+  registerAutoDisableSweep(opts: {
+    getChannels: () => ChannelsConfig
+    saveChannels: (cfg: ChannelsConfig) => void
+    projectDirFor: (slug: string) => string
+    onAutoDisable?: (slug: string, chatId: string, idleDays: number) => void
+    sweepIntervalMs?: number
+    nowMs?: () => number
+    /** Test-only: inject mtime per slug instead of reading from disk. */
+    transcriptMtimeFor?: (slug: string) => number | null
+  }): void {
+    const intervalMs = opts.sweepIntervalMs ?? 3_600_000
+    const timer = setInterval(() => void this.runAutoDisableSweep(opts), intervalMs)
+    if (typeof timer.unref === 'function') timer.unref()
+    this.log('auto-disable sweep registered')
+  }
+
+  async runAutoDisableSweep(opts: {
+    getChannels: () => ChannelsConfig
+    saveChannels: (cfg: ChannelsConfig) => void
+    projectDirFor: (slug: string) => string
+    onAutoDisable?: (slug: string, chatId: string, idleDays: number) => void
+    nowMs?: () => number
+    /** Test-only: inject mtime per slug instead of reading from disk. */
+    transcriptMtimeFor?: (slug: string) => number | null
+  }): Promise<void> {
+    const { newestTranscriptMtimeMs } = await import('./transcript-path.ts')
+    const config = opts.getChannels()
+    const auto = config.defaults?.autoDisable
+    if (!auto?.enabled) return
+
+    const idleDays = (auto.idleDays ?? 7) < 1 ? 7 : (auto.idleDays ?? 7)
+    const idleThresholdMs = idleDays * 86_400_000
+    const nowMs = opts.nowMs ? opts.nowMs() : Date.now()
+
+    for (const [chatId, project] of Object.entries(config.projects)) {
+      try {
+        // Master channel is never auto-disabled
+        if (config.master?.chatId === chatId) continue
+
+        // Already disabled — nothing to do
+        if (project.disabled) continue
+
+        // Per-project opt-out
+        if (project.autoDisable === false) continue
+
+        const mtime = opts.transcriptMtimeFor
+          ? opts.transcriptMtimeFor(project.slug)
+          : newestTranscriptMtimeMs(opts.projectDirFor(project.slug))
+
+        // No transcript means the project was never used — skip, no measurable signal
+        if (mtime === null) continue
+
+        // Use the freshest of transcript mtime and re-enable timestamp as the idle baseline
+        const enabledAtMs = project.enabledAt ? Date.parse(project.enabledAt) : 0
+        const baseline = Math.max(mtime, isNaN(enabledAtMs) ? 0 : enabledAtMs)
+        const idleMs = nowMs - baseline
+
+        // Negative idle means clocks are skewed or enabledAt is in the future — treat as active
+        if (idleMs < 0) continue
+
+        if (idleMs > idleThresholdMs) {
+          // Read fresh config before writing to avoid overwriting concurrent mutations
+          const latest = opts.getChannels()
+          const proj = latest.projects[chatId]
+          if (!proj) continue
+          // Disable: set disabled, remove enabledAt
+          const updated = { ...proj, disabled: true as const }
+          delete (updated as Record<string, unknown>).enabledAt
+          opts.saveChannels({
+            ...latest,
+            projects: {
+              ...latest.projects,
+              [chatId]: updated,
+            },
+          })
+          this.log(`[auto-disable] ${project.slug}: idle ${Math.floor(idleMs / 86_400_000)}d > ${idleDays}d threshold — disabled`)
+          opts.onAutoDisable?.(project.slug, chatId, idleDays)
+        }
+      } catch (err) {
+        this.log(`[auto-disable] ${project.slug}: sweep error — ${(err as Error).message}`)
       }
     }
   }

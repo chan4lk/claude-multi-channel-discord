@@ -383,23 +383,20 @@ export class MasterMcpServer {
           },
         })
       }
-      if (this.getHermesConfig && this.getMasterChatId() === chatId) {
-        const hermesCfg = this.getHermesConfig()
-        if (hermesCfg?.enabled) {
-          tools.push({
-            name: 'hermes_run',
-            description: 'Launch a detached hermes-agent ops run on the host. The run survives MCD restarts. Hermes reports its result back to the master channel via `hermes send` when finished. Only available in the master channel when hermes bridge is enabled.',
-            inputSchema: {
-              type: 'object',
-              additionalProperties: false,
-              properties: {
-                prompt: { type: 'string', description: 'The ops task for Hermes to execute.' },
-                model: { type: 'string', description: 'Optional model override (maps to hermes -m <model>).' },
-              },
-              required: ['prompt'],
+      if (this.hermesAccess(chatId) !== null) {
+        tools.push({
+          name: 'hermes_run',
+          description: 'Launch a detached hermes-agent ops run on the host. The run survives MCD restarts. Hermes reports its result back to this channel via `hermes send` when finished. Available in the master channel and in project channels the operator has opted in (project hermes.enabled) when the hermes bridge is enabled.',
+          inputSchema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              prompt: { type: 'string', description: 'The ops task for Hermes to execute.' },
+              model: { type: 'string', description: 'Optional model override (maps to hermes -m <model>).' },
             },
-          })
-        }
+            required: ['prompt'],
+          },
+        })
       }
       // ask_project: cross-project peer dialogue. Only for non-master project sessions
       // with peers.allow non-empty.
@@ -674,6 +671,9 @@ export class MasterMcpServer {
             const target = findProjectBySlug(config, targetSlug)
             if (!target) return errorResult(`no project with slug "${targetSlug}"`)
 
+            // Refuse delivery to disabled projects
+            if (target.project.disabled) return errorResult('target project is disabled')
+
             // FR2: mutual consent — target must also allow source
             const srcProject = config.projects[chatId]!
             const srcAllows = srcProject.peers?.allow ?? []
@@ -790,11 +790,12 @@ export class MasterMcpServer {
           }
           case 'hermes_run': {
             if (!this.getHermesConfig) return errorResult('hermes bridge not configured')
-            if (this.getMasterChatId() !== chatId) {
-              return errorResult('hermes_run is only available in the master channel session')
-            }
             const hermesCfg = this.getHermesConfig()
             if (!hermesCfg?.enabled) return errorResult('hermes bridge disabled')
+            const access = this.hermesAccess(chatId)
+            if (access === null) {
+              return errorResult('hermes_run is not enabled for this project (set hermes.enabled on the project in channels.json or use !project set <slug> --hermes on --yes)')
+            }
             const HermesRunArgsSchema = z.object({
               prompt: z.string().min(1, 'prompt must not be empty'),
               model: z.string().optional(),
@@ -808,9 +809,19 @@ export class MasterMcpServer {
                 prompt: parsed.data.prompt,
                 cfg: hermesCfg,
                 masterChatId,
+                reportChatId: access === 'project' ? chatId : undefined,
                 model: parsed.data.model,
                 spawnFn: this.hermesSpawnFn,
               })
+              if (access === 'project') {
+                // FR5: master audit notice on every project-initiated launch.
+                const slug = this.getConfig?.()?.projects[chatId]?.slug ?? chatId
+                this.onReply({
+                  kind: 'text',
+                  chatId: masterChatId,
+                  text: `🛰 hermes run ${runId} launched by ${slug}: "${parsed.data.prompt.slice(0, 120)}"`,
+                })
+              }
               return okResult(`run ${runId} launched; log: ${logPath}`)
             } catch (err) {
               return errorResult((err as Error).message)
@@ -904,6 +915,20 @@ export class MasterMcpServer {
     if (!project) return null
     if (!project.peers?.allow?.length) return null
     return project.slug
+  }
+
+  /**
+   * Whether the session for `chatId` may use `hermes_run`.
+   * Returns 'master' for the master channel, 'project' for a project the
+   * operator has opted in (project hermes.enabled), or null when the
+   * bridge is not wired/enabled or the project is not opted in. Both the
+   * tool listing and the call handler check this (defense in depth).
+   */
+  private hermesAccess(chatId: string): 'master' | 'project' | null {
+    if (this.getHermesConfig?.()?.enabled !== true) return null
+    if (this.getMasterChatId() === chatId) return 'master'
+    if (this.getConfig?.()?.projects[chatId]?.hermes?.enabled === true) return 'project'
+    return null
   }
 
   /** Prune threadHops to at most 500 entries (FIFO). */
