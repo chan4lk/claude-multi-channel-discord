@@ -1,7 +1,7 @@
 # 🦞 SpecClaw Dashboard
 
 **Project:** claude-mcd
-**Last Updated:** 2026-07-26 05:40 UTC
+**Last Updated:** 2026-07-26 08:09 UTC
 
 ## Active Changes
 
@@ -9,9 +9,8 @@
 - ✅ **backlog-autopilot** — 6/6 tasks (100%) | 0 failed
 - ✅ **backlog-stall-watch** — 5/5 tasks (100%) | 0 failed | PR #316 merged
 - ✅ **bot-peer-dialogue** — 5/5 tasks (100%) | 0 failed
-- ✅ **bot-peer-limit-status-exempt** — 3/3 tasks (100%) | 0 failed
+- 🔨 **collab-handoff-protocol** — 0/9 tasks (0%) | 0 failed
 - ✅ **cross-project-dialogue** — 6/6 tasks (100%) | 0 failed
-- ✅ **heartbeat-live-task-count** — 3/3 tasks (100%) | 0 failed
 - ✅ **hermes-project-invoke** — 5/5 tasks (100%) | 0 failed | PR #317 merged
 - ✅ **idle-evict-turn-guard** — 4/4 tasks (100%) | 0 failed | PR #315 merged
 - ✅ **idle-gated-schedules** — 4/4 tasks (100%) | 0 failed
@@ -26,7 +25,6 @@
 - ✅ **schedule-stop-on-reply** — 4/4 tasks (100%) | 0 failed
 - ✅ **specclaw-status-visibility** — 4/4 tasks (100%) | 0 failed
 - ✅ **teams-file-attachments** — 3/3 tasks (100%) | 0 failed
-- ✅ **watchdog-status-noise-collapse** — 3/3 tasks (100%) | 0 failed
 
 ## Pending Proposals
 
@@ -36,10 +34,13 @@ _None._
 
 
 - ✅ **2026-07-15-hermes-agent-bridge**
+- ✅ **2026-07-18-bot-peer-limit-status-exempt**
 - ✅ **2026-07-18-heartbeat-attention-report**
+- ✅ **2026-07-18-heartbeat-live-task-count**
+- ✅ **2026-07-18-watchdog-status-noise-collapse**
 
 ## Stats
 
-- **Total changes:** 23
-- **Active:** 21
-- **Completed:** 2
+- **Total changes:** 24
+- **Active:** 19
+- **Completed:** 5
