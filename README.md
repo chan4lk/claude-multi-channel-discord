@@ -142,6 +142,17 @@ Specclaw projects loop pending changes/tasks instead of BACKLOG.md (specclaw win
 
 **Backlog stall watch** — even without autopilot, an hourly sweep watches every project that has a backlog (`BACKLOG.md` or specclaw changes) and posts a 📋 digest to the master channel when open items haven't moved for 3+ days (configurable via `backlogWatch.staleBacklogDays`, listing up to 10 open items). Enabled by default; opt a project out with `backlogWatch.enabled: false` in `channels.json`. Projects running autopilot are skipped — autopilot escalates its own stalls. Catches the "one item quietly stuck for a week while everything else moves" case.
 
+**Disable a channel** — take a project offline without deleting it:
+
+```
+!project set <slug> --disabled on    — stop the warm session; inbound no longer reaches Claude
+!project set <slug> --disabled off   — re-enable (session resumes on next message)
+```
+
+While disabled, messages get a throttled `project disabled. use master to enable` notice (once per 5 min), schedules are skipped (kept, not deleted), autopilot/backlog-watch/`ask_project` skip the project, and `!project list` marks it `⛔`. The master channel can't be disabled.
+
+Optional **auto-disable sweep** — disable channels idle for a week automatically. In `channels.json` under `defaults`: `"autoDisable": { "enabled": true, "idleDays": 7 }`. The hourly sweep disables any project whose session transcript hasn't been touched in `idleDays` (any activity counts — human messages, schedule fires, autopilot nudges) and posts `⛔ auto-disabled <slug>` to the master channel. Exempt a project with `autoDisable: false` on its entry; re-enabling stamps a fresh idle window.
+
 ---
 
 ## WhatsApp setup (optional)
