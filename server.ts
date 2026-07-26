@@ -1467,6 +1467,20 @@ async function maybeInitProjectsBackend(): Promise<void> {
       if (evt.kind === 'budget-exhausted') {
         process.stderr.write(`pool: budget-exhausted for ${evt.slug}, queue=${evt.queuedCount}\n`)
       }
+      if (evt.kind === 'disabled-drop') {
+        process.stderr.write(`pool: disabled-drop for ${evt.slug} (${evt.chatId})\n`)
+        const now = Date.now()
+        if (now - (disabledNoticeAt.get(evt.chatId) ?? 0) >= 5 * 60_000) {
+          disabledNoticeAt.set(evt.chatId, now)
+          const cfg = loadChannelsConfig()
+          const notice: OutboundReply = {
+            kind: 'text',
+            chatId: evt.chatId,
+            text: 'project disabled. use master to enable',
+          }
+          void routeNotification(cfg, notice, 'disabled-drop notify')
+        }
+      }
       if (evt.kind === 'session-rotated') {
         const kb = Math.round(evt.transcriptBytes / 1024)
         const cfg = loadChannelsConfig()
@@ -1798,6 +1812,8 @@ const postProgressMsgIds = new Map<string, string>()
 const phasesProgressState = new Map<string, { msgId: string; lines: string[] }>()
 /** Watchdog progress-skip: one message per stuck episode, edited in place. */
 const progressSkipState = new Map<string, { episodeId: number; msgId: string }>()
+/** Throttle: last time a disabled-drop notice was sent per chatId (epoch ms). */
+const disabledNoticeAt = new Map<string, number>()
 
 /**
  * Collapse watchdog still-working ticks into one message per stuck episode.
