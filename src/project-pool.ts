@@ -24,6 +24,7 @@ export type PoolEvent =
   | { kind: 'session-rotated'; chatId: string; slug: string; transcriptBytes: number }
   | { kind: 'kill-loop-paused'; chatId: string; slug: string; killCount: number }
   | { kind: 'kill-loop-resumed'; chatId: string; slug: string }
+  | { kind: 'disabled-drop'; chatId: string; slug: string }
 
 interface FailureLedger {
   count: number
@@ -144,6 +145,14 @@ export class ProjectPool {
     const project = config.projects[chatId]
     if (!project) {
       this.fireEvent({ kind: 'rejected', chatId, reason: 'unknown-project' })
+      return
+    }
+
+    // Disabled gate — must precede kill-loop/circuit/budget/dedup so a disabled
+    // project records and queues nothing. All inbound paths (Discord, Teams,
+    // WhatsApp, scheduler, autopilot, bot-peer) funnel through deliver().
+    if (project.disabled) {
+      this.fireEvent({ kind: 'disabled-drop', chatId, slug: project.slug })
       return
     }
 

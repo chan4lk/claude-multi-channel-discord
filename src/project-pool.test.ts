@@ -1026,6 +1026,87 @@ function envelope(content: string): InboundEnvelope {
   await pool.shutdown()
 }
 
+// --- 28. disabled: deliver to disabled project → no spawn, disabled-drop event ---
+{
+  const config = ChannelsConfigSchema.parse({
+    master: { chatId: '999999999999999999' },
+    defaults: { idleEvictMinutes: 15, maxConcurrent: 8 },
+    projects: {
+      '111111111111111111': { slug: 'alpha', disabled: true },
+      '222222222222222222': { slug: 'beta' },
+    },
+  })
+  const events: PoolEvent[] = []
+  let spawnCount = 0
+  const pool = new ProjectPool({
+    factory: ({ chatId, project }) => {
+      spawnCount++
+      return new MockProjectProcess({ chatId, slug: project.slug })
+    },
+    getConfig: () => config,
+    onReply: () => {},
+    onEvent: (e) => events.push(e),
+  })
+
+  await pool.deliver('111111111111111111', envelope('should be dropped'))
+  await sleep(5)
+  check('28: no spawn for disabled project', spawnCount === 0, `got ${spawnCount}`)
+  check('28: pool empty after disabled deliver', pool.size() === 0)
+  check(
+    '28: disabled-drop event fired with correct chatId+slug',
+    events.some((e) => e.kind === 'disabled-drop' && e.chatId === '111111111111111111' && e.slug === 'alpha'),
+  )
+  check('28: no rejected event (project exists, just disabled)', !events.some((e) => e.kind === 'rejected'))
+
+  // Regression: normal (enabled) project still works after the disabled one was dropped.
+  await pool.deliver('222222222222222222', envelope('normal'))
+  await sleep(5)
+  check('28: enabled project still spawns normally', spawnCount === 1 && pool.has('222222222222222222'))
+
+  await pool.shutdown()
+}
+
+// --- 29. disabled schema: parses correctly, absent field is fine ---------------
+{
+  // Project with disabled: true parses without error.
+  const withDisabled = ChannelsConfigSchema.safeParse({
+    projects: { '111111111111111111': { slug: 'alpha', disabled: true } },
+  })
+  check('29: disabled:true parses', withDisabled.success, withDisabled.success ? '' : String((withDisabled as { error: unknown }).error))
+  check(
+    '29: disabled field preserved',
+    withDisabled.success && withDisabled.data.projects['111111111111111111']?.disabled === true,
+  )
+
+  // Project without disabled field parses and disabled is absent (not defaulted to false).
+  const withoutDisabled = ChannelsConfigSchema.safeParse({
+    projects: { '222222222222222222': { slug: 'beta' } },
+  })
+  check('29: absent disabled field parses', withoutDisabled.success)
+  check(
+    '29: disabled absent when not set',
+    withoutDisabled.success && withoutDisabled.data.projects['222222222222222222']?.disabled === undefined,
+  )
+
+  // defaults.autoDisable parses correctly.
+  const withAutoDisable = ChannelsConfigSchema.safeParse({
+    defaults: { autoDisable: { enabled: true, idleDays: 14 } },
+  })
+  check('29: defaults.autoDisable parses', withAutoDisable.success)
+  check(
+    '29: defaults.autoDisable fields preserved',
+    withAutoDisable.success &&
+      withAutoDisable.data.defaults.autoDisable?.enabled === true &&
+      withAutoDisable.data.defaults.autoDisable?.idleDays === 14,
+  )
+
+  // defaults.autoDisable with only enabled (idleDays defaults to 7).
+  const withAutoDisableDefault = ChannelsConfigSchema.safeParse({
+    defaults: { autoDisable: { enabled: true } },
+  })
+  check('29: defaults.autoDisable idleDays defaults to 7', withAutoDisableDefault.success && withAutoDisableDefault.data.defaults.autoDisable?.idleDays === 7)
+}
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)
   process.exit(1)

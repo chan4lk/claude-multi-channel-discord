@@ -324,6 +324,26 @@ const ProjectSchema = z.object({
    * sweep and persisted here — do not edit them by hand.
    */
   backlogWatch: BacklogWatchSchema.optional(),
+  /**
+   * When true, inbound messages are silently dropped and the project's
+   * Claude subprocess is never spawned. Absent or false = enabled (normal
+   * operation). Set by `!project set <target> --disabled on|off` or by
+   * the auto-disable sweep.
+   */
+  disabled: z.boolean().optional(),
+  /**
+   * MCD-maintained ISO timestamp written by `set --disabled off` when a
+   * project is re-enabled. Gives the project a fresh idle baseline so the
+   * auto-disable sweep doesn't immediately re-disable it. Removed on any
+   * disable. Not operator-set.
+   */
+  enabledAt: z.string().optional(),
+  /**
+   * Per-project override for the auto-disable sweep.
+   * When false, this project is never auto-disabled regardless of the
+   * defaults.autoDisable setting. Absent = follow defaults.
+   */
+  autoDisable: z.boolean().optional(),
 }).superRefine((val, ctx) => {
   if (val.platform === 'whatsapp' && !val.whatsappJid) {
     ctx.addIssue({
@@ -429,6 +449,16 @@ const DefaultsSchema = z.object({
    * always per-project. Built-in fallbacks: enabled true, staleBacklogDays 3.
    */
   backlogWatch: DefaultsBacklogWatchSchema.optional(),
+  /**
+   * Opt-in hourly sweep that auto-disables projects idle longer than
+   * `idleDays` (default 7). Absent or `enabled: false` = no auto-disable.
+   * Per-project `autoDisable: false` exempts a project from the sweep
+   * even when this default is on.
+   */
+  autoDisable: z.object({
+    enabled: z.boolean(),
+    idleDays: z.number().int().positive().default(7),
+  }).strict().optional(),
 })
 
 const MasterSchema = z.object({
