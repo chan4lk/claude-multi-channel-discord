@@ -162,6 +162,24 @@ export function matchPendingIds(chatId: string, text: string): string[] {
 }
 
 /**
+ * Inbound ack detection (FR4 fallback + FR6 exemption decision).
+ * Matches pending handoff ids for `chatId` in `text` and closes each match
+ * with the message text (≤500 chars) as outcome. Returns the closed ids —
+ * a non-empty result means the message is a handoff ack and is exempt from
+ * bot-peer gate counting. Loop safety: only pending ids match, and each id
+ * closes on first match, so an id exempts at most one message.
+ */
+export function acknowledgeHandoffs(
+  chatId: string,
+  text: string,
+  nowMs: number = Date.now(),
+): string[] {
+  const ids = matchPendingIds(chatId, text)
+  for (const id of ids) completeHandoff(id, text.slice(0, 500), nowMs)
+  return ids
+}
+
+/**
  * Sweep pending handoffs against the timeout policy:
  *   - age ≥ 2× timeout → escalate action; record becomes `expired` (closedAt set)
  *   - age ≥ timeout and not yet nagged → nag action; `naggedAt` persisted

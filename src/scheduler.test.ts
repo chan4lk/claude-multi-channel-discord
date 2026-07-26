@@ -1674,6 +1674,125 @@ function makeAdOpts(opts: {
 }
 
 // ============================================================
+// runHandoffSweep — AC5: nag once, escalate once, idempotent re-runs
+// ============================================================
+
+import { createHandoff, loadRegistry } from './handoffs.ts'
+
+// Full lifecycle against a real registry in a temp MCD_CHANNELS_DIR
+{
+  const tmpDir = mkdtempSync(join(tmpdir(), 'mcd-handoff-sweep-'))
+  const prevEnv = process.env.MCD_CHANNELS_DIR
+  process.env.MCD_CHANNELS_DIR = tmpDir
+  try {
+    const MIN = 60_000
+    const T0 = Date.UTC(2026, 6, 26, 12, 0, 0)
+    const longTask = 'review PR 42 — ' + 'x'.repeat(150)  // > 120 chars, exercises truncation
+
+    const rec = createHandoff(
+      { from: 'proj-a', to: { kind: 'project', slug: 'proj-b', chatId: 'chat-b' }, task: longTask },
+      T0,
+    )
+
+    // defaults.collab absent → built-in 30-min timeout
+    const { config } = makeAdConfig({})
+    const nags: Array<{ chatId: string; text: string }> = []
+    const escalations: string[] = []
+    let now = T0
+    const sweepOpts = {
+      getChannels: () => config,
+      notifyChannel: (chatId: string, text: string) => { nags.push({ chatId, text }) },
+      notifyMaster: (text: string) => { escalations.push(text) },
+      nowMs: () => now,
+    }
+    const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+
+    // Before timeout — nothing fires
+    now = T0 + 10 * MIN
+    await scheduler.runHandoffSweep(sweepOpts)
+    check('HS1: before timeout → no notifications', nags.length === 0 && escalations.length === 0)
+
+    // Past timeout — exactly one nag to the receiver channel
+    now = T0 + 35 * MIN
+    await scheduler.runHandoffSweep(sweepOpts)
+    check('HS2: past timeout → exactly one nag', nags.length === 1, `nags=${nags.length}`)
+    check('HS2: no escalation yet', escalations.length === 0)
+    check('HS2: nag routed to receiver channel', nags[0]?.chatId === 'chat-b')
+    check('HS2: nag text shape ⏰ #h-<id> pending Nm', nags[0]?.text.startsWith(`⏰ handoff #${rec.id} pending 35m: `), nags[0]?.text)
+    check('HS2: nag task truncated to 120 + ellipsis', nags[0]?.text.endsWith('…') && nags[0]?.text.includes(longTask.slice(0, 120)))
+
+    // Re-run in the same window — no duplicate nag (AC5)
+    now = T0 + 40 * MIN
+    await scheduler.runHandoffSweep(sweepOpts)
+    check('HS3: re-run same window → no duplicate nag (AC5)', nags.length === 1)
+
+    // Past 2× timeout — one master escalate, record expired
+    now = T0 + 65 * MIN
+    await scheduler.runHandoffSweep(sweepOpts)
+    check('HS4: past 2× timeout → one master escalate', escalations.length === 1, `esc=${escalations.length}`)
+    check('HS4: escalate text names from→to slug',
+      escalations[0] === `⚠️ handoff #${rec.id} proj-a→proj-b unanswered — expired`, escalations[0])
+    check('HS4: record expired in registry', loadRegistry()[0]?.state === 'expired')
+
+    // Re-run after expire — no duplicate notifications (AC5)
+    now = T0 + 90 * MIN
+    await scheduler.runHandoffSweep(sweepOpts)
+    check('HS5: re-run after expire → no duplicates (AC5)', nags.length === 1 && escalations.length === 1)
+  } finally {
+    if (prevEnv === undefined) delete process.env.MCD_CHANNELS_DIR
+    else process.env.MCD_CHANNELS_DIR = prevEnv
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+}
+
+// defaults.collab.timeoutMinutes overrides the built-in 30; botPeer targets
+// get the botId label in the escalation
+{
+  const tmpDir = mkdtempSync(join(tmpdir(), 'mcd-handoff-sweep2-'))
+  const prevEnv = process.env.MCD_CHANNELS_DIR
+  process.env.MCD_CHANNELS_DIR = tmpDir
+  try {
+    const MIN = 60_000
+    const T0 = Date.UTC(2026, 6, 26, 12, 0, 0)
+
+    const rec = createHandoff(
+      { from: 'proj-a', to: { kind: 'botPeer', botId: 'bot-99', chatId: 'chat-a' }, task: 'ping' },
+      T0,
+    )
+
+    const { config } = makeAdConfig({})
+    config.defaults.collab = { timeoutMinutes: 10 }
+    const nags: Array<{ chatId: string; text: string }> = []
+    const escalations: string[] = []
+    let now = T0
+    const sweepOpts = {
+      getChannels: () => config,
+      notifyChannel: (chatId: string, text: string) => { nags.push({ chatId, text }) },
+      notifyMaster: (text: string) => { escalations.push(text) },
+      nowMs: () => now,
+    }
+    const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+
+    // 10-min timeout: 12 min in → nag fires (built-in 30 would not)
+    now = T0 + 12 * MIN
+    await scheduler.runHandoffSweep(sweepOpts)
+    check('HS6: defaults.collab.timeoutMinutes=10 → nag at 12m', nags.length === 1)
+    check('HS6: nag to source channel (botPeer target)', nags[0]?.chatId === 'chat-a')
+
+    // 2×10 = 20 min in → escalate names the botId
+    now = T0 + 21 * MIN
+    await scheduler.runHandoffSweep(sweepOpts)
+    check('HS7: escalate labels botPeer target by botId',
+      escalations.length === 1 && escalations[0] === `⚠️ handoff #${rec.id} proj-a→bot-99 unanswered — expired`,
+      escalations[0])
+  } finally {
+    if (prevEnv === undefined) delete process.env.MCD_CHANNELS_DIR
+    else process.env.MCD_CHANNELS_DIR = prevEnv
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+}
+
+// ============================================================
 // Final result
 // ============================================================
 

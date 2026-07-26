@@ -61,6 +61,7 @@ import { modelSlashCommands, handleModelInteraction } from './src/model-command.
 import { providerSlashCommands, handleProviderInteraction } from './src/provider-command.ts'
 import { insertVoiceTurn } from './src/voice-db.ts'
 import { BotPeerGate, effectiveBotPeerLimits, effectiveStatusPatterns, isStatusPost } from './src/bot-peers.ts'
+import { acknowledgeHandoffs } from './src/handoffs.ts'
 
 // Single-source state dir. MCD_CHANNELS_DIR is the multi-channel-discord
 // override and wins; falls back to upstream's DISCORD_STATE_DIR for in-place
@@ -1680,6 +1681,20 @@ async function maybeInitProjectsBackend(): Promise<void> {
     },
   })
 
+  // Handoff sweep: nag receivers on stalled handoffs, escalate expired ones to master
+  scheduler.registerHandoffSweep({
+    getChannels: () => loadChannelsConfig(),
+    notifyChannel: (chatId, text) => {
+      routeNotification(loadChannelsConfig(), { kind: 'text', chatId, text }, 'handoff nag')
+    },
+    notifyMaster: (text) => {
+      const cfg = loadChannelsConfig()
+      const masterChatId = cfg.master?.chatId
+      if (!masterChatId) return
+      routeNotification(cfg, { kind: 'text', chatId: masterChatId, text }, 'handoff escalate')
+    },
+  })
+
   // Nightly GOALS.md reconcile cron (02:00 local)
   void import('./src/pattern-mining.ts').then(({ minePatterns }) => {
     scheduler!.registerGoalReconcileCron({
@@ -2225,29 +2240,39 @@ async function handleBotInbound(msg: Message): Promise<void> {
     return
   }
 
-  const limits = effectiveBotPeerLimits(cfg.defaults, project)
-  const gateResult = botPeerGate.check(chatId, limits)
+  // FR4/FR6: handoff ack detection — a bot message naming a known pending
+  // handoff id closes it and bypasses the gate entirely (no cooldown/limit
+  // check, no counter increment). Loop safety: only *pending* ids for this
+  // channel match and each id closes on first match, so an id exempts at
+  // most one message.
+  const handoffAckIds = acknowledgeHandoffs(chatId, msg.content)
+  if (handoffAckIds.length > 0) {
+    process.stderr.write(`discord: bot-peer handoff ack msg=${msg.id} chat=${chatId} ids=${handoffAckIds.join(',')}\n`)
+  } else {
+    const limits = effectiveBotPeerLimits(cfg.defaults, project)
+    const gateResult = botPeerGate.check(chatId, limits)
 
-  if (gateResult.action === 'drop-cooldown') {
-    process.stderr.write(`discord: bot-peer cooldown drop msg=${msg.id} chat=${chatId} user=${msg.author.id}\n`)
-    return
-  }
-
-  if (gateResult.action === 'limit') {
-    if (gateResult.notify) {
-      // One-time notice to the channel
-      try {
-        const ch = await client.channels.fetch(chatId)
-        if (ch && 'send' in ch) {
-          await (ch as import('discord.js').TextChannel).send(
-            `🚫 bot-peer turn limit (${limits.maxConsecutive}) reached — send a message to resume`,
-          )
-        }
-      } catch (err) {
-        process.stderr.write(`discord: bot-peer limit notice failed: ${err}\n`)
-      }
+    if (gateResult.action === 'drop-cooldown') {
+      process.stderr.write(`discord: bot-peer cooldown drop msg=${msg.id} chat=${chatId} user=${msg.author.id}\n`)
+      return
     }
-    return
+
+    if (gateResult.action === 'limit') {
+      if (gateResult.notify) {
+        // One-time notice to the channel
+        try {
+          const ch = await client.channels.fetch(chatId)
+          if (ch && 'send' in ch) {
+            await (ch as import('discord.js').TextChannel).send(
+              `🚫 bot-peer turn limit (${limits.maxConsecutive}) reached — send a message to resume`,
+            )
+          }
+        } catch (err) {
+          process.stderr.write(`discord: bot-peer limit notice failed: ${err}\n`)
+        }
+      }
+      return
+    }
   }
 
   // 'deliver'
@@ -2273,7 +2298,8 @@ async function handleBotInbound(msg: Message): Promise<void> {
       authorType: 'bot',
     })
     .then(() => {
-      botPeerGate.recordDelivery(chatId)
+      // FR6: handoff-ack deliveries don't count toward the consecutive limit
+      if (handoffAckIds.length === 0) botPeerGate.recordDelivery(chatId)
     })
     .catch((err) => {
       process.stderr.write(`discord: bot-peer pool deliver failed: ${err}\n`)
