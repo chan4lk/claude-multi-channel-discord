@@ -1666,6 +1666,20 @@ async function maybeInitProjectsBackend(): Promise<void> {
     mcdDir: channelsDir(),
   })
 
+  // Auto-disable sweep: disable projects idle longer than defaults.autoDisable.idleDays
+  scheduler.registerAutoDisableSweep({
+    getChannels: () => loadChannelsConfig(),
+    saveChannels: (cfg) => saveConfig(cfg),
+    projectDirFor: (slug) => projectDir(slug),
+    onAutoDisable: (slug, _chatId, idleDays) => {
+      const cfg = loadChannelsConfig()
+      const masterChatId = cfg.master?.chatId
+      if (!masterChatId) return
+      const text = `⛔ auto-disabled **${slug}** — idle ${idleDays}d+. re-enable: \`!project set ${slug} --disabled off\``
+      routeNotification(cfg, { kind: 'text', chatId: masterChatId, text }, 'auto-disable notify')
+    },
+  })
+
   // Nightly GOALS.md reconcile cron (02:00 local)
   void import('./src/pattern-mining.ts').then(({ minePatterns }) => {
     scheduler!.registerGoalReconcileCron({
