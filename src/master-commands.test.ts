@@ -1732,6 +1732,272 @@ const disChatId = '111222333444555666'
   )
 }
 
+// --- AC6 (collab-handoff-protocol): set --collab-role ------------------------
+// Dedicated project with a bot-peer allowlist so both target kinds resolve.
+const collabChatId = '777888999000111222'
+{
+  const cfg = loadConfig()
+  saveConfig({
+    ...cfg,
+    projects: {
+      ...cfg.projects,
+      [collabChatId]: { slug: 'collab-test', botPeers: { allow: ['111111111111111111'] } },
+    },
+  })
+  mkdirSync(join(stateDir, 'projects', 'collab-test'), { recursive: true })
+}
+
+// Unresolvable value → refused with the value named, nothing persisted
+{
+  const res = await handleMasterCommand('!project set collab-test --collab-role reviewer=nosuchslug', mctx())
+  check(
+    'set --collab-role: unresolvable value refused, error names it',
+    res.kind === 'reply' && res.text.includes('nosuchslug') && res.text.includes('cannot resolve'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  check(
+    'set --collab-role: refused value not persisted',
+    loadConfig().projects[collabChatId]?.collab === undefined,
+  )
+}
+
+// Malformed (no `=`) → usage error
+{
+  const res = await handleMasterCommand('!project set collab-test --collab-role reviewer', mctx())
+  check(
+    'set --collab-role: missing = rejected with usage',
+    res.kind === 'reply' && res.text.includes('`--collab-role` must be `<name>=<slug|botId>`'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+}
+
+// Self-reference → refused via resolver
+{
+  const res = await handleMasterCommand('!project set collab-test --collab-role self=collab-test', mctx())
+  check(
+    'set --collab-role: self target refused',
+    res.kind === 'reply' && res.text.includes('source project itself'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+}
+
+// Master as target project → warn, unchanged
+{
+  const res = await handleMasterCommand('!project set master-test --collab-role reviewer=support', mctx())
+  check(
+    'set --collab-role: master target refused',
+    res.kind === 'reply' && res.text.includes('master channel cannot have collab roles'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  check(
+    'set --collab-role: master config unchanged',
+    loadConfig().projects['123456789012345678']?.collab === undefined,
+  )
+}
+
+// Valid slug value → persists (no --yes needed)
+{
+  const res = await handleMasterCommand('!project set collab-test --collab-role reviewer=support', mctx())
+  check(
+    'set --collab-role reviewer=<slug>: succeeds without --yes',
+    res.kind === 'reply' && res.text.includes('set collab role `reviewer` → `support`'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  check(
+    'set --collab-role reviewer=<slug>: persisted to channels.json',
+    loadConfig().projects[collabChatId]?.collab?.roles?.reviewer === 'support',
+    JSON.stringify(loadConfig().projects[collabChatId]?.collab),
+  )
+}
+
+// Bot-peer id value (in botPeers.allow) → persists; existing role kept
+{
+  const res = await handleMasterCommand('!project set collab-test --collab-role notifier=111111111111111111', mctx())
+  check(
+    'set --collab-role notifier=<botId>: succeeds',
+    res.kind === 'reply' && res.text.includes('set collab role `notifier`'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  const roles = loadConfig().projects[collabChatId]?.collab?.roles
+  check('set --collab-role: botPeer role persisted', roles?.notifier === '111111111111111111')
+  check('set --collab-role: existing reviewer role preserved', roles?.reviewer === 'support')
+}
+
+// name=none removes the role, keeps the block while other roles remain
+{
+  const res = await handleMasterCommand('!project set collab-test --collab-role reviewer=none', mctx())
+  check(
+    'set --collab-role reviewer=none: removal reply',
+    res.kind === 'reply' && res.text.includes('removed collab role `reviewer`'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  const roles = loadConfig().projects[collabChatId]?.collab?.roles
+  check('set --collab-role none: reviewer gone', roles?.reviewer === undefined)
+  check('set --collab-role none: other role survives', roles?.notifier === '111111111111111111')
+}
+
+// Removing a role that is not set → friendly no-op
+{
+  const res = await handleMasterCommand('!project set collab-test --collab-role phantom=none', mctx())
+  check(
+    'set --collab-role phantom=none: friendly no-op',
+    res.kind === 'reply' && res.text.includes('is not set'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+}
+
+// Removing the last role with no timeoutMinutes drops the collab block
+{
+  const res = await handleMasterCommand('!project set collab-test --collab-role notifier=none', mctx())
+  check(
+    'set --collab-role: last role removal succeeds',
+    res.kind === 'reply' && res.text.includes('removed collab role `notifier`'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  check(
+    'set --collab-role: empty collab block dropped',
+    loadConfig().projects[collabChatId]?.collab === undefined,
+    JSON.stringify(loadConfig().projects[collabChatId]?.collab),
+  )
+}
+
+// Removing the last role KEEPS the block when timeoutMinutes is set
+{
+  {
+    const cfg = loadConfig()
+    const proj = cfg.projects[collabChatId]!
+    saveConfig({
+      ...cfg,
+      projects: { ...cfg.projects, [collabChatId]: { ...proj, collab: { roles: { reviewer: 'support' }, timeoutMinutes: 45 } } },
+    })
+  }
+  const res = await handleMasterCommand('!project set collab-test --collab-role reviewer=none', mctx())
+  check(
+    'set --collab-role: removal with timeoutMinutes succeeds',
+    res.kind === 'reply' && res.text.includes('removed collab role `reviewer`'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  const collab = loadConfig().projects[collabChatId]?.collab
+  check(
+    'set --collab-role: collab block kept when timeoutMinutes present',
+    collab !== undefined && collab.timeoutMinutes === 45 && (collab.roles === undefined || Object.keys(collab.roles).length === 0),
+    JSON.stringify(collab),
+  )
+}
+
+// --- AC7 (collab-handoff-protocol): collab verb -------------------------------
+// Seed roles directly: one valid, one stale (points at a deleted project).
+{
+  const cfg = loadConfig()
+  const proj = cfg.projects[collabChatId]!
+  saveConfig({
+    ...cfg,
+    projects: {
+      ...cfg.projects,
+      [collabChatId]: { ...proj, collab: { roles: { reviewer: 'support', ghost: 'deleted-proj' } } },
+    },
+  })
+}
+
+// Injected registry: two matching pending records, one done, one unrelated.
+const longTask = 'x'.repeat(100)
+const collabRegistry = [
+  {
+    id: 'h-aaa-1111',
+    from: 'collab-test',
+    to: { kind: 'project' as const, slug: 'support', chatId: '999888777666555444' },
+    task: 'review PR #12',
+    state: 'pending' as const,
+    createdAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+  },
+  {
+    id: 'h-bbb-2222',
+    from: 'support',
+    to: { kind: 'botPeer' as const, botId: '111111111111111111', chatId: collabChatId },
+    task: longTask,
+    state: 'pending' as const,
+    createdAt: new Date(Date.now() - 3 * 60_000).toISOString(),
+  },
+  {
+    id: 'h-ccc-3333',
+    from: 'collab-test',
+    to: { kind: 'project' as const, slug: 'support', chatId: '999888777666555444' },
+    task: 'already closed',
+    state: 'done' as const,
+    createdAt: new Date(Date.now() - 60 * 60_000).toISOString(),
+  },
+  {
+    id: 'h-ddd-4444',
+    from: 'newproj',
+    to: { kind: 'project' as const, slug: 'ap-test', chatId: '666777888999000111' },
+    task: 'unrelated handoff',
+    state: 'pending' as const,
+    createdAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+  },
+]
+
+{
+  const res = await handleMasterCommand(
+    '!project collab collab-test',
+    mctx({ loadHandoffRegistry: () => collabRegistry }),
+  )
+  const text = res.kind === 'reply' ? res.text : ''
+  check('collab verb: replies (handoff flag off — read-only)', res.kind === 'reply', res.kind)
+  check('collab verb: header names the project', text.includes('Collab — collab-test'), text)
+  const reviewerLine = text.split('\n').find(l => l.includes('reviewer')) ?? ''
+  check('collab verb: valid role listed without stale mark', reviewerLine.includes('support') && !reviewerLine.includes('(stale)'), reviewerLine)
+  const ghostLine = text.split('\n').find(l => l.includes('ghost')) ?? ''
+  check('collab verb: unresolvable role marked (stale)', ghostLine.includes('deleted-proj') && ghostLine.includes('(stale)'), ghostLine)
+  check(
+    'collab verb: outbound pending handoff listed with direction + age',
+    text.includes('#h-aaa-1111 collab-test→support 10m: review PR #12'),
+    text,
+  )
+  const inboundLine = text.split('\n').find(l => l.includes('#h-bbb-2222')) ?? ''
+  check(
+    'collab verb: inbound pending handoff (to.chatId match) listed with botId',
+    inboundLine.includes('support→111111111111111111') && inboundLine.includes('3m:'),
+    inboundLine,
+  )
+  check(
+    'collab verb: long task truncated to ≤80 chars',
+    inboundLine.includes('x'.repeat(79) + '…') && !inboundLine.includes('x'.repeat(80)),
+    String(inboundLine.length),
+  )
+  check('collab verb: done record excluded', !text.includes('h-ccc-3333'), text)
+  check('collab verb: unrelated pending record excluded', !text.includes('h-ddd-4444'), text)
+}
+
+// Empty state: no roles, no handoffs (default registry loader reads an absent file)
+{
+  const res = await handleMasterCommand('!project collab dis-test', mctx())
+  const text = res.kind === 'reply' ? res.text : ''
+  check('collab verb: empty roles friendly line', text.includes('no collab roles configured'), text)
+  check('collab verb: empty handoffs friendly line', text.includes('no open handoffs'), text)
+}
+
+// Arg validation + help
+{
+  const noArg = await handleMasterCommand('!project collab', mctx())
+  check(
+    'collab verb: needs a target',
+    noArg.kind === 'reply' && noArg.text.includes('chat_id or slug'),
+    noArg.kind === 'reply' ? noArg.text : noArg.kind,
+  )
+  const missing = await handleMasterCommand('!project collab ghost-slug', mctx())
+  check(
+    'collab verb: unknown target yields not-found',
+    missing.kind === 'reply' && missing.text.includes('no project found'),
+    missing.kind === 'reply' ? missing.text : missing.kind,
+  )
+  const helpRes = await handleMasterCommand('!project help', mctx())
+  check(
+    'help: mentions collab verb and --collab-role flag',
+    helpRes.kind === 'reply' && helpRes.text.includes('collab <chat_id-or-slug>') && helpRes.text.includes('--collab-role'),
+    helpRes.kind === 'reply' ? '' : helpRes.kind,
+  )
+}
+
 // Restore config after autopilot tests
 saveConfig(config)
 
