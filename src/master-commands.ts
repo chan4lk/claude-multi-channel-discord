@@ -235,6 +235,8 @@ function helpText(prefix: string): string {
     `${prefix} set    <chat_id-or-slug> --autopilot on|off [--seed "<goal>"] [--autopilot-interval N] [--backlog-file <path>]  — enable/disable backlog autopilot`,
     `${prefix} set    <chat_id-or-slug> --hermes on --yes             — grant this project's Claude the hermes_run tool (requires --yes)`,
     `${prefix} set    <chat_id-or-slug> --hermes off                  — revoke the project's hermes access`,
+    `${prefix} set    <chat_id-or-slug> --disabled on                 — suspend project: inbound messages dropped, warm session killed`,
+    `${prefix} set    <chat_id-or-slug> --disabled off                — resume project: re-enables delivery, stamps enabledAt`,
     `${prefix} backlog <chat_id-or-slug>                            — show backlog source, progress, and autopilot state`,
     `${prefix} rename <chat_id-or-slug> --slug NEW                    — rename slug + dir`,
     `${prefix} remote <chat_id-or-slug> [--set URL] [--creds NAME]    — show/set git remote`,
@@ -271,9 +273,10 @@ function handleList(config: ChannelsConfig): string {
   const masterId = config.master?.chatId
   for (const [chatId, project] of entries.sort((a, b) => a[1].slug.localeCompare(b[1].slug))) {
     const tag = chatId === masterId ? '★' : ' '
+    const disabledMark = project.disabled ? ' ⛔' : ''
     const model = project.model ?? config.defaults.model
     const repo = project.git?.remote ?? '(no remote)'
-    lines.push(`${tag} ${project.slug.padEnd(20)} chat=${chatId}  model=${model}  ${repo}`)
+    lines.push(`${tag} ${project.slug.padEnd(20)}${disabledMark} chat=${chatId}  model=${model}  ${repo}`)
   }
   lines.push('```')
   lines.push(`★ = master channel · ${entries.length} project${entries.length === 1 ? '' : 's'}`)
@@ -297,6 +300,7 @@ function handleShow(config: ChannelsConfig, rest: string[]): string {
     `chat_id: \`${chatId}\``,
     `model: ${model}`,
   ]
+  if (project.disabled) lines.push('disabled: yes')
   const providerName = project.provider ?? config.defaults.provider
   if (providerName) {
     const def = config.defaults.providers[providerName]
@@ -751,8 +755,20 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
     }
   }
 
-  if (prompt === null && stuckMinutes === null && heartbeatMode === null && heartbeatWindow === null && heartbeatStale === null && goalRaw === null && distillOnStop === null && developBranch === null && prApi === null && botPeersAction === null && peersAction === null && autopilotAction === null && autopilotInterval === null && backlogFile === null && hermesAction === null) {
-    return '`set` requires `--prompt "..."`, `--stuck-threshold-minutes N`, `--heartbeat-mode <supervised|autonomous>`, `--heartbeat-window <HH:MM-HH:MM>`, `--heartbeat-stale-minutes N`, `--goal "..."`, `--distill-on-stop`, `--develop-branch on|off`, `--pr-token-github <token>`, `--pr-token-azdo <token> --azdo-org X --azdo-project Y`, `--bot-peers <id,...>|none`, `--peers <slug,...>|none`, `--autopilot on|off [--seed "<goal>"] [--autopilot-interval N] [--backlog-file <path>]`, or `--hermes on|off`'
+  // --disabled on|off — suspend or resume a project (drops inbound deliveries when on)
+  const disabledRaw = typeof flags['disabled'] === 'string' ? flags['disabled'] : null
+  if (disabledRaw !== null && disabledRaw !== 'on' && disabledRaw !== 'off') {
+    return '`--disabled` must be `on` or `off`'
+  }
+  const disabledAction: 'on' | 'off' | null = disabledRaw as 'on' | 'off' | null
+  if (disabledAction !== null) {
+    if (isMasterChannel(config, entry.chatId)) {
+      return 'master channel cannot be disabled'
+    }
+  }
+
+  if (prompt === null && stuckMinutes === null && heartbeatMode === null && heartbeatWindow === null && heartbeatStale === null && goalRaw === null && distillOnStop === null && developBranch === null && prApi === null && botPeersAction === null && peersAction === null && autopilotAction === null && autopilotInterval === null && backlogFile === null && hermesAction === null && disabledAction === null) {
+    return '`set` requires `--prompt "..."`, `--stuck-threshold-minutes N`, `--heartbeat-mode <supervised|autonomous>`, `--heartbeat-window <HH:MM-HH:MM>`, `--heartbeat-stale-minutes N`, `--goal "..."`, `--distill-on-stop`, `--develop-branch on|off`, `--pr-token-github <token>`, `--pr-token-azdo <token> --azdo-org X --azdo-project Y`, `--bot-peers <id,...>|none`, `--peers <slug,...>|none`, `--autopilot on|off [--seed "<goal>"] [--autopilot-interval N] [--backlog-file <path>]`, `--hermes on|off`, or `--disabled on|off`'
   }
 
   const results: string[] = []
@@ -927,6 +943,29 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
       const { hermes: _removed, ...rest } = latestEntry
       saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: rest } })
       results.push(`✅ hermes access **disabled** for **${latestEntry.slug}**.`)
+    }
+  }
+
+  if (disabledAction !== null) {
+    const latestConfig = loadConfig()
+    const latestEntry = latestConfig.projects[entry.chatId] ?? entry.project
+    if (disabledAction === 'on') {
+      const { enabledAt: _removed, ...rest } = latestEntry
+      saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: { ...rest, disabled: true } } })
+      let sessionNote = ''
+      if (ctx.mutator?.killProject) {
+        try {
+          await ctx.mutator.killProject(entry.chatId)
+          sessionNote = ' Warm session stopped.'
+        } catch {
+          sessionNote = ' (session kill failed — may still be running)'
+        }
+      }
+      results.push(`✅ **${latestEntry.slug}** is now **disabled** — inbound messages will be dropped.${sessionNote}`)
+    } else {
+      const { disabled: _removed, ...rest } = latestEntry
+      saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: { ...rest, enabledAt: new Date().toISOString() } } })
+      results.push(`✅ **${latestEntry.slug}** is now **enabled** — inbound messages will be delivered.`)
     }
   }
 

@@ -1621,6 +1621,117 @@ const apChatId = '888888888888888888'
   )
 }
 
+// --- set --disabled on|off tests -------------------------------------------
+// Use a dedicated project so we don't pollute 'support' or 'ap-test'.
+const disChatId = '111222333444555666'
+{
+  const cfg = loadConfig()
+  saveConfig({ ...cfg, projects: { ...cfg.projects, [disChatId]: { slug: 'dis-test' } } })
+  mkdirSync(join(stateDir, 'projects', 'dis-test'), { recursive: true })
+}
+
+// invalid value → usage error
+{
+  const res = await handleMasterCommand('!project set dis-test --disabled maybe', mctx())
+  check(
+    'set --disabled: invalid value rejected',
+    res.kind === 'reply' && res.text.includes('`--disabled` must be `on` or `off`'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+}
+
+// master target → warn no-op
+{
+  const res = await handleMasterCommand('!project set master-test --disabled on', mctx())
+  check(
+    'set --disabled on: master target is warn no-op',
+    res.kind === 'reply' && res.text.includes('master channel cannot be disabled'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  check(
+    'set --disabled on: master config unchanged',
+    loadConfig().projects['123456789012345678']?.disabled !== true,
+  )
+}
+
+// --disabled on → persists disabled:true, removes enabledAt, kills warm session
+{
+  // Pre-stamp an enabledAt so we can verify it gets removed
+  {
+    const cfg = loadConfig()
+    const proj = cfg.projects[disChatId]!
+    saveConfig({ ...cfg, projects: { ...cfg.projects, [disChatId]: { ...proj, enabledAt: '2026-01-01T00:00:00.000Z' } } })
+  }
+  killCalls.length = 0
+  const res = await handleMasterCommand('!project set dis-test --disabled on', mctx())
+  check(
+    'set --disabled on: succeeds',
+    res.kind === 'reply' && res.text.includes('disabled'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  const proj = loadConfig().projects[disChatId]!
+  check('set --disabled on: disabled:true persisted', proj.disabled === true)
+  check('set --disabled on: enabledAt removed', proj.enabledAt === undefined)
+  check('set --disabled on: killProject called', killCalls.includes(disChatId))
+}
+
+// --disabled off → removes disabled key, stamps enabledAt
+{
+  killCalls.length = 0
+  const res = await handleMasterCommand('!project set dis-test --disabled off', mctx())
+  check(
+    'set --disabled off: succeeds',
+    res.kind === 'reply' && res.text.includes('enabled'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  const proj = loadConfig().projects[disChatId]!
+  check('set --disabled off: disabled key removed', proj.disabled === undefined)
+  check(
+    'set --disabled off: enabledAt stamped as ISO date',
+    typeof proj.enabledAt === 'string' && !isNaN(Date.parse(proj.enabledAt)),
+    JSON.stringify(proj.enabledAt),
+  )
+}
+
+// list shows ⛔ for disabled project and not for enabled ones
+{
+  // Re-disable dis-test for the list check
+  {
+    const cfg = loadConfig()
+    const proj = cfg.projects[disChatId]!
+    saveConfig({ ...cfg, projects: { ...cfg.projects, [disChatId]: { ...proj, disabled: true } } })
+  }
+  const listRes = await handleMasterCommand('!project list', mctx())
+  check(
+    'list: ⛔ shown for disabled project',
+    listRes.kind === 'reply' && listRes.text.includes('⛔'),
+    listRes.kind === 'reply' ? listRes.text : listRes.kind,
+  )
+  // 'support' is not disabled — its row should not have ⛔
+  // We check that at least one row (dis-test) has ⛔ while the support row does not contain it
+  const text = listRes.kind === 'reply' ? listRes.text : ''
+  const disLine = text.split('\n').find(l => l.includes('dis-test')) ?? ''
+  const supportLine = text.split('\n').find(l => l.includes('support') && !l.includes('master')) ?? ''
+  check('list: dis-test row contains ⛔', disLine.includes('⛔'))
+  check('list: support row does not contain ⛔', !supportLine.includes('⛔'))
+}
+
+// show contains 'disabled: yes' for disabled, absent otherwise
+{
+  const showDis = await handleMasterCommand('!project show dis-test', mctx())
+  check(
+    'show: disabled:yes present for disabled project',
+    showDis.kind === 'reply' && showDis.text.includes('disabled: yes'),
+    showDis.kind === 'reply' ? showDis.text : showDis.kind,
+  )
+  const showOk = await handleMasterCommand('!project show support', mctx())
+  check(
+    'show: disabled line absent for enabled project',
+    showOk.kind === 'reply' && !showOk.text.includes('disabled: yes'),
+    showOk.kind === 'reply' ? showOk.text : showOk.kind,
+  )
+}
+
 // Restore config after autopilot tests
 saveConfig(config)
 
