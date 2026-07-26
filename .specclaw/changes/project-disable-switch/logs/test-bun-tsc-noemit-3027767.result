@@ -1,0 +1,7 @@
+exit=0
+duration_s=7
+log=.specclaw/changes/project-disable-switch/logs/test-bun-tsc-noemit-3027767.log
+head=16562ecf762e15122c2f7b6b868fd734d33d0e6e
+dirty=true
+cmd=bun tsc --noEmit
+interrupted=false
