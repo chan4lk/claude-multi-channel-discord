@@ -1,0 +1,7 @@
+exit=0
+duration_s=8
+log=.specclaw/changes/collab-handoff-protocol/logs/test-bun-tsc-noemit-3459302.log
+head=4f6d25558c6553789a2652daa946ae95c23a3d7f
+dirty=true
+cmd=bun tsc --noEmit
+interrupted=false
