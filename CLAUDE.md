@@ -72,6 +72,7 @@ Discord Gateway (WSS)
 | `src/bot-peers.ts` | `BotPeerGate` — consecutive-turn limit, cooldown, notice latch, human reset for bot-peer inbound |
 | `src/shared-learnings.ts` | Shared learnings board — `appendLearning`/`readLearnings` backed by `shared/learnings.md` |
 | `src/backlog.ts` | Backlog autopilot pure logic — source detection, snapshots, seed/nudge prompts, state machine (`nextAutopilotAction`) |
+| `src/handoffs.ts` | Handoff registry — tracked cross-agent handoffs (`pending→done|expired`), `shared/handoffs.json`, sweep + ack matching |
 
 Tests: `src/master-commands.test.ts`, `src/project-pool.test.ts`, `src/master-mcp-server.test.ts`, `src/bot-peers.test.ts`, `src/shared-learnings.test.ts`, `src/backlog.test.ts`, `src/scheduler.test.ts` (~350 checks total).
 
@@ -106,6 +107,7 @@ Tests: `src/master-commands.test.ts`, `src/project-pool.test.ts`, `src/master-mc
 - `projects[<chat_id>].{slug, model?, git?, claude?, provider?, platform?, whatsappJid?, botPeers?, peers?, hermes?, disabled?, enabledAt?, autoDisable?}` — `platform` is `'discord' | 'teams' | 'whatsapp'` (default `'discord'`); `whatsappJid` is required when `platform === 'whatsapp'` (contact's E.164 JID, e.g. `15551234567@s.whatsapp.net`); `botPeers: { allow: string[], maxConsecutive?, cooldownSeconds? }` enables allowlisted bot-peer inbound with loop-prevention; `peers: { allow: string[], maxHops?, cooldownSeconds? }` enables cross-project dialogue (mutual consent required on both sides)
 - `defaults.botPeers.{maxConsecutive?, cooldownSeconds?}` — limits-only defaults (no `allow`); built-in fallback is maxConsecutive=5, cooldownSeconds=30
 - `defaults.peers.{maxHops?, cooldownSeconds?}` — limits-only defaults for cross-project dialogue (no `allow`); built-in fallback is maxHops=6, cooldownSeconds=15
+- `projects[*].collab.{roles?, timeoutMinutes?}` — collab handoff config: `roles` maps stable role names (e.g. `reviewer`) to an internal project slug or an allowlisted bot-peer id; `defaults.collab.{timeoutMinutes?}` limits-only (built-in 30 min). Reach itself stays behind the `handoff` flag (`projects[*].handoff` / `defaults.handoff`)
 - `projects[*].autopilot.{enabled, file?, intervalMinutes?, stallThreshold?, respectHeartbeatWindow?}` + MCD-maintained runtime (`state`, `seededAt`, `seedGoal`, `lastFireAt`, `zeroDeltaCount`, `lastSnapshot`) — backlog autopilot; `defaults.autopilot.{intervalMinutes?, stallThreshold?}` limits-only (built-in fallback 30 min / 3)
 - `projects[*].backlogWatch.{enabled?, staleBacklogDays?}` + MCD-maintained runtime (`lastSnapshot`, `lastDeltaAt`, `lastAlertAt`) — passive backlog stall watch (on by default when a backlog source exists); `defaults.backlogWatch.{enabled?, staleBacklogDays?}` limits-only (built-in fallback enabled / 3 days)
 - `projects[*].hermes.{enabled}` — per-project Hermes bridge access (off by default); when true AND `defaults.hermes.enabled`, the project's Claude gains the `hermes_run` MCP tool
@@ -115,9 +117,9 @@ Tests: `src/master-commands.test.ts`, `src/project-pool.test.ts`, `src/master-mc
 
 ## All implemented `!project` verbs
 
-`list`, `show`/`status`, `create`, `clone`, `set`, `rename`, `remote`, `pull`, `usage`/`ps`/`top`, `stop`, `schedule add/inject/list/pause/resume/rm`, `provider`, `model`, `progress`, `branch`, `backlog`, `memory`, `heartbeat`, `hermes`, `teams-setup`, `rm --yes`, `help`
+`list`, `show`/`status`, `create`, `clone`, `set`, `rename`, `remote`, `pull`, `usage`/`ps`/`top`, `stop`, `schedule add/inject/list/pause/resume/rm`, `provider`, `model`, `progress`, `branch`, `backlog`, `memory`, `heartbeat`, `hermes`, `collab`, `teams-setup`, `rm --yes`, `help`
 
-`set` flags include `--bot-peers <id,id,...> --yes` (set/replace allowlist) and `--bot-peers none` (remove block, no `--yes` needed); `--peers <slug,...>` (set/replace peer allow list, slugs must exist, no self/master) and `--peers none` (remove peers block); `--autopilot on|off [--seed "<goal>"] [--autopilot-interval <min>] [--backlog-file <path>]` (backlog autopilot — MCD seeds BACKLOG.md via the project's Claude, then nudge-loops until done; refused on master); `--hermes on --yes` / `--hermes off` (grant/revoke the project's `hermes_run` MCP tool; `on` requires `--yes` because it grants host-level ops reach; master target is a warn no-op); `--disabled on|off` (project offline switch — `on` stops the warm session and drops all inbound with a throttled notice, `off` re-enables and stamps `enabledAt`; no `--yes`, master target refused). `backlog <target>` shows source, X/Y done, autopilot state.
+`set` flags include `--bot-peers <id,id,...> --yes` (set/replace allowlist) and `--bot-peers none` (remove block, no `--yes` needed); `--peers <slug,...>` (set/replace peer allow list, slugs must exist, no self/master) and `--peers none` (remove peers block); `--autopilot on|off [--seed "<goal>"] [--autopilot-interval <min>] [--backlog-file <path>]` (backlog autopilot — MCD seeds BACKLOG.md via the project's Claude, then nudge-loops until done; refused on master); `--hermes on --yes` / `--hermes off` (grant/revoke the project's `hermes_run` MCP tool; `on` requires `--yes` because it grants host-level ops reach; master target is a warn no-op); `--disabled on|off` (project offline switch — `on` stops the warm session and drops all inbound with a throttled notice, `off` re-enables and stamps `enabledAt`; no `--yes`, master target refused); `--collab-role <name>=<slug|botId>` / `--collab-role <name>=none` (set/remove a collab role — value validated against existing slugs / the project's `botPeers.allow`; no `--yes`, config only). `backlog <target>` shows source, X/Y done, autopilot state. `collab <target>` shows configured roles (stale-marked) + open handoffs.
 
 Mutation verbs require `userId ∈ access.allowFrom`. Destructive verbs (`rm`, `rename`, `remote --set`) require `--yes`.
 
@@ -138,6 +140,12 @@ Independent of autopilot: an hourly `Scheduler.registerBacklogWatchSweep()` scan
 Auto-disable: `defaults.autoDisable: { enabled, idleDays }` (opt-in, default idleDays 7) registers `Scheduler.registerAutoDisableSweep()` (hourly). Idle signal = newest session-transcript `.jsonl` mtime (`src/transcript-path.ts`, realpath-encoded like heartbeat) vs `max(mtime, enabledAt)` — any activity self-protects, never-used projects (no transcript) are skipped, `autoDisable: false` exempts per-project. Fires the same `disabled: true` flag as the manual toggle and posts `⛔ auto-disabled <slug> — idle Nd+` to master.
 
 ---
+
+## Collab handoff protocol
+
+Tracked cross-agent handoffs on top of the `handoff` flag. `mcp__mcd__handoff` (now with optional `role` arg resolved via `projects[*].collab.roles`) creates a registry record in `shared/handoffs.json` (`pending → done | expired`) and tags the delivery with `#h-<id>`. Internal project targets get the tagged envelope via `pool.deliver`; bot-peer targets (ids in the source project's `botPeers.allow`) get an `<@botId> [handoff #h-<id> from <slug>] <task>` post in the source channel (mention satisfies `DISCORD_ALLOW_BOTS=mentions`). Receivers close via `mcp__mcd__handoff_complete { id, outcome? }` (target session or master; idempotent) — or, for external bots, any allowlisted bot message containing a known pending `#h-<id>` auto-closes it and is **exempt from the bot-peer turn limit** (exemption only fires on a matching *pending* id, each id spends on first match — arbitrary `#h-` text can't bypass the loop gate). A 5-min scheduler sweep nags the receiver channel once at `timeoutMinutes` (default 30; v1 sweep reads the defaults-level timeout only) and escalates to master + marks `expired` at 2×. `!project collab <slug>` lists roles + open handoffs; `!project set <slug> --collab-role reviewer=<slug|botId>` configures.
+
+Recommended channel norms for bot-peer channels (put in the project's CLAUDE.md): unaddressed human messages belong to the channel-owner bot — peers respond only when @mentioned; when a peer's blocking question is in your domain, answer it instead of letting it time out on the human; route work through `handoff` so it's tracked, not through free-text agreements.
 
 ## Provider routing
 

@@ -65,3 +65,7 @@ export function sharedDir(): string {
 export function sharedLearningsPath(): string {
   return join(sharedDir(), 'learnings.md')
 }
+
+export function handoffsPath(): string {
+  return join(sharedDir(), 'handoffs.json')
+}

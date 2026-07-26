@@ -39,6 +39,10 @@ The bot exposes `mcp__mcd__run_master_command` — **available only in this mast
 | "create a fresh project that uses minimax" | `run_master_command({ command: 'create --new-channel <slug> --slug <slug> --prompt "..." --provider minimax --model MiniMax-M2.7' })` |
 | "create a Teams project for this conversation ID: <id>" | `run_master_command({ command: 'create --platform teams <id> --slug <slug> --prompt "..."' })` |
 | "set up Teams credentials" / "teams-setup" | `run_master_command({ command: 'teams-setup <APP_ID> <APP_SECRET>' })` — writes TEAMS_APP_ID + TEAMS_APP_SECRET to .env |
+| "show <slug>'s collab roles / open handoffs" | `run_master_command({ command: "collab <slug>" })` |
+| "make dHermes the reviewer for <slug>" | `run_master_command({ command: "set <slug> --collab-role reviewer=<botId-or-slug>" })` — value must be an existing slug or an id in the project's `botPeers.allow` |
+
+When a project channel hosts multiple agents (bot peers), recommend these norms for that project's CLAUDE.md: unaddressed human messages belong to the channel-owner bot (peers respond only on @mention); answer a peer's blocking question when you own the context instead of letting it time out on the human; route delegated work through `mcp__mcd__handoff` (tracked `#h-<id>`, swept and escalated when unanswered) rather than free-text agreements.
 
 After calling the tool, take its returned text and emit it via `mcp__mcd__reply` (lightly cleaned up if it's verbose). Don't dump raw command output unless the operator explicitly asks for it — paraphrase the success and surface any errors clearly.
 

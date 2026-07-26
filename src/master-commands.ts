@@ -10,6 +10,7 @@ import {
   findProjectBySlug,
   isMasterChannel,
   loadConfig,
+  resolveCollabTarget,
   saveConfig,
   SLUG_PATTERN,
   type AutopilotConfig,
@@ -25,6 +26,7 @@ import { buildAttentionReport } from './heartbeat.ts'
 import { readSpecclawStatus } from './specclaw-status.ts'
 import { launchHermesRun, tailHermesRun, listRecentRuns } from './hermes-bridge.ts'
 import { detectBacklogSource, snapshotBacklog } from './backlog.ts'
+import { loadRegistry, type HandoffRecord } from './handoffs.ts'
 
 export type MasterCommandResult =
   | { kind: 'no-master-configured' }
@@ -47,6 +49,8 @@ export interface MasterContext {
   getCircuitStates?: () => Map<string, { circuitOpen: boolean; backoffUntil?: number }>
   /** Injectable spawn function for hermes bridge (tests mock this). */
   hermesSpawnFn?: (...args: any[]) => any
+  /** Injectable handoff-registry loader (tests avoid the filesystem). */
+  loadHandoffRegistry?: () => HandoffRecord[]
 }
 
 export interface MasterMutator {
@@ -194,6 +198,8 @@ export async function handleMasterCommand(
         result = { kind: 'reply', text: await handleHermes(rest, ctx) }; break
       case 'backlog':
         result = { kind: 'reply', text: await handleBacklog(rest, ctx) }; break
+      case 'collab':
+        result = { kind: 'reply', text: handleCollab(rest, ctx) }; break
       default:
         result = {
           kind: 'reply',
@@ -237,7 +243,9 @@ function helpText(prefix: string): string {
     `${prefix} set    <chat_id-or-slug> --hermes off                  — revoke the project's hermes access`,
     `${prefix} set    <chat_id-or-slug> --disabled on                 — suspend project: inbound messages dropped, warm session killed`,
     `${prefix} set    <chat_id-or-slug> --disabled off                — resume project: re-enables delivery, stamps enabledAt`,
+    `${prefix} set    <chat_id-or-slug> --collab-role <name>=<slug|botId> — add/update a collab handoff role (<name>=none removes)`,
     `${prefix} backlog <chat_id-or-slug>                            — show backlog source, progress, and autopilot state`,
+    `${prefix} collab <chat_id-or-slug>                             — show collab roles and open handoffs`,
     `${prefix} rename <chat_id-or-slug> --slug NEW                    — rename slug + dir`,
     `${prefix} remote <chat_id-or-slug> [--set URL] [--creds NAME]    — show/set git remote`,
     `${prefix} pull   <chat_id-or-slug>                               — git pull --ff-only`,
@@ -767,8 +775,28 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
     }
   }
 
-  if (prompt === null && stuckMinutes === null && heartbeatMode === null && heartbeatWindow === null && heartbeatStale === null && goalRaw === null && distillOnStop === null && developBranch === null && prApi === null && botPeersAction === null && peersAction === null && autopilotAction === null && autopilotInterval === null && backlogFile === null && hermesAction === null && disabledAction === null) {
-    return '`set` requires `--prompt "..."`, `--stuck-threshold-minutes N`, `--heartbeat-mode <supervised|autonomous>`, `--heartbeat-window <HH:MM-HH:MM>`, `--heartbeat-stale-minutes N`, `--goal "..."`, `--distill-on-stop`, `--develop-branch on|off`, `--pr-token-github <token>`, `--pr-token-azdo <token> --azdo-org X --azdo-project Y`, `--bot-peers <id,...>|none`, `--peers <slug,...>|none`, `--autopilot on|off [--seed "<goal>"] [--autopilot-interval N] [--backlog-file <path>]`, `--hermes on|off`, or `--disabled on|off`'
+  // --collab-role <name>=<slug|botId> or <name>=none — add/update/remove a collab handoff role
+  const collabRoleRaw = typeof flags['collab-role'] === 'string' ? flags['collab-role'] : null
+  let collabRoleAction: { name: string; value: string | 'none' } | null = null
+  if (collabRoleRaw !== null) {
+    if (isMasterChannel(config, entry.chatId)) {
+      return 'master channel cannot have collab roles'
+    }
+    const eq = collabRoleRaw.indexOf('=')
+    const name = eq >= 0 ? collabRoleRaw.slice(0, eq).trim() : ''
+    const value = eq >= 0 ? collabRoleRaw.slice(eq + 1).trim() : ''
+    if (name === '' || value === '') {
+      return '`--collab-role` must be `<name>=<slug|botId>` (or `<name>=none` to remove)'
+    }
+    if (value !== 'none') {
+      const resolved = resolveCollabTarget(config, entry.chatId, value)
+      if ('error' in resolved) return resolved.error
+    }
+    collabRoleAction = { name, value }
+  }
+
+  if (prompt === null && stuckMinutes === null && heartbeatMode === null && heartbeatWindow === null && heartbeatStale === null && goalRaw === null && distillOnStop === null && developBranch === null && prApi === null && botPeersAction === null && peersAction === null && autopilotAction === null && autopilotInterval === null && backlogFile === null && hermesAction === null && disabledAction === null && collabRoleAction === null) {
+    return '`set` requires `--prompt "..."`, `--stuck-threshold-minutes N`, `--heartbeat-mode <supervised|autonomous>`, `--heartbeat-window <HH:MM-HH:MM>`, `--heartbeat-stale-minutes N`, `--goal "..."`, `--distill-on-stop`, `--develop-branch on|off`, `--pr-token-github <token>`, `--pr-token-azdo <token> --azdo-org X --azdo-project Y`, `--bot-peers <id,...>|none`, `--peers <slug,...>|none`, `--autopilot on|off [--seed "<goal>"] [--autopilot-interval N] [--backlog-file <path>]`, `--hermes on|off`, `--disabled on|off`, or `--collab-role <name>=<slug|botId|none>`'
   }
 
   const results: string[] = []
@@ -966,6 +994,34 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
       const { disabled: _removed, ...rest } = latestEntry
       saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: { ...rest, enabledAt: new Date().toISOString() } } })
       results.push(`✅ **${latestEntry.slug}** is now **enabled** — inbound messages will be delivered.`)
+    }
+  }
+
+  if (collabRoleAction !== null) {
+    const { name, value } = collabRoleAction
+    const latestConfig = loadConfig()
+    const latestEntry = latestConfig.projects[entry.chatId] ?? entry.project
+    const existingCollab = latestEntry.collab ?? {}
+    const existingRoles = existingCollab.roles ?? {}
+    if (value === 'none') {
+      if (existingRoles[name] === undefined) {
+        results.push(`collab role \`${name}\` is not set for **${latestEntry.slug}** — nothing to remove.`)
+      } else {
+        const { [name]: _removed, ...remainingRoles } = existingRoles
+        if (Object.keys(remainingRoles).length === 0 && existingCollab.timeoutMinutes === undefined) {
+          // Collab block would be empty — drop it entirely
+          const { collab: _collab, ...rest } = latestEntry
+          saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: rest } })
+        } else {
+          const collab = { ...existingCollab, roles: remainingRoles }
+          saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: { ...latestEntry, collab } } })
+        }
+        results.push(`✅ removed collab role \`${name}\` for **${latestEntry.slug}**.`)
+      }
+    } else {
+      const collab = { ...existingCollab, roles: { ...existingRoles, [name]: value } }
+      saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: { ...latestEntry, collab } } })
+      results.push(`✅ set collab role \`${name}\` → \`${value}\` for **${latestEntry.slug}**.`)
     }
   }
 
@@ -2293,5 +2349,59 @@ async function handleBacklog(rest: string[], _ctx: MasterContext): Promise<strin
     `stallThreshold: ${effectiveStall}`,
     `respectHeartbeatWindow: ${respectWindow}${hwWindow ? ` (window: ${hwWindow})` : ''}`,
   ]
+  return lines.join('\n')
+}
+
+/**
+ * `!project collab <chat_id-or-slug>` — read-only collab status.
+ * Shows configured roles (marking entries that no longer resolve as stale)
+ * and open (pending) handoffs involving this project. Works even when the
+ * `handoff` reach flag is off — config display grants no reach.
+ */
+function handleCollab(rest: string[], ctx: MasterContext): string {
+  const { positional } = parseFlags(rest)
+  if (positional.length === 0) return '`collab` needs a chat_id or slug'
+  const target = positional[0]!
+
+  const config = loadConfig()
+  const entry = resolveTarget(config, target)
+  if (!entry) return `no project found for "${target}"`
+
+  const { chatId, project } = entry
+  const lines = [`**Collab — ${project.slug}**`]
+
+  // Configured roles, flagging any that no longer resolve (stale after a
+  // rename/delete or a botPeers.allow change).
+  const roles = project.collab?.roles ?? {}
+  const roleNames = Object.keys(roles)
+  if (roleNames.length === 0) {
+    lines.push('_no collab roles configured — add one with `set --collab-role <name>=<slug|botId>`._')
+  } else {
+    lines.push('roles:')
+    for (const name of roleNames) {
+      const resolved = resolveCollabTarget(config, chatId, name)
+      const staleMark = 'error' in resolved ? ' (stale)' : ''
+      lines.push(`  ${name} → ${roles[name]}${staleMark}`)
+    }
+  }
+
+  // Open (pending) handoffs where this project is the sender or the target.
+  const registry = (ctx.loadHandoffRegistry ?? loadRegistry)()
+  const open = registry.filter(
+    r => r.state === 'pending' && (r.from === project.slug || r.to.chatId === chatId),
+  )
+  if (open.length === 0) {
+    lines.push('_no open handoffs._')
+  } else {
+    lines.push('open handoffs:')
+    const nowMs = Date.now()
+    for (const r of open) {
+      const toName = r.to.kind === 'project' ? r.to.slug : r.to.botId
+      const ageMin = Math.max(0, Math.floor((nowMs - Date.parse(r.createdAt)) / 60_000))
+      const task = r.task.length > 80 ? `${r.task.slice(0, 79)}…` : r.task
+      lines.push(`  #${r.id} ${r.from}→${toName} ${ageMin}m: ${task}`)
+    }
+  }
+
   return lines.join('\n')
 }

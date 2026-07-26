@@ -851,6 +851,201 @@ check('AC6: project without peers.allow: ask_project → isError', noPeerCallRes
 
 await serverPeer.stop()
 
+// ─── collab handoff protocol: tracked handoffs + handoff_complete ────────────
+// Registry writes land under MCD_CHANNELS_DIR/shared/handoffs.json; paths.ts
+// reads the env lazily, so pointing it at a temp dir here is enough.
+{
+  const { mkdtempSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const handoffTmpDir = mkdtempSync(require('path').join(tmpdir(), 'mcd-handoff-mcp-test-'))
+  const origChannelsDir = process.env.MCD_CHANNELS_DIR
+  process.env.MCD_CHANNELS_DIR = handoffTmpDir
+
+  const { loadRegistry } = await import('./handoffs.ts')
+
+  const HO_MASTER = '121212121212121201'
+  const HO_SRC    = '121212121212121202'  // handoff: true, roles + botPeers.allow
+  const HO_TGT    = '121212121212121203'  // internal handoff target
+  const HO_OTHER  = '121212121212121204'  // unrelated project (stranger)
+  const HO_DIS    = '121212121212121205'  // disabled internal target
+  const HO_BOT_ID = '999888777666555444'  // external bot peer (snowflake)
+
+  const hoConfig = {
+    version: 1 as const,
+    master: { chatId: HO_MASTER, commandPrefix: '!project' },
+    defaults: {
+      model: 'sonnet',
+      idleEvictMinutes: 15,
+      maxConcurrent: 8,
+      git: { userName: 'bot', userEmail: 'bot@local', branchPrefix: 'claude/' },
+      claude: { permissionMode: 'auto' as const },
+      providers: {},
+      progressMode: 'off' as const,
+      handoff: false,
+      contextWarningThresholdPct: 80,
+    },
+    projects: {
+      [HO_SRC]: {
+        slug: 'ho-src',
+        handoff: true,
+        botPeers: { allow: [HO_BOT_ID] },
+        collab: { roles: { reviewer: HO_BOT_ID, builder: 'ho-tgt' } },
+      },
+      [HO_TGT]: { slug: 'ho-tgt' },
+      [HO_OTHER]: { slug: 'ho-other' },
+      [HO_DIS]: { slug: 'ho-dis', disabled: true },
+    },
+  } as unknown as import('./channels-config.ts').ChannelsConfig
+
+  const hoReplies: OutboundReply[] = []
+  const hoDelivered: Array<{ chatId: string; envelope: InboundEnvelope }> = []
+  const hoPool = {
+    deliver: async (chatId: string, envelope: InboundEnvelope) => {
+      hoDelivered.push({ chatId, envelope })
+    },
+  } as unknown as ProjectPool
+
+  const serverHo = new MasterMcpServer({
+    onReply: (r) => hoReplies.push(r),
+    getMasterChatId: () => HO_MASTER,
+    getPool: () => hoPool,
+    getConfig: () => hoConfig,
+    log: () => {},
+  })
+  const { host: hoH, port: hoP } = await serverHo.start()
+  const hoUrl = (chatId: string) => `http://${hoH}:${hoP}/mcp/${chatId}`
+  const hoCall = (chatId: string, name: string, argsObj: Record<string, unknown>) =>
+    rpc(hoUrl(chatId), serverHo.tokenFor(chatId), 'tools/call', { name, arguments: argsObj })
+  const hoTools = async (chatId: string) => {
+    const list = await rpc(hoUrl(chatId), serverHo.tokenFor(chatId), 'tools/list', {})
+    return (list.result?.tools ?? []) as Array<{ name: string; description: string; inputSchema: any }>
+  }
+
+  // Tool listing: handoff for opted-in project only; handoff_complete for any
+  // configured project + master (broad listing gate, strict call-time check).
+  const srcToolList = await hoTools(HO_SRC)
+  const srcToolNames = srcToolList.map((t) => t.name)
+  check('handoff listing: opted-in project sees handoff', srcToolNames.includes('handoff'), JSON.stringify(srcToolNames))
+  check('handoff listing: opted-in project sees handoff_complete', srcToolNames.includes('handoff_complete'), JSON.stringify(srcToolNames))
+  const hoToolDef = srcToolList.find((t) => t.name === 'handoff')!
+  check('handoff listing: role arg present, only message required',
+    'role' in hoToolDef.inputSchema.properties && JSON.stringify(hoToolDef.inputSchema.required) === '["message"]',
+    JSON.stringify(hoToolDef.inputSchema))
+  check('handoff listing: description names configured roles + #h-<id> tracking',
+    hoToolDef.description.includes('reviewer') && hoToolDef.description.includes('builder') &&
+      hoToolDef.description.includes('#h-<id>') && hoToolDef.description.includes('handoff_complete'),
+    hoToolDef.description)
+  const otherToolNames = (await hoTools(HO_OTHER)).map((t) => t.name)
+  check('handoff listing: non-opted-in project hides handoff', !otherToolNames.includes('handoff'), JSON.stringify(otherToolNames))
+  check('handoff_complete listing: any project session sees it', otherToolNames.includes('handoff_complete'), JSON.stringify(otherToolNames))
+  const masterToolNames = (await hoTools(HO_MASTER)).map((t) => t.name)
+  check('handoff_complete listing: master sees it', masterToolNames.includes('handoff_complete'), JSON.stringify(masterToolNames))
+  const strangerToolNames = (await hoTools('121212121212121299')).map((t) => t.name)
+  check('handoff_complete listing: unknown chat hides it', !strangerToolNames.includes('handoff_complete'), JSON.stringify(strangerToolNames))
+
+  // Arg validation: both / neither
+  const bothArgs = await hoCall(HO_SRC, 'handoff', { target_slug: 'ho-tgt', role: 'reviewer', message: 'x' })
+  check('handoff: target_slug + role together → isError', bothArgs.result?.isError === true, JSON.stringify(bothArgs).slice(0, 200))
+  const neitherArg = await hoCall(HO_SRC, 'handoff', { message: 'x' })
+  check('handoff: neither target_slug nor role → isError', neitherArg.result?.isError === true, JSON.stringify(neitherArg).slice(0, 200))
+  check('handoff: validation errors created no records', loadRegistry().length === 0, JSON.stringify(loadRegistry()))
+
+  // AC1: internal handoff via target_slug → registry record + #h-<id> in envelope
+  hoDelivered.length = 0
+  const ac1 = await hoCall(HO_SRC, 'handoff', { target_slug: 'ho-tgt', message: 'review PR 42' })
+  check('AC1: internal handoff ok', ac1.result && !ac1.result.isError, JSON.stringify(ac1).slice(0, 300))
+  const ac1Parsed = JSON.parse(ac1.result?.content?.[0]?.text ?? '{}')
+  check('AC1: result JSON has h- id + target', typeof ac1Parsed.id === 'string' && ac1Parsed.id.startsWith('h-') && ac1Parsed.target_slug === 'ho-tgt', JSON.stringify(ac1Parsed))
+  check('AC1: pool.deliver hit target chat', hoDelivered.length === 1 && hoDelivered[0]!.chatId === HO_TGT, JSON.stringify(hoDelivered))
+  check('AC1: envelope content contains #h-<id>',
+    hoDelivered[0]!.envelope.content.includes('#h-') && hoDelivered[0]!.envelope.content.includes(`#${ac1Parsed.id}`) &&
+      hoDelivered[0]!.envelope.content.includes('review PR 42'),
+    hoDelivered[0]?.envelope.content)
+  const ac1Rec = loadRegistry().find((r) => r.id === ac1Parsed.id)
+  check('AC1: registry record pending, kind=project, to.chatId=target',
+    ac1Rec?.state === 'pending' && ac1Rec.from === 'ho-src' && ac1Rec.to.kind === 'project' && ac1Rec.to.chatId === HO_TGT,
+    JSON.stringify(ac1Rec))
+
+  // AC2: role → botPeer: onReply mention to SOURCE channel, no pool.deliver
+  hoDelivered.length = 0
+  hoReplies.length = 0
+  const ac2 = await hoCall(HO_SRC, 'handoff', { role: 'reviewer', message: 'audit the ledger' })
+  check('AC2: role handoff ok', ac2.result && !ac2.result.isError, JSON.stringify(ac2).slice(0, 300))
+  const ac2Parsed = JSON.parse(ac2.result?.content?.[0]?.text ?? '{}')
+  check('AC2: result JSON has h- id + bot_id', typeof ac2Parsed.id === 'string' && ac2Parsed.id.startsWith('h-') && ac2Parsed.bot_id === HO_BOT_ID, JSON.stringify(ac2Parsed))
+  check('AC2: no pool.deliver for botPeer target', hoDelivered.length === 0, JSON.stringify(hoDelivered))
+  const ac2Reply = hoReplies[0]
+  check('AC2: mention posted to SOURCE channel',
+    hoReplies.length === 1 && ac2Reply?.kind === 'text' && ac2Reply.chatId === HO_SRC &&
+      ac2Reply.text === `<@${HO_BOT_ID}> [handoff #${ac2Parsed.id} from ho-src] audit the ledger`,
+    JSON.stringify(hoReplies))
+  const ac2Rec = loadRegistry().find((r) => r.id === ac2Parsed.id)
+  check('AC2: registry record kind=botPeer, to.chatId=source channel',
+    ac2Rec?.state === 'pending' && ac2Rec.to.kind === 'botPeer' && ac2Rec.to.chatId === HO_SRC &&
+      (ac2Rec.to as { botId: string }).botId === HO_BOT_ID,
+    JSON.stringify(ac2Rec))
+
+  // Literal bot-peer id as target_slug also resolves (routes through resolveCollabTarget)
+  hoReplies.length = 0
+  const literalBot = await hoCall(HO_SRC, 'handoff', { target_slug: HO_BOT_ID, message: 'ping' })
+  const literalBotParsed = JSON.parse(literalBot.result?.content?.[0]?.text ?? '{}')
+  check('handoff: literal bot-peer id as target_slug works',
+    !literalBot.result?.isError && literalBotParsed.bot_id === HO_BOT_ID && hoReplies.length === 1,
+    JSON.stringify(literalBot).slice(0, 300))
+
+  // Unknown slug keeps the legacy error string
+  const unknownSlug = await hoCall(HO_SRC, 'handoff', { target_slug: 'nope-slug', message: 'x' })
+  check('handoff: unknown slug → legacy error string',
+    unknownSlug.result?.isError === true && (unknownSlug.result?.content?.[0]?.text ?? '').includes('no project with slug "nope-slug"'),
+    JSON.stringify(unknownSlug).slice(0, 200))
+
+  // Disabled target refused BEFORE creating any record
+  const preDisabledCount = loadRegistry().length
+  const disabledHo = await hoCall(HO_SRC, 'handoff', { target_slug: 'ho-dis', message: 'x' })
+  check('handoff: disabled target → isError with ask_project wording',
+    disabledHo.result?.isError === true && (disabledHo.result?.content?.[0]?.text ?? '').includes('target project is disabled'),
+    JSON.stringify(disabledHo).slice(0, 200))
+  check('handoff: disabled-target refusal created no record', loadRegistry().length === preDisabledCount)
+
+  // AC3: handoff_complete — target ok
+  const done1 = await hoCall(HO_TGT, 'handoff_complete', { id: ac1Parsed.id, outcome: 'PR approved' })
+  const done1Parsed = JSON.parse(done1.result?.content?.[0]?.text ?? '{}')
+  check('AC3: target session completes its handoff', !done1.result?.isError && done1Parsed.ok === true && done1Parsed.state === 'done', JSON.stringify(done1).slice(0, 200))
+  const done1Rec = loadRegistry().find((r) => r.id === ac1Parsed.id)
+  check('AC3: registry shows done + outcome', done1Rec?.state === 'done' && done1Rec.outcome === 'PR approved', JSON.stringify(done1Rec))
+
+  // AC3: duplicate complete → idempotent ok with note
+  const done1Again = await hoCall(HO_TGT, 'handoff_complete', { id: ac1Parsed.id })
+  const done1AgainParsed = JSON.parse(done1Again.result?.content?.[0]?.text ?? '{}')
+  check('AC3: duplicate complete → ok with note, no error',
+    !done1Again.result?.isError && done1AgainParsed.ok === true && done1AgainParsed.note === 'already done',
+    JSON.stringify(done1Again).slice(0, 200))
+
+  // AC3: stranger project refused (record still pending)
+  const strangerDone = await hoCall(HO_OTHER, 'handoff_complete', { id: ac2Parsed.id })
+  check('AC3: stranger session refused',
+    strangerDone.result?.isError === true && (strangerDone.result?.content?.[0]?.text ?? '').includes('not addressed to this session'),
+    JSON.stringify(strangerDone).slice(0, 200))
+  check('AC3: stranger refusal left record pending', loadRegistry().find((r) => r.id === ac2Parsed.id)?.state === 'pending')
+
+  // AC3: master may close any handoff (leading # tolerated)
+  const masterDone = await hoCall(HO_MASTER, 'handoff_complete', { id: `#${ac2Parsed.id}` })
+  const masterDoneParsed = JSON.parse(masterDone.result?.content?.[0]?.text ?? '{}')
+  check('AC3: master closes any handoff (accepts leading #)', !masterDone.result?.isError && masterDoneParsed.state === 'done', JSON.stringify(masterDone).slice(0, 200))
+
+  // Unknown id → error
+  const unknownId = await hoCall(HO_MASTER, 'handoff_complete', { id: 'h-zzzz-0000' })
+  check('handoff_complete: unknown id → isError', unknownId.result?.isError === true, JSON.stringify(unknownId).slice(0, 200))
+
+  // Unknown chat session cannot call handoff_complete (call-time gate)
+  const gateDenied = await hoCall('121212121212121299', 'handoff_complete', { id: ac1Parsed.id })
+  check('handoff_complete: unknown session refused at call time', gateDenied.result?.isError === true, JSON.stringify(gateDenied).slice(0, 200))
+
+  await serverHo.stop()
+  process.env.MCD_CHANNELS_DIR = origChannelsDir
+  rmSync(handoffTmpDir, { recursive: true, force: true })
+}
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)
   process.exit(1)

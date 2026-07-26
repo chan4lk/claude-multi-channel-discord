@@ -23,6 +23,7 @@ import {
 } from './schedules-config.ts'
 import type { InboundEnvelope } from './project-process.ts'
 import type { BacklogWatchConfig, ChannelsConfig } from './channels-config.ts'
+import type { HandoffSweepAction } from './handoffs.ts'
 
 function resolveInjectVars(template: string, slug: string): string {
   const now = new Date()
@@ -757,6 +758,73 @@ export class Scheduler {
         }
       } catch (err) {
         this.log(`[backlog-watch] ${project.slug}: sweep error — ${(err as Error).message}`)
+      }
+    }
+  }
+
+  /**
+   * Register a periodic sweep over the handoff registry: nag the receiver
+   * channel once when a pending handoff exceeds the collab timeout, escalate
+   * to master and expire it at 2× the timeout. Runs every 5 minutes (the
+   * 30-min default timeout needs finer granularity than the hourly sweeps).
+   *
+   * Safe to call once at startup — re-registering creates an additional
+   * timer, so don't call more than once.
+   */
+  registerHandoffSweep(opts: {
+    getChannels: () => ChannelsConfig
+    notifyChannel: (chatId: string, text: string) => void
+    notifyMaster: (text: string) => void
+    /** Test-only injection; defaults to the real registry sweep. */
+    sweep?: (nowMs: number, timeoutMs: number) => HandoffSweepAction[]
+    sweepIntervalMs?: number
+    nowMs?: () => number
+  }): void {
+    const intervalMs = opts.sweepIntervalMs ?? 300_000  // 5 min
+    const timer = setInterval(() => void this.runHandoffSweep(opts), intervalMs)
+    if (typeof timer.unref === 'function') timer.unref()
+    this.log('handoff sweep registered')
+  }
+
+  async runHandoffSweep(opts: {
+    getChannels: () => ChannelsConfig
+    notifyChannel: (chatId: string, text: string) => void
+    notifyMaster: (text: string) => void
+    sweep?: (nowMs: number, timeoutMs: number) => HandoffSweepAction[]
+    nowMs?: () => number
+  }): Promise<void> {
+    const { sweepHandoffs } = await import('./handoffs.ts')
+    const config = opts.getChannels()
+    // v1 simplification: sweepHandoffs takes a single timeout, so per-project
+    // collab.timeoutMinutes is NOT consulted here — the defaults-level value
+    // (defaults.collab.timeoutMinutes, built-in 30) applies to every pending
+    // handoff regardless of which project it targets.
+    const timeoutMinutes = config.defaults.collab?.timeoutMinutes ?? 30
+    const timeoutMs = timeoutMinutes * 60_000
+    const nowMs = opts.nowMs ? opts.nowMs() : Date.now()
+
+    let actions: HandoffSweepAction[]
+    try {
+      actions = opts.sweep ? opts.sweep(nowMs, timeoutMs) : sweepHandoffs(nowMs, timeoutMs)
+    } catch (err) {
+      this.log(`[handoff-sweep] sweep error — ${(err as Error).message}`)
+      return
+    }
+
+    for (const action of actions) {
+      try {
+        const record = action.record
+        if (action.kind === 'nag') {
+          const ageMin = Math.floor((nowMs - Date.parse(record.createdAt)) / 60_000)
+          const task = record.task.length > 120 ? record.task.slice(0, 120) + '…' : record.task
+          opts.notifyChannel(record.to.chatId, `⏰ handoff #${record.id} pending ${ageMin}m: ${task}`)
+        } else {
+          const toLabel = record.to.kind === 'project' ? record.to.slug : record.to.botId
+          opts.notifyMaster(`⚠️ handoff #${record.id} ${record.from}→${toLabel} unanswered — expired`)
+        }
+        this.log(`[handoff-sweep] ${action.kind} #${action.record.id}`)
+      } catch (err) {
+        this.log(`[handoff-sweep] notify error for #${action.record.id} — ${(err as Error).message}`)
       }
     }
   }
