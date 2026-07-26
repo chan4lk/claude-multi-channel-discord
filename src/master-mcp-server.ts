@@ -28,7 +28,8 @@ import { z } from 'zod'
 import type { spawn as SpawnFn } from 'node:child_process'
 
 import { channelsDir } from './paths.ts'
-import { effectivePeerLimits, findProjectBySlug, handoffEnabled, type ChannelsConfig, type HermesConfig } from './channels-config.ts'
+import { effectivePeerLimits, findProjectBySlug, handoffEnabled, resolveCollabTarget, type ChannelsConfig, type HermesConfig } from './channels-config.ts'
+import { completeHandoff, createHandoff, loadRegistry, type HandoffTarget } from './handoffs.ts'
 import type { InboundEnvelope, OutboundReply } from './project-process.ts'
 import type { ProjectPool } from './project-pool.ts'
 import { MemoryStore, type MemoryType } from './memory-store.ts'
@@ -355,17 +356,35 @@ export class MasterMcpServer {
       // defaults.handoff). Off by default — handoff grants lateral reach
       // across project boundaries.
       if (this.handoffSource(chatId) !== null) {
+        const roleNames = Object.keys(this.getConfig?.()?.projects[chatId]?.collab?.roles ?? {})
+        const rolesHint = roleNames.length > 0 ? ` Configured roles: ${roleNames.join(', ')}.` : ''
         tools.push({
           name: 'handoff',
-          description: 'Hand a task off to another project\'s Claude session by slug. Use when the operator asks to delegate work to another project (e.g. "@backend please finish this"). The message is delivered into that project\'s session as an inbound handoff message; its reply goes to its own channel, not here.',
+          description: `Hand a task off to another project's Claude session (by slug) or an allowlisted external bot peer (by role name or bot id). Use when the operator asks to delegate work (e.g. "@backend please finish this"). Pass exactly one of target_slug or role — role names come from this project's collab.roles.${rolesHint} Every handoff is tracked with a #h-<id> tag until the receiver (or master) calls handoff_complete. Internal targets get the message in their own session; their reply goes to their own channel, not here.`,
           inputSchema: {
             type: 'object',
             additionalProperties: false,
             properties: {
-              target_slug: { type: 'string', description: 'Slug of the target project (as shown by `list`).' },
-              message: { type: 'string', description: 'The task or request to deliver to the target project.' },
+              target_slug: { type: 'string', description: 'Slug of the target project (as shown by `list`), or a literal bot-peer id from botPeers.allow. Mutually exclusive with role.' },
+              role: { type: 'string', description: 'Role name from this project\'s collab.roles (e.g. "reviewer"). Mutually exclusive with target_slug.' },
+              message: { type: 'string', description: 'The task or request to deliver to the target.' },
             },
-            required: ['target_slug', 'message'],
+            required: ['message'],
+          },
+        })
+      }
+      if (this.handoffCompleteAccess(chatId) !== null) {
+        tools.push({
+          name: 'handoff_complete',
+          description: 'Mark a tracked handoff as done. Call this when you finish a task that arrived tagged #h-<id> (pass the id, with or without the leading #). Only the handoff\'s target session — or master — may close it. Idempotent: closing an already-done/expired id is an ok no-op.',
+          inputSchema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              id: { type: 'string', description: 'Handoff id, e.g. "h-abc123-4f2a" (a leading # is tolerated).' },
+              outcome: { type: 'string', description: 'Optional short note on how the task was resolved.' },
+            },
+            required: ['id'],
           },
         })
       }
@@ -614,36 +633,101 @@ export class MasterMcpServer {
               return errorResult('handoff is not enabled for this project (set `handoff: true` on the project or defaults in channels.json)')
             }
             const targetSlug = String(args.target_slug ?? '').trim()
+            const role = String(args.role ?? '').trim()
             const message = String(args.message ?? '').trim()
-            if (!targetSlug) return errorResult('target_slug is required')
+            if (targetSlug && role) return errorResult('pass exactly one of target_slug or role, not both')
+            if (!targetSlug && !role) return errorResult('target_slug is required (or pass role)')
             if (!message) return errorResult('message is required')
             const config = this.getConfig!()
             if (!config) return errorResult('config not available')
-            const target = findProjectBySlug(config, targetSlug)
-            if (!target) return errorResult(`no project with slug "${targetSlug}"`)
-            if (target.chatId === chatId) return errorResult('cannot hand off to the same project')
-            const pool = this.getPool!()
-            if (!pool) return errorResult('pool not available')
-            const envelope: InboundEnvelope = {
-              messageId: `handoff-${Date.now()}-${randomBytes(4).toString('hex')}`,
-              userId: `handoff:${sourceSlug}`,
-              username: `handoff:${sourceSlug}`,
-              content: `[Cross-project handoff from "${sourceSlug}"] ${message}`,
-              ts: new Date().toISOString(),
-            }
-            this.log(`handoff tool: ${sourceSlug} → ${targetSlug} (${target.chatId}): ${JSON.stringify(message).slice(0, 60)}`)
-            await pool.deliver(target.chatId, envelope)
-            // Post the handoff to the target channel so its operator sees
-            // what arrived without reading tmux logs (same as inject).
-            if (this.client) {
-              try {
-                const ch = await this.fetchTextChannel(target.chatId)
-                await (ch as any).send({ content: `🔀 **Handoff from \`${sourceSlug}\`:**\n> ${message.replace(/\n/g, '\n> ')}` })
-              } catch (err) {
-                this.log(`handoff tool: failed to post visibility message: ${(err as Error).message}`)
+
+            // Resolve the target. `role` always goes through resolveCollabTarget
+            // (roles map to a slug or a bot-peer id). A bare `target_slug` keeps
+            // the legacy slug-first resolution — same error strings as before —
+            // and only falls through to resolveCollabTarget for literal bot-peer
+            // ids from botPeers.allow.
+            let target: HandoffTarget
+            if (role) {
+              const resolved = resolveCollabTarget(config, chatId, role)
+              if ('error' in resolved) return errorResult(resolved.error)
+              target = resolved
+            } else {
+              const hit = findProjectBySlug(config, targetSlug)
+              if (hit) {
+                if (hit.chatId === chatId) return errorResult('cannot hand off to the same project')
+                target = { kind: 'project', slug: hit.project.slug, chatId: hit.chatId }
+              } else {
+                const resolved = resolveCollabTarget(config, chatId, targetSlug)
+                if ('error' in resolved || resolved.kind !== 'botPeer') {
+                  return errorResult(`no project with slug "${targetSlug}"`)
+                }
+                target = resolved
               }
             }
-            return okResult(JSON.stringify({ ok: true, target_slug: targetSlug, target_chat_id: target.chatId }))
+
+            if (target.kind === 'project') {
+              // Refuse a disabled target BEFORE creating any registry record —
+              // same wording as ask_project.
+              if (config.projects[target.chatId]?.disabled) return errorResult('target project is disabled')
+              const pool = this.getPool!()
+              if (!pool) return errorResult('pool not available')
+              const record = createHandoff({ from: sourceSlug, to: target, task: message }, this.now())
+              const envelope: InboundEnvelope = {
+                messageId: `handoff-${Date.now()}-${randomBytes(4).toString('hex')}`,
+                userId: `handoff:${sourceSlug}`,
+                username: `handoff:${sourceSlug}`,
+                content: `[Cross-project handoff from "${sourceSlug}"] ${message} #${record.id}`,
+                ts: new Date().toISOString(),
+              }
+              this.log(`handoff tool: ${sourceSlug} → ${target.slug} (${target.chatId}) #${record.id}: ${JSON.stringify(message).slice(0, 60)}`)
+              await pool.deliver(target.chatId, envelope)
+              // Post the handoff to the target channel so its operator sees
+              // what arrived without reading tmux logs (same as inject).
+              if (this.client) {
+                try {
+                  const ch = await this.fetchTextChannel(target.chatId)
+                  await (ch as any).send({ content: `🔀 **Handoff from \`${sourceSlug}\`** (#${record.id}):\n> ${message.replace(/\n/g, '\n> ')}` })
+                } catch (err) {
+                  this.log(`handoff tool: failed to post visibility message: ${(err as Error).message}`)
+                }
+              }
+              return okResult(JSON.stringify({ ok: true, id: record.id, target_slug: target.slug, target_chat_id: target.chatId }))
+            }
+
+            // External bot-peer target: bot peers share the source project's
+            // channel (finaudit model) — no pool.deliver; post the mention to
+            // the SOURCE channel so the peer bot picks it up there.
+            const record = createHandoff({ from: sourceSlug, to: target, task: message }, this.now())
+            this.log(`handoff tool: ${sourceSlug} → bot-peer ${target.botId} #${record.id}: ${JSON.stringify(message).slice(0, 60)}`)
+            this.onReply({
+              kind: 'text',
+              chatId,
+              text: `<@${target.botId}> [handoff #${record.id} from ${sourceSlug}] ${message}`,
+            })
+            return okResult(JSON.stringify({ ok: true, id: record.id, bot_id: target.botId }))
+          }
+          case 'handoff_complete': {
+            const access = this.handoffCompleteAccess(chatId)
+            if (access === null) return errorResult('handoff_complete is not available for this session')
+            const id = String(args.id ?? '').trim().replace(/^#/, '')
+            if (!id) return errorResult('id is required')
+            const outcomeRaw = typeof args.outcome === 'string' ? args.outcome.trim() : ''
+            const outcome = outcomeRaw || undefined
+            const record = loadRegistry().find((r) => r.id === id)
+            if (!record) return errorResult(`no handoff with id "${id}"`)
+            // Strict record-level check (the listing gate is intentionally
+            // broader — see handoffCompleteAccess): only the session the
+            // handoff is addressed to, or master, may close it.
+            if (access !== 'master' && record.to.chatId !== chatId) {
+              return errorResult(`handoff ${id} is not addressed to this session`)
+            }
+            if (record.state !== 'pending') {
+              // Idempotent: closing an already-closed handoff is an ok no-op.
+              return okResult(JSON.stringify({ ok: true, id, state: record.state, note: `already ${record.state}` }))
+            }
+            const closed = completeHandoff(id, outcome, this.now())!
+            this.log(`handoff_complete: ${id} closed by ${access === 'master' ? 'master' : chatId}`)
+            return okResult(JSON.stringify({ ok: true, id, state: closed.state }))
           }
           case 'ask_project': {
             const srcSlug = this.peerSource(chatId)
@@ -897,6 +981,30 @@ export class MasterMcpServer {
     const project = config.projects[chatId]
     if (!project) return null
     return handoffEnabled(config, project) ? project.slug : null
+  }
+
+  /**
+   * Whether the session for `chatId` may see/call `handoff_complete`.
+   * Returns 'master' for the master channel, 'project' for any configured
+   * project session, null otherwise.
+   *
+   * Listing-gate choice: the tool is listed for master and for EVERY
+   * configured project session, not just sessions with a pending record —
+   * the MCP tool list is fetched once at session start, so a registry-lookup
+   * gate would go stale the moment a handoff arrives mid-session (which is
+   * exactly when the target needs the tool). Listing broadly is safe because
+   * handoff_complete grants no lateral reach: the call handler additionally
+   * enforces the strict record-level check (caller must be the record's
+   * to.chatId, or master) — defense in depth, same predicate in listing and
+   * handler as with hermesAccess.
+   */
+  private handoffCompleteAccess(chatId: string): 'master' | 'project' | null {
+    if (!this.getConfig) return null
+    const config = this.getConfig()
+    if (!config) return null
+    if (this.getMasterChatId() === chatId) return 'master'
+    if (config.projects[chatId]) return 'project'
+    return null
   }
 
   /**
