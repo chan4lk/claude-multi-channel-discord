@@ -190,6 +190,15 @@ Access control reuses `access.allowFrom` — the sender's E.164 number must be i
 
 ---
 
+## Collab handoffs (optional)
+
+Tracked task handoffs between agents — internal projects or external bot peers — so agreed workflows ("reviewer reviews each PR") can't silently die. Requires the `handoff` flag (`projects[*].handoff: true` or `defaults.handoff: true`).
+
+- `mcp__mcd__handoff { target_slug | role, message }` creates a `pending` record in `shared/handoffs.json` and delivers the task tagged `#h-<id>` — internal targets get an inbound envelope; bot-peer targets get an `<@botId> [handoff #h-<id> from <slug>] …` post in the project channel.
+- `mcp__mcd__handoff_complete { id, outcome? }` closes it (target session or master). External bots close implicitly: an allowlisted bot message containing a pending `#h-<id>` marks it done and is exempt from the bot-peer turn limit.
+- A sweep nags the receiver at `timeoutMinutes` (default 30) and escalates to the master channel (record → `expired`) at 2×.
+- Roles: `!project set <slug> --collab-role reviewer=<slug|botId>` — then `handoff { role: "reviewer", … }`. Inspect with `!project collab <slug>`.
+
 ## Cross-project dialogue (optional)
 
 Lets two MCD project Claude sessions exchange messages directly — without operator relay — through constrained, mutual-consent peer links. Builds on the handoff plumbing but adds bidirectional threading, hop budgets, per-pair cooldowns, and a shared learnings board.

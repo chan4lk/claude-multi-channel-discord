@@ -129,6 +129,18 @@ Reverts to Claude Code subscription auth.
 
 ---
 
+## Collaboration
+
+### `!project collab <slug>`
+
+Shows the project's configured collab roles (entries that no longer resolve are marked `(stale)`) and its open handoffs (`#h-<id> from→to age task`). Read-only.
+
+### `!project set <slug> --collab-role <name>=<value>`
+
+Sets a collab role. `<value>` must be an existing project slug (not master, not the project itself) or a bot id in the project's `botPeers.allow`. `<name>=none` removes the role. Config-only — the `handoff` flag still gates the MCP tool.
+
+---
+
 ## Natural language
 
 The master channel's Claude agent can execute commands from plain-English instructions. Examples:
