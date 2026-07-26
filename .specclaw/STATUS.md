@@ -1,7 +1,7 @@
 # 🦞 SpecClaw Dashboard
 
 **Project:** claude-mcd
-**Last Updated:** 2026-07-26 08:09 UTC
+**Last Updated:** 2026-07-26 08:48 UTC
 
 ## Active Changes
 
@@ -9,7 +9,7 @@
 - ✅ **backlog-autopilot** — 6/6 tasks (100%) | 0 failed
 - ✅ **backlog-stall-watch** — 5/5 tasks (100%) | 0 failed | PR #316 merged
 - ✅ **bot-peer-dialogue** — 5/5 tasks (100%) | 0 failed
-- 🔨 **collab-handoff-protocol** — 0/9 tasks (0%) | 0 failed
+- ✅ **collab-handoff-protocol** — 6/6 tasks (100%) | 0 failed
 - ✅ **cross-project-dialogue** — 6/6 tasks (100%) | 0 failed
 - ✅ **hermes-project-invoke** — 5/5 tasks (100%) | 0 failed | PR #317 merged
 - ✅ **idle-evict-turn-guard** — 4/4 tasks (100%) | 0 failed | PR #315 merged
