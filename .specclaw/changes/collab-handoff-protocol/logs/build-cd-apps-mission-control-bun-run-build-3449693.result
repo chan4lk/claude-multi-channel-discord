@@ -1,0 +1,7 @@
+exit=0
+duration_s=86
+log=.specclaw/changes/collab-handoff-protocol/logs/build-cd-apps-mission-control-bun-run-build-3449693.log
+head=6588ad0012f183b5c2720f49a9a59a9247f014fe
+dirty=true
+cmd=cd apps/mission-control && bun run build
+interrupted=false
