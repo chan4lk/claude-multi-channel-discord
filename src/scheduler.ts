@@ -779,6 +779,12 @@ export class Scheduler {
     sweep?: (nowMs: number, timeoutMs: number) => HandoffSweepAction[]
     sweepIntervalMs?: number
     nowMs?: () => number
+    /**
+     * Chain hook: called for each escalated (expired) record. Return a
+     * replacement master message (e.g. after expiring the owning chain),
+     * or null to keep the default single-hop wording.
+     */
+    onExpired?: (record: HandoffSweepAction['record']) => string | null
   }): void {
     const intervalMs = opts.sweepIntervalMs ?? 300_000  // 5 min
     const timer = setInterval(() => void this.runHandoffSweep(opts), intervalMs)
@@ -792,6 +798,7 @@ export class Scheduler {
     notifyMaster: (text: string) => void
     sweep?: (nowMs: number, timeoutMs: number) => HandoffSweepAction[]
     nowMs?: () => number
+    onExpired?: (record: HandoffSweepAction['record']) => string | null
   }): Promise<void> {
     const { sweepHandoffs } = await import('./handoffs.ts')
     const config = opts.getChannels()
@@ -820,7 +827,8 @@ export class Scheduler {
           opts.notifyChannel(record.to.chatId, `⏰ handoff #${record.id} pending ${ageMin}m: ${task}`)
         } else {
           const toLabel = record.to.kind === 'project' ? record.to.slug : record.to.botId
-          opts.notifyMaster(`⚠️ handoff #${record.id} ${record.from}→${toLabel} unanswered — expired`)
+          const chainText = opts.onExpired?.(record) ?? null
+          opts.notifyMaster(chainText ?? `⚠️ handoff #${record.id} ${record.from}→${toLabel} unanswered — expired`)
         }
         this.log(`[handoff-sweep] ${action.kind} #${action.record.id}`)
       } catch (err) {

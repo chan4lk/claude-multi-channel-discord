@@ -928,8 +928,9 @@ await serverPeer.stop()
   check('handoff listing: opted-in project sees handoff', srcToolNames.includes('handoff'), JSON.stringify(srcToolNames))
   check('handoff listing: opted-in project sees handoff_complete', srcToolNames.includes('handoff_complete'), JSON.stringify(srcToolNames))
   const hoToolDef = srcToolList.find((t) => t.name === 'handoff')!
-  check('handoff listing: role arg present, only message required',
-    'role' in hoToolDef.inputSchema.properties && JSON.stringify(hoToolDef.inputSchema.required) === '["message"]',
+  check('handoff listing: role + chain args present, nothing schema-required',
+    'role' in hoToolDef.inputSchema.properties && 'chain' in hoToolDef.inputSchema.properties
+      && hoToolDef.inputSchema.required === undefined,
     JSON.stringify(hoToolDef.inputSchema))
   check('handoff listing: description names configured roles + #h-<id> tracking',
     hoToolDef.description.includes('reviewer') && hoToolDef.description.includes('builder') &&
@@ -1044,6 +1045,190 @@ await serverPeer.stop()
   await serverHo.stop()
   process.env.MCD_CHANNELS_DIR = origChannelsDir
   rmSync(handoffTmpDir, { recursive: true, force: true })
+}
+
+// ---------------------------------------------------------------------------
+// handoff chains (handoff-chains): create, auto-advance, gate, budget, halts
+// ---------------------------------------------------------------------------
+{
+  const { mkdtempSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const chainTmpDir = mkdtempSync(require('path').join(tmpdir(), 'mcd-chain-mcp-test-'))
+  const origChannelsDir = process.env.MCD_CHANNELS_DIR
+  process.env.MCD_CHANNELS_DIR = chainTmpDir
+
+  const { loadRegistry, loadRegistryFile, completeHandoff } = await import('./handoffs.ts')
+
+  const CH_MASTER = '131313131313131301'
+  const CH_SRC    = '131313131313131302'
+  const CH_TGT    = '131313131313131303'
+  const CH_TGT2   = '131313131313131304'
+  const CH_DIS    = '131313131313131305'
+  const CH_BOT_ID = '888777666555444333'
+
+  const chConfig = {
+    version: 1 as const,
+    master: { chatId: CH_MASTER, commandPrefix: '!project' },
+    defaults: {
+      model: 'sonnet', idleEvictMinutes: 15, maxConcurrent: 8,
+      git: { userName: 'bot', userEmail: 'bot@local', branchPrefix: 'claude/' },
+      claude: { permissionMode: 'auto' as const }, providers: {},
+      progressMode: 'off' as const, handoff: false, contextWarningThresholdPct: 80,
+    },
+    projects: {
+      [CH_SRC]: {
+        slug: 'ch-src',
+        handoff: true,
+        botPeers: { allow: [CH_BOT_ID] },
+        collab: { roles: { reviewer: CH_BOT_ID } },
+      },
+      [CH_TGT]: { slug: 'ch-tgt' },
+      [CH_TGT2]: { slug: 'ch-tgt2' },
+      [CH_DIS]: { slug: 'ch-dis', disabled: true },
+    },
+  } as unknown as import('./channels-config.ts').ChannelsConfig
+
+  const chReplies: OutboundReply[] = []
+  const chDelivered: Array<{ chatId: string; envelope: InboundEnvelope }> = []
+  const chPool = {
+    deliver: async (chatId: string, envelope: InboundEnvelope) => {
+      chDelivered.push({ chatId, envelope })
+    },
+  } as unknown as ProjectPool
+
+  const serverCh = new MasterMcpServer({
+    onReply: (r) => chReplies.push(r),
+    getMasterChatId: () => CH_MASTER,
+    getPool: () => chPool,
+    getConfig: () => chConfig,
+    log: () => {},
+  })
+  const { host: chH, port: chP } = await serverCh.start()
+  const chCall = (chatId: string, name: string, argsObj: Record<string, unknown>) =>
+    rpc(`http://${chH}:${chP}/mcp/${chatId}`, serverCh.tokenFor(chatId), 'tools/call', { name, arguments: argsObj })
+
+  // Mutual exclusion + validation refusals persist nothing
+  const mixed = await chCall(CH_SRC, 'handoff', { message: 'x', chain: [{ target: 'ch-tgt', task: 'y' }] })
+  check('chain: mixed with message → isError', mixed.result?.isError === true, JSON.stringify(mixed).slice(0, 200))
+  const overBudget = await chCall(CH_SRC, 'handoff', {
+    chain: Array.from({ length: 7 }, (_, i) => ({ target: 'ch-tgt', task: `s${i}` })),
+  })
+  check('AC6: 7-step chain over default budget 6 → isError',
+    overBudget.result?.isError === true && (overBudget.result?.content?.[0]?.text ?? '').includes('hop budget'),
+    JSON.stringify(overBudget).slice(0, 200))
+  const badStep = await chCall(CH_SRC, 'handoff', { chain: [{ role: 'r', target: 't', task: 'x' }] })
+  check('chain: step with role AND target → isError', badStep.result?.isError === true)
+  check('AC6: refusals wrote nothing', loadRegistry().length === 0 && loadRegistryFile().chains.length === 0)
+
+  // AC1: 3-step chain — step 1 fires immediately
+  chDelivered.length = 0
+  chReplies.length = 0
+  const start = await chCall(CH_SRC, 'handoff', {
+    chain: [
+      { target: 'ch-tgt', task: 'build the feature' },
+      { role: 'reviewer', task: 'review the build', gate: 'approve' },
+      { target: 'ch-tgt2', task: 'merge it' },
+    ],
+  })
+  const startParsed = JSON.parse(start.result?.content?.[0]?.text ?? '{}')
+  check('AC1: chain create ok with chain_id + step-1 id',
+    !start.result?.isError && startParsed.chain_id?.startsWith('c-') && startParsed.id?.startsWith('h-') && startParsed.steps === 3,
+    JSON.stringify(start).slice(0, 300))
+  check('AC1: step 1 delivered to target project', chDelivered.length === 1 && chDelivered[0]!.chatId === CH_TGT)
+  const env1 = chDelivered[0]!.envelope.content
+  check('AC1: envelope tags chain + step + handoff id',
+    env1.includes(`#${startParsed.chain_id}`) && env1.includes('step 1/3') && env1.includes(`#${startParsed.id}`) && env1.includes('build the feature'),
+    env1)
+  const chain0 = loadRegistryFile().chains.find((c) => c.id === startParsed.chain_id)
+  check('AC1: chain active, cursor 0', chain0?.state === 'active' && chain0.cursor === 0)
+
+  // AC2: close step 1 → step 2 (gated role → bot mention) fires with prior outcome
+  chReplies.length = 0
+  const close1 = await chCall(CH_TGT, 'handoff_complete', { id: startParsed.id, outcome: 'built on branch feat/x' })
+  check('AC2: step-1 close ok', !close1.result?.isError, JSON.stringify(close1).slice(0, 200))
+  const afterStep1 = loadRegistryFile()
+  const chain1 = afterStep1.chains.find((c) => c.id === startParsed.chain_id)!
+  check('AC2: cursor advanced to 1', chain1.cursor === 1 && chain1.state === 'active')
+  const step2Id = chain1.stepHandoffIds[1]!
+  const mention = chReplies.find((r) => r.kind === 'text' && r.text.includes(`<@${CH_BOT_ID}>`)) as { text: string; chatId: string } | undefined
+  check('AC2: step 2 mention posted to source channel',
+    mention !== undefined && mention.chatId === CH_SRC && mention.text.includes('step 2/3') && mention.text.includes(`#${step2Id}`),
+    JSON.stringify(chReplies))
+  check('AC2: prior outcome carried (≤500)', mention!.text.includes('prior outcome: "built on branch feat/x"'), mention!.text)
+  const progress = chReplies.find((r) => r.kind === 'text' && r.text.startsWith('⛓')) as { text: string; chatId: string } | undefined
+  check('AC2: ⛓ progress posted to source', progress !== undefined && progress.chatId === CH_SRC && progress.text.includes('1/3 done'), JSON.stringify(chReplies))
+
+  // AC5: gate fails — close step 2 with non-approve outcome via the public
+  // advance path (simulates the server bot-ack flow: close, then advance).
+  chReplies.length = 0
+  completeHandoff(step2Id, 'rejected: tests fail')
+  await serverCh.advanceChainsForClosed([step2Id])
+  const halted = loadRegistryFile().chains.find((c) => c.id === startParsed.chain_id)!
+  check('AC5: gate failure halts chain', halted.state === 'halted' && (halted.closeReason ?? '').includes('gate'), JSON.stringify(halted))
+  const gateEsc = chReplies.find((r) => r.kind === 'text' && r.chatId === CH_MASTER) as { text: string } | undefined
+  check('AC5: master escalation names step + outcome excerpt',
+    gateEsc !== undefined && gateEsc.text.includes('step 2/3') && gateEsc.text.includes('rejected: tests fail'),
+    JSON.stringify(chReplies))
+  check('AC5: no step 3 fired after halt', loadRegistry().filter((r) => r.chainId === startParsed.chain_id).length === 2)
+
+  // AC5 pass + AC4 complete: 2-step chain, gated step approved, then done
+  chDelivered.length = 0
+  chReplies.length = 0
+  const start2 = await chCall(CH_SRC, 'handoff', {
+    chain: [
+      { target: 'ch-tgt', task: 'draft', gate: 'approve' },
+      { target: 'ch-tgt2', task: 'publish' },
+    ],
+  })
+  const start2Parsed = JSON.parse(start2.result?.content?.[0]?.text ?? '{}')
+  await chCall(CH_TGT, 'handoff_complete', { id: start2Parsed.id, outcome: 'Approved — LGTM' })
+  const chain2 = loadRegistryFile().chains.find((c) => c.id === start2Parsed.chain_id)!
+  check('AC5: approve outcome advances gated step', chain2.cursor === 1 && chain2.state === 'active')
+  check('AC5: step 2 delivered to second target', chDelivered.some((d) => d.chatId === CH_TGT2 && d.envelope.content.includes('publish')))
+  const finalId = chain2.stepHandoffIds[1]!
+  chReplies.length = 0
+  await chCall(CH_TGT2, 'handoff_complete', { id: finalId, outcome: 'live' })
+  const doneChain = loadRegistryFile().chains.find((c) => c.id === start2Parsed.chain_id)!
+  check('AC4: final close completes chain', doneChain.state === 'done')
+  check('AC4: ✅ completion post to source',
+    chReplies.some((r) => r.kind === 'text' && r.chatId === CH_SRC && r.text.startsWith('✅') && r.text.includes(start2Parsed.chain_id)),
+    JSON.stringify(chReplies))
+
+  // AC8: fire-time resolution failure — mid-chain unknown slug halts + escalates, close still ok
+  chReplies.length = 0
+  const start3 = await chCall(CH_SRC, 'handoff', {
+    chain: [{ target: 'ch-tgt', task: 'x' }, { target: 'ghost-slug', task: 'y' }],
+  })
+  const start3Parsed = JSON.parse(start3.result?.content?.[0]?.text ?? '{}')
+  const close3 = await chCall(CH_TGT, 'handoff_complete', { id: start3Parsed.id, outcome: 'ok' })
+  check('AC8: close call still ok when advance fails', !close3.result?.isError, JSON.stringify(close3).slice(0, 200))
+  const halted3 = loadRegistryFile().chains.find((c) => c.id === start3Parsed.chain_id)!
+  check('AC8: unresolvable step halts chain', halted3.state === 'halted' && (halted3.closeReason ?? '').includes('unresolvable'))
+  check('AC8: master ⚠ names the step', chReplies.some((r) => r.kind === 'text' && r.chatId === CH_MASTER && r.text.includes('step 2/2')), JSON.stringify(chReplies))
+
+  // Disabled mid-chain target halts the same way
+  const start4 = await chCall(CH_SRC, 'handoff', {
+    chain: [{ target: 'ch-tgt', task: 'x' }, { target: 'ch-dis', task: 'y' }],
+  })
+  const start4Parsed = JSON.parse(start4.result?.content?.[0]?.text ?? '{}')
+  await chCall(CH_TGT, 'handoff_complete', { id: start4Parsed.id })
+  const halted4 = loadRegistryFile().chains.find((c) => c.id === start4Parsed.chain_id)!
+  check('chain: disabled mid-chain target halts', halted4.state === 'halted' && (halted4.closeReason ?? '').includes('disabled'))
+
+  // NFR4: double-advance impossible — advancing an already-advanced id is a no-op
+  const chainsBefore = JSON.stringify(loadRegistryFile().chains)
+  await serverCh.advanceChainsForClosed([start2Parsed.id])
+  check('NFR4: re-advance of stale closed id is a no-op', JSON.stringify(loadRegistryFile().chains) === chainsBefore)
+
+  // Single-hop handoffs untouched: no chainId, no chain records created
+  const single = await chCall(CH_SRC, 'handoff', { target_slug: 'ch-tgt', message: 'plain hop' })
+  const singleParsed = JSON.parse(single.result?.content?.[0]?.text ?? '{}')
+  const singleRec = loadRegistry().find((r) => r.id === singleParsed.id)
+  check('NFR3: single hop carries no chain fields', singleRec !== undefined && singleRec.chainId === undefined && singleRec.chainStep === undefined)
+
+  await serverCh.stop()
+  process.env.MCD_CHANNELS_DIR = origChannelsDir
+  rmSync(chainTmpDir, { recursive: true, force: true })
 }
 
 if (failed > 0) {

@@ -26,7 +26,7 @@ import { buildAttentionReport } from './heartbeat.ts'
 import { readSpecclawStatus } from './specclaw-status.ts'
 import { launchHermesRun, tailHermesRun, listRecentRuns } from './hermes-bridge.ts'
 import { detectBacklogSource, snapshotBacklog } from './backlog.ts'
-import { loadRegistry, type HandoffRecord } from './handoffs.ts'
+import { loadRegistry, loadRegistryFile, type ChainRecord, type HandoffRecord } from './handoffs.ts'
 import { buildOrgGraph, renderGraphMermaid, renderGraphText, type GraphInputs } from './org-graph.ts'
 import { newestTranscriptMtimeMs } from './transcript-path.ts'
 
@@ -53,6 +53,8 @@ export interface MasterContext {
   hermesSpawnFn?: (...args: any[]) => any
   /** Injectable handoff-registry loader (tests avoid the filesystem). */
   loadHandoffRegistry?: () => HandoffRecord[]
+  /** Injectable chain-registry loader (tests avoid the filesystem). */
+  loadChainRegistry?: () => ChainRecord[]
   /** Injectable schedules loader for the `graph` verb (tests avoid the filesystem). */
   loadSchedulesFn?: () => { schedules: Array<{ chatId: string; enabled: boolean; at?: string; interval?: string; cron?: string }> }
   /** Injectable transcript-mtime probe for `graph --stats` (tests avoid the filesystem). */
@@ -2409,6 +2411,27 @@ function handleCollab(rest: string[], ctx: MasterContext): string {
       const ageMin = Math.max(0, Math.floor((nowMs - Date.parse(r.createdAt)) / 60_000))
       const task = r.task.length > 80 ? `${r.task.slice(0, 79)}…` : r.task
       lines.push(`  #${r.id} ${r.from}→${toName} ${ageMin}m: ${task}`)
+    }
+  }
+
+  // Open chains: active + halted (halted needs operator attention; done and
+  // expired chains are history, same spirit as pending-only handoff listing).
+  const chains = (ctx.loadChainRegistry ?? (() => loadRegistryFile().chains))()
+  const openChains = chains.filter(
+    c => (c.state === 'active' || c.state === 'halted') && (c.from === project.slug || c.sourceChatId === chatId),
+  )
+  if (openChains.length > 0) {
+    lines.push('open chains:')
+    const nowMs = Date.now()
+    for (const c of openChains) {
+      const glyphs = c.steps.map((_, i) => {
+        if (i < c.cursor) return '✔'
+        if (i === c.cursor) return c.state === 'halted' ? '✖' : '▶'
+        return '·'
+      }).join('')
+      const ageMin = Math.max(0, Math.floor((nowMs - Date.parse(c.createdAt)) / 60_000))
+      const stateNote = c.state === 'halted' ? ` halted${c.closeReason ? ` (${c.closeReason})` : ''}` : ''
+      lines.push(`  #${c.id} [${glyphs}] ${c.cursor}/${c.steps.length} done ${ageMin}m${stateNote}`)
     }
   }
 

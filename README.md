@@ -198,6 +198,7 @@ Tracked task handoffs between agents — internal projects or external bot peers
 - `mcp__mcd__handoff_complete { id, outcome? }` closes it (target session or master). External bots close implicitly: an allowlisted bot message containing a pending `#h-<id>` marks it done and is exempt from the bot-peer turn limit.
 - A sweep nags the receiver at `timeoutMinutes` (default 30) and escalates to the master channel (record → `expired`) at 2×.
 - Roles: `!project set <slug> --collab-role reviewer=<slug|botId>` — then `handoff { role: "reviewer", … }`. Inspect with `!project collab <slug>`.
+- Chains: `handoff { chain: [{ target: "builder", task: "build X" }, { role: "reviewer", task: "review", gate: "approve" }, { target: "builder", task: "merge" }] }` — each step auto-fires when the previous one closes, carrying the prior outcome as context. An `approve` gate halts the chain (and pings master) unless the outcome starts with "approve"; oversize chains (> peers `maxHops`, default 6) are refused; a stalled step expires the whole chain via the sweep. Progress lands in the source channel (`⛓ chain #c-x: 2/3 done → reviewer`); `!project collab <slug>` shows per-step status.
 
 ## Org-graph view
 

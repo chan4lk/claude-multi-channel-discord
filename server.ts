@@ -61,7 +61,7 @@ import { modelSlashCommands, handleModelInteraction } from './src/model-command.
 import { providerSlashCommands, handleProviderInteraction } from './src/provider-command.ts'
 import { insertVoiceTurn } from './src/voice-db.ts'
 import { BotPeerGate, effectiveBotPeerLimits, effectiveStatusPatterns, isStatusPost } from './src/bot-peers.ts'
-import { acknowledgeHandoffs } from './src/handoffs.ts'
+import { acknowledgeHandoffs, expireChain } from './src/handoffs.ts'
 
 // Single-source state dir. MCD_CHANNELS_DIR is the multi-channel-discord
 // override and wins; falls back to upstream's DISCORD_STATE_DIR for in-place
@@ -1693,6 +1693,14 @@ async function maybeInitProjectsBackend(): Promise<void> {
       if (!masterChatId) return
       routeNotification(cfg, { kind: 'text', chatId: masterChatId, text }, 'handoff escalate')
     },
+    // Chain steps: expire the owning chain and name the stalled step (AC7).
+    onExpired: (record) => {
+      if (!record.chainId) return null
+      const chain = expireChain(record.chainId, `step ${(record.chainStep ?? 0) + 1} handoff #${record.id} unanswered`)
+      if (!chain) return null
+      const toLabel = record.to.kind === 'project' ? record.to.slug : record.to.botId
+      return `⚠️ chain #${chain.id} expired at step ${(record.chainStep ?? 0) + 1}/${chain.steps.length} (${toLabel}) — handoff #${record.id} unanswered`
+    },
   })
 
   // Nightly GOALS.md reconcile cron (02:00 local)
@@ -2248,6 +2256,9 @@ async function handleBotInbound(msg: Message): Promise<void> {
   const handoffAckIds = acknowledgeHandoffs(chatId, msg.content)
   if (handoffAckIds.length > 0) {
     process.stderr.write(`discord: bot-peer handoff ack msg=${msg.id} chat=${chatId} ids=${handoffAckIds.join(',')}\n`)
+    // Chain auto-advance for bot-closed steps (AC3). Failures halt the chain
+    // and escalate inside; never blocks the ack delivery below.
+    if (masterMcp) void masterMcp.advanceChainsForClosed(handoffAckIds)
   } else {
     const limits = effectiveBotPeerLimits(cfg.defaults, project)
     const gateResult = botPeerGate.check(chatId, limits)

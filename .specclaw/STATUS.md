@@ -1,7 +1,7 @@
 # 🦞 SpecClaw Dashboard
 
 **Project:** claude-mcd
-**Last Updated:** 2026-07-26 08:48 UTC
+**Last Updated:** 2026-07-28 05:03 UTC
 
 ## Active Changes
 
@@ -9,13 +9,15 @@
 - ✅ **backlog-autopilot** — 6/6 tasks (100%) | 0 failed
 - ✅ **backlog-stall-watch** — 5/5 tasks (100%) | 0 failed | PR #316 merged
 - ✅ **bot-peer-dialogue** — 5/5 tasks (100%) | 0 failed
-- ✅ **collab-handoff-protocol** — 6/6 tasks (100%) | 0 failed
+- ✅ **collab-handoff-protocol** — 6/6 tasks (100%) | 0 failed | PR #318 merged
 - ✅ **cross-project-dialogue** — 6/6 tasks (100%) | 0 failed
+- 🔨 **handoff-chains** — 0/6 tasks (0%) | 0 failed
 - ✅ **hermes-project-invoke** — 5/5 tasks (100%) | 0 failed | PR #317 merged
 - ✅ **idle-evict-turn-guard** — 4/4 tasks (100%) | 0 failed | PR #315 merged
 - ✅ **idle-gated-schedules** — 4/4 tasks (100%) | 0 failed
 - ✅ **loop-halt-escalation** — 4/4 tasks (100%) | 0 failed | PR #302 merged
 - ✅ **mcd-reliability-fixes** — 5/5 tasks (100%) | 0 failed
+- ✅ **org-graph-view** — 5/5 tasks (100%) | 0 failed
 - ✅ **orphan-session-sweep** — 4/4 tasks (100%) | 0 failed | PR #314 merged
 - ✅ **pr-credential-store** — 5/5 tasks (100%) | 0 failed | PR #304 merged
 - ✅ **progress-mode-phases** — 6/6 tasks (100%) | 0 failed | PR #305 merged
@@ -41,6 +43,6 @@ _None._
 
 ## Stats
 
-- **Total changes:** 24
-- **Active:** 19
+- **Total changes:** 26
+- **Active:** 21
 - **Completed:** 5

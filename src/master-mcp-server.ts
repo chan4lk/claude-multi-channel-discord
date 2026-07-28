@@ -29,7 +29,21 @@ import type { spawn as SpawnFn } from 'node:child_process'
 
 import { channelsDir } from './paths.ts'
 import { effectivePeerLimits, findProjectBySlug, handoffEnabled, resolveCollabTarget, type ChannelsConfig, type HermesConfig } from './channels-config.ts'
-import { completeHandoff, createHandoff, loadRegistry, type HandoffTarget } from './handoffs.ts'
+import {
+  advanceChainStep,
+  completeHandoff,
+  createChain,
+  createHandoff,
+  findChain,
+  haltChain,
+  completeChain,
+  loadRegistry,
+  nextChainAction,
+  validateChainSteps,
+  type ChainRecord,
+  type ChainStep,
+  type HandoffTarget,
+} from './handoffs.ts'
 import type { InboundEnvelope, OutboundReply } from './project-process.ts'
 import type { ProjectPool } from './project-pool.ts'
 import { MemoryStore, type MemoryType } from './memory-store.ts'
@@ -360,16 +374,30 @@ export class MasterMcpServer {
         const rolesHint = roleNames.length > 0 ? ` Configured roles: ${roleNames.join(', ')}.` : ''
         tools.push({
           name: 'handoff',
-          description: `Hand a task off to another project's Claude session (by slug) or an allowlisted external bot peer (by role name or bot id). Use when the operator asks to delegate work (e.g. "@backend please finish this"). Pass exactly one of target_slug or role — role names come from this project's collab.roles.${rolesHint} Every handoff is tracked with a #h-<id> tag until the receiver (or master) calls handoff_complete. Internal targets get the message in their own session; their reply goes to their own channel, not here.`,
+          description: `Hand a task off to another project's Claude session (by slug) or an allowlisted external bot peer (by role name or bot id). Use when the operator asks to delegate work (e.g. "@backend please finish this"). Pass exactly one of target_slug or role — role names come from this project's collab.roles.${rolesHint} Every handoff is tracked with a #h-<id> tag until the receiver (or master) calls handoff_complete. Internal targets get the message in their own session; their reply goes to their own channel, not here. For multi-step workflows pass \`chain\` instead: an ordered list of steps, each { role | target, task, gate? }. Step 1 fires immediately; when a step's handoff closes, the next step auto-fires with the prior outcome as context. A step with gate:"approve" halts the chain (and escalates to master) unless its outcome starts with "approve".`,
           inputSchema: {
             type: 'object',
             additionalProperties: false,
             properties: {
-              target_slug: { type: 'string', description: 'Slug of the target project (as shown by `list`), or a literal bot-peer id from botPeers.allow. Mutually exclusive with role.' },
-              role: { type: 'string', description: 'Role name from this project\'s collab.roles (e.g. "reviewer"). Mutually exclusive with target_slug.' },
-              message: { type: 'string', description: 'The task or request to deliver to the target.' },
+              target_slug: { type: 'string', description: 'Slug of the target project (as shown by `list`), or a literal bot-peer id from botPeers.allow. Mutually exclusive with role and chain.' },
+              role: { type: 'string', description: 'Role name from this project\'s collab.roles (e.g. "reviewer"). Mutually exclusive with target_slug and chain.' },
+              message: { type: 'string', description: 'The task or request to deliver to the target. Required unless chain is passed.' },
+              chain: {
+                type: 'array',
+                description: 'Ordered chain steps. Each step: exactly one of role/target, a task, and optionally gate:"approve". Mutually exclusive with target_slug/role/message.',
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    role: { type: 'string', description: 'Collab role name, resolved when the step fires.' },
+                    target: { type: 'string', description: 'Project slug or bot-peer id, resolved when the step fires.' },
+                    task: { type: 'string', description: 'The task for this step.' },
+                    gate: { type: 'string', enum: ['approve'], description: 'Halt the chain unless this step\'s outcome starts with "approve".' },
+                  },
+                  required: ['task'],
+                },
+              },
             },
-            required: ['message'],
           },
         })
       }
@@ -635,6 +663,12 @@ export class MasterMcpServer {
             const targetSlug = String(args.target_slug ?? '').trim()
             const role = String(args.role ?? '').trim()
             const message = String(args.message ?? '').trim()
+            if (args.chain !== undefined) {
+              if (targetSlug || role || message) {
+                return errorResult('chain is mutually exclusive with target_slug/role/message — chain steps carry their own targets and tasks')
+              }
+              return await this.startChain(chatId, sourceSlug, args.chain)
+            }
             if (targetSlug && role) return errorResult('pass exactly one of target_slug or role, not both')
             if (!targetSlug && !role) return errorResult('target_slug is required (or pass role)')
             if (!message) return errorResult('message is required')
@@ -727,6 +761,10 @@ export class MasterMcpServer {
             }
             const closed = completeHandoff(id, outcome, this.now())!
             this.log(`handoff_complete: ${id} closed by ${access === 'master' ? 'master' : chatId}`)
+            // Chain auto-advance: only the call that transitioned pending→done
+            // gets here, so double-close can never double-advance. Failures
+            // halt+escalate inside; the close itself already succeeded.
+            await this.advanceChainsForClosed([id])
             return okResult(JSON.stringify({ ok: true, id, state: closed.state }))
           }
           case 'ask_project': {
@@ -1005,6 +1043,208 @@ export class MasterMcpServer {
     if (this.getMasterChatId() === chatId) return 'master'
     if (config.projects[chatId]) return 'project'
     return null
+  }
+
+  // -------------------------------------------------------------------------
+  // Handoff chains (work-graph layer)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Resolve a chain step's target against the CURRENT config (fire-time
+   * resolution — config may legitimately change mid-chain). Mirrors the
+   * single-hop resolution: role → collab.roles; target → slug-first, then
+   * literal bot-peer id. Also refuses disabled target projects.
+   */
+  private resolveStepTarget(
+    config: ChannelsConfig,
+    sourceChatId: string,
+    step: ChainStep,
+  ): HandoffTarget | { error: string } {
+    const roleOrTarget = (step.role ?? step.target ?? '').trim()
+    if (step.role) {
+      const resolved = resolveCollabTarget(config, sourceChatId, roleOrTarget)
+      if ('error' in resolved) return resolved
+      if (resolved.kind === 'project' && config.projects[resolved.chatId]?.disabled) {
+        return { error: 'target project is disabled' }
+      }
+      return resolved
+    }
+    const hit = findProjectBySlug(config, roleOrTarget)
+    if (hit) {
+      if (hit.chatId === sourceChatId) return { error: 'cannot hand off to the same project' }
+      if (config.projects[hit.chatId]?.disabled) return { error: 'target project is disabled' }
+      return { kind: 'project', slug: hit.project.slug, chatId: hit.chatId }
+    }
+    const resolved = resolveCollabTarget(config, sourceChatId, roleOrTarget)
+    if ('error' in resolved || resolved.kind !== 'botPeer') {
+      return { error: `no project with slug "${roleOrTarget}"` }
+    }
+    return resolved
+  }
+
+  /**
+   * Deliver a fired chain-step handoff: internal projects get an inbound
+   * envelope + a channel visibility post; bot peers get an `<@botId>` mention
+   * in their shared channel. Returns an error string or null on success.
+   */
+  private async fireChainStep(
+    target: HandoffTarget,
+    chain: ChainRecord,
+    recordId: string,
+    stepIndex: number,
+    task: string,
+    priorOutcome: string | undefined,
+  ): Promise<string | null> {
+    const stepLabel = `step ${stepIndex + 1}/${chain.steps.length}`
+    const prior = priorOutcome !== undefined && priorOutcome.trim() !== ''
+      ? `; prior outcome: "${priorOutcome.slice(0, 500)}"`
+      : ''
+    if (target.kind === 'project') {
+      const pool = this.getPool?.()
+      if (!pool) return 'pool not available'
+      const envelope: InboundEnvelope = {
+        messageId: `handoff-${Date.now()}-${randomBytes(4).toString('hex')}`,
+        userId: `handoff:${chain.from}`,
+        username: `handoff:${chain.from}`,
+        content: `[Chain #${chain.id} ${stepLabel} from "${chain.from}"${prior}] ${task} #${recordId}`,
+        ts: new Date().toISOString(),
+      }
+      this.log(`chain ${chain.id}: fire ${stepLabel} → ${target.slug} #${recordId}`)
+      await pool.deliver(target.chatId, envelope)
+      if (this.client) {
+        try {
+          const ch = await this.fetchTextChannel(target.chatId)
+          await (ch as any).send({ content: `⛓ **Chain #${chain.id} ${stepLabel} from \`${chain.from}\`** (#${recordId}):\n> ${task.replace(/\n/g, '\n> ')}` })
+        } catch (err) {
+          this.log(`chain ${chain.id}: failed to post visibility message: ${(err as Error).message}`)
+        }
+      }
+      return null
+    }
+    this.log(`chain ${chain.id}: fire ${stepLabel} → bot-peer ${target.botId} #${recordId}`)
+    this.onReply({
+      kind: 'text',
+      chatId: target.chatId,
+      text: `<@${target.botId}> [chain #${chain.id} ${stepLabel} handoff #${recordId} from ${chain.from}${prior}] ${task}`,
+    })
+    return null
+  }
+
+  /** Post a chain progress/escalation line, swallowing outbound failures. */
+  private postChainNotice(chatId: string | undefined, text: string): void {
+    if (!chatId) return
+    try {
+      this.onReply({ kind: 'text', chatId, text })
+    } catch (err) {
+      this.log(`chain notice failed: ${(err as Error).message}`)
+    }
+  }
+
+  /**
+   * `handoff { chain: [...] }` — validate, create the chain + step-1 record
+   * atomically, fire step 1. Nothing persists when validation or step-1
+   * resolution fails (AC6).
+   */
+  private async startChain(chatId: string, sourceSlug: string, rawChain: unknown): Promise<ReturnType<typeof okResult> | ReturnType<typeof errorResult>> {
+    const config = this.getConfig!()
+    if (!config) return errorResult('config not available')
+    if (!Array.isArray(rawChain)) return errorResult('chain must be an array of steps')
+    const steps: ChainStep[] = rawChain.map((s: any) => ({
+      ...(typeof s?.role === 'string' && s.role.trim() !== '' ? { role: s.role.trim() } : {}),
+      ...(typeof s?.target === 'string' && s.target.trim() !== '' ? { target: s.target.trim() } : {}),
+      task: typeof s?.task === 'string' ? s.task.trim() : '',
+      ...(s?.gate !== undefined ? { gate: s.gate } : {}),
+    }))
+    const srcProject = config.projects[chatId]
+    const hopBudget = srcProject ? effectivePeerLimits(config, srcProject).maxHops : 6
+    const invalid = validateChainSteps(steps, hopBudget)
+    if (invalid) return errorResult(invalid)
+
+    const firstTo = this.resolveStepTarget(config, chatId, steps[0]!)
+    if ('error' in firstTo) return errorResult(`chain step 1: ${firstTo.error}`)
+
+    const { chain, record } = createChain(
+      { from: sourceSlug, sourceChatId: chatId, steps, firstTo },
+      this.now(),
+    )
+    const fireErr = await this.fireChainStep(firstTo, chain, record.id, 0, steps[0]!.task, undefined)
+    if (fireErr) {
+      haltChain(chain.id, `step 1 delivery failed: ${fireErr}`, this.now())
+      return errorResult(`chain created but step 1 delivery failed: ${fireErr}`)
+    }
+    return okResult(JSON.stringify({ ok: true, chain_id: chain.id, id: record.id, steps: steps.length }))
+  }
+
+  /**
+   * Auto-advance chains for just-closed handoff ids. Called from the
+   * `handoff_complete` tool and from the server's bot-reply auto-close path.
+   * Per-id failures halt that chain and escalate to master — never thrown
+   * into the closing caller's path (the close itself already succeeded).
+   */
+  async advanceChainsForClosed(ids: string[]): Promise<void> {
+    for (const id of ids) {
+      try {
+        await this.advanceOneChain(id)
+      } catch (err) {
+        this.log(`chain advance for ${id} failed: ${(err as Error).message}`)
+      }
+    }
+  }
+
+  private async advanceOneChain(closedId: string): Promise<void> {
+    const record = loadRegistry().find(r => r.id === closedId)
+    if (!record?.chainId || record.state !== 'done') return
+    const chain = findChain(record.chainId)
+    if (!chain || chain.state !== 'active') return
+    // Latch: only the chain's CURRENT step may advance it.
+    if (chain.stepHandoffIds[chain.cursor] !== closedId) return
+
+    const stepIndex = record.chainStep ?? chain.cursor
+    const action = nextChainAction(chain, stepIndex, record.outcome)
+    const masterChatId = this.getMasterChatId()
+    const total = chain.steps.length
+
+    if (action.kind === 'halt-gate') {
+      const step = chain.steps[stepIndex]!
+      haltChain(chain.id, `gate not approved at step ${stepIndex + 1}`, this.now())
+      const excerpt = (record.outcome ?? '').slice(0, 120)
+      this.postChainNotice(masterChatId, `⚠️ chain #${chain.id} halted at step ${stepIndex + 1}/${total} (${step.role ?? step.target}): gate not approved — "${excerpt}"`)
+      this.postChainNotice(chain.sourceChatId, `⛓ chain #${chain.id} halted at step ${stepIndex + 1}/${total}: gate not approved`)
+      return
+    }
+
+    if (action.kind === 'complete') {
+      completeChain(chain.id, this.now())
+      this.postChainNotice(chain.sourceChatId, `✅ chain #${chain.id} complete (${total}/${total})`)
+      return
+    }
+
+    const config = this.getConfig?.()
+    if (!config) {
+      haltChain(chain.id, 'config not available at advance time', this.now())
+      this.postChainNotice(masterChatId, `⚠️ chain #${chain.id} halted at step ${action.nextIndex + 1}/${total}: config not available`)
+      return
+    }
+    const target = this.resolveStepTarget(config, chain.sourceChatId, action.nextStep)
+    if ('error' in target) {
+      haltChain(chain.id, `step ${action.nextIndex + 1} unresolvable: ${target.error}`, this.now())
+      this.postChainNotice(masterChatId, `⚠️ chain #${chain.id} halted at step ${action.nextIndex + 1}/${total} (${action.nextStep.role ?? action.nextStep.target}): ${target.error}`)
+      this.postChainNotice(chain.sourceChatId, `⛓ chain #${chain.id} halted at step ${action.nextIndex + 1}/${total}: target unresolvable`)
+      return
+    }
+
+    const advanced = advanceChainStep(chain.id, action.nextIndex, target, this.now())
+    if (!advanced) return // idempotency latch inside the registry
+    const fireErr = await this.fireChainStep(
+      target, advanced.chain, advanced.record.id, action.nextIndex, action.nextStep.task, record.outcome,
+    )
+    if (fireErr) {
+      haltChain(chain.id, `step ${action.nextIndex + 1} delivery failed: ${fireErr}`, this.now())
+      this.postChainNotice(masterChatId, `⚠️ chain #${chain.id} halted at step ${action.nextIndex + 1}/${total}: delivery failed — ${fireErr}`)
+      return
+    }
+    const nextLabel = target.kind === 'project' ? target.slug : `bot:${target.botId}`
+    this.postChainNotice(chain.sourceChatId, `⛓ chain #${chain.id}: ${action.nextIndex}/${total} done → ${nextLabel}`)
   }
 
   /**
