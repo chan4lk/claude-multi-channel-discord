@@ -27,14 +27,14 @@ Registry + pure state machine first, then MCP-server orchestration, then server/
 
 ### Wave 2 — MCP server orchestration
 
-- [ ] `T3` — `handoff` chain arg + `advanceChainsForClosed`
+- [x] `T3` — `handoff` chain arg + `advanceChainsForClosed`
   - Files: `src/master-mcp-server.ts`
   - Estimate: large
   - Kind: impl
   - Depends: T1
   - Notes: validate `chain` (2+ steps allowed, 1 tolerated; exactly one of role/target per step; mutually exclusive with top-level target_slug/role/message; hop budget via `effectivePeerLimits` fallback 6; self-target refusal; nothing persisted on refusal). Extract `fireHandoff(target, body, sourceChatId, sourceSlug)` from the existing case (project envelope + visibility post vs bot-peer mention). Step bodies: step 1 `[chain #c-<id> step 1/N from <slug>] <task> #h-<id>`; later steps add `prior outcome: "<≤500>"`. Public `advanceChainsForClosed(ids)`: nextChainAction → fire-time `resolveCollabTarget`/slug resolution (fail ⇒ haltChain + master ⚠️, FR7/AC8) → createHandoff+fireHandoff or done; progress `⛓`/`✅` posts to `sourceChatId` via onReply; gate halt master escalation with ≤120-char outcome. Call from `handoff_complete` after successful pending→done transition only. Tool description documents `chain`.
 
-- [ ] `T4` — MCP server chain tests
+- [x] `T4` — MCP server chain tests
   - Files: `src/master-mcp-server.test.ts`
   - Estimate: medium
   - Kind: test
@@ -43,7 +43,7 @@ Registry + pure state machine first, then MCP-server orchestration, then server/
 
 ### Wave 3 — Wiring + collab view + docs
 
-- [ ] `T5` — server ack path + sweep chain expiry + collab rows
+- [x] `T5` — server ack path + sweep chain expiry + collab rows
   - Files: `server.ts`, `src/master-commands.ts`, `src/master-commands.test.ts`
   - Estimate: medium
   - Kind: impl

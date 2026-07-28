@@ -2062,6 +2062,43 @@ const collabRegistry = [
   check('graph: performs zero config writes', configBefore === configAfter)
 }
 
+// --- collab verb: open chain rows (handoff-chains AC9) ----------------------
+{
+  const nowIso = new Date().toISOString()
+  const injected: Partial<MasterContext> = {
+    loadHandoffRegistry: () => [],
+    loadChainRegistry: () => [
+      {
+        id: 'c-live-1', from: 'support', sourceChatId: '999888777666555444',
+        steps: [{ target: 'newproj', task: 'build' }, { role: 'reviewer', task: 'review' }, { target: 'newproj', task: 'merge' }],
+        cursor: 1, stepHandoffIds: ['h-a', 'h-b'], state: 'active', createdAt: nowIso,
+      },
+      {
+        id: 'c-halt-1', from: 'support', sourceChatId: '999888777666555444',
+        steps: [{ target: 'newproj', task: 'x' }, { target: 'newproj', task: 'y' }],
+        cursor: 1, stepHandoffIds: ['h-c', 'h-d'], state: 'halted', createdAt: nowIso,
+        closeReason: 'gate not approved at step 2',
+      },
+      {
+        id: 'c-done-1', from: 'support', sourceChatId: '999888777666555444',
+        steps: [{ target: 'newproj', task: 'z' }],
+        cursor: 0, stepHandoffIds: ['h-e'], state: 'done', createdAt: nowIso, closedAt: nowIso,
+      },
+      {
+        id: 'c-other-1', from: 'unrelated', sourceChatId: '111111111111111111',
+        steps: [{ target: 'newproj', task: 'w' }],
+        cursor: 0, stepHandoffIds: ['h-f'], state: 'active', createdAt: nowIso,
+      },
+    ],
+  }
+  const res = await handleMasterCommand('!project collab support', mctx(injected))
+  const text = res.kind === 'reply' ? res.text : ''
+  check('collab chains: active chain row with glyphs', text.includes('#c-live-1 [✔▶·] 1/3 done'), text)
+  check('collab chains: halted chain marked with reason', text.includes('#c-halt-1 [✔✖]') && text.includes('gate not approved at step 2'), text)
+  check('collab chains: done chain omitted', !text.includes('c-done-1'), text)
+  check('collab chains: other project chain omitted', !text.includes('c-other-1'), text)
+}
+
 // Restore config after autopilot tests
 saveConfig(config)
 
