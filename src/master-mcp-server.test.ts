@@ -1231,6 +1231,91 @@ await serverPeer.stop()
   rmSync(chainTmpDir, { recursive: true, force: true })
 }
 
+// ─── external token (claude.ai connector) ───
+{
+  const EXT_MASTER = '881111111111111111'
+  const EXT_PROJECT = '882222222222222222'
+  const EXT_OTHER = '883333333333333333'
+  const EXT_DISABLED = '884444444444444444'
+  const EXT_TOKEN = 'e'.repeat(64)
+  const MASTER_EXT_TOKEN = 'f'.repeat(64)
+
+  const extConfig = {
+    version: 1 as const,
+    master: { chatId: EXT_MASTER, commandPrefix: '!project' },
+    defaults: {
+      model: 'sonnet',
+      idleEvictMinutes: 15,
+      maxConcurrent: 8,
+      git: { userName: 'bot', userEmail: 'bot@local', branchPrefix: 'claude/' },
+      claude: { permissionMode: 'auto' as const },
+      providers: {},
+      progressMode: 'off' as const,
+      handoff: false,
+      contextWarningThresholdPct: 80,
+    },
+    projects: {
+      // Defense in depth: a hand-edited externalToken on the master entry
+      // must still never authenticate.
+      [EXT_MASTER]: { slug: 'master', externalToken: MASTER_EXT_TOKEN },
+      [EXT_PROJECT]: { slug: 'ext-project', externalToken: EXT_TOKEN },
+      [EXT_OTHER]: { slug: 'ext-other' },
+      [EXT_DISABLED]: { slug: 'ext-disabled', externalToken: EXT_TOKEN, disabled: true },
+    },
+  } as unknown as import('./channels-config.ts').ChannelsConfig
+
+  const extLogs: string[] = []
+  const extPool = {
+    deliver: async () => {},
+  } as unknown as ProjectPool
+  const serverExt = new MasterMcpServer({
+    onReply: () => {},
+    getMasterChatId: () => EXT_MASTER,
+    getPool: () => extPool,
+    getConfig: () => extConfig,
+    log: (m) => extLogs.push(m),
+  })
+  const { host: eh, port: ep } = await serverExt.start()
+  const extUrl = (chatId: string) => `http://${eh}:${ep}/mcp/${chatId}`
+
+  // AC2: external token reaches tool dispatch on its own chat
+  const extList = await rpc(extUrl(EXT_PROJECT), EXT_TOKEN, 'tools/list', {})
+  check('AC2: external token accepted on own chat (tools/list)', Array.isArray(extList.result?.tools) && extList.result.tools.length > 0)
+
+  // AC6: acceptance logged with external marker
+  check('AC6: external request logged', extLogs.some((l) => l.includes('external request') && l.includes(EXT_PROJECT)))
+
+  // AC2: same token on a different chat → 401
+  const crossChat = await fetch(extUrl(EXT_OTHER), { method: 'POST', body: '{}', headers: { 'x-mcd-token': EXT_TOKEN } })
+  check('AC2: external token rejected on other chat', crossChat.status === 401)
+
+  // AC3: local per-boot token still works alongside externalToken
+  const localList = await rpc(extUrl(EXT_PROJECT), serverExt.tokenFor(EXT_PROJECT), 'tools/list', {})
+  check('AC3: local token still works on external-enabled chat', Array.isArray(localList.result?.tools))
+
+  // AC4: wrong external token → 401
+  const wrongExt = await fetch(extUrl(EXT_PROJECT), { method: 'POST', body: '{}', headers: { 'x-mcd-token': 'x'.repeat(64) } })
+  check('AC4: wrong token → 401', wrongExt.status === 401)
+
+  // AC5: external token refused on disabled project; local token unaffected
+  const disExt = await fetch(extUrl(EXT_DISABLED), { method: 'POST', body: '{}', headers: { 'x-mcd-token': EXT_TOKEN } })
+  check('AC5: external token on disabled project → 403', disExt.status === 403)
+  const disExtBody = await disExt.text()
+  check('AC5: disabled refusal names the reason', disExtBody.includes('target project is disabled'))
+  const disLocal = await rpc(extUrl(EXT_DISABLED), serverExt.tokenFor(EXT_DISABLED), 'tools/list', {})
+  check('AC5: local token unaffected by disabled gate', Array.isArray(disLocal.result?.tools))
+
+  // AC10 (defense in depth): externalToken hand-edited onto master entry never authenticates
+  const masterExt = await fetch(extUrl(EXT_MASTER), { method: 'POST', body: '{}', headers: { 'x-mcd-token': MASTER_EXT_TOKEN } })
+  check('AC10: master externalToken never authenticates', masterExt.status === 401)
+
+  // Empty presented token → 401 (never match an absent/empty expectation)
+  const emptyTok = await fetch(extUrl(EXT_PROJECT), { method: 'POST', body: '{}', headers: { 'x-mcd-token': '' } })
+  check('edge: empty token → 401', emptyTok.status === 401)
+
+  await serverExt.stop()
+}
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)
   process.exit(1)

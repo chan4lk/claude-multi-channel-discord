@@ -1143,6 +1143,127 @@ check('set: heartbeat accepted', setHb.kind === 'reply' && setHb.text.includes('
   )
 }
 
+// --- set --external-token (claude-ai-connector) --------------------------------
+
+// rotate without --yes → refusal, nothing persisted
+{
+  const res = await handleMasterCommand(
+    '!project set support --external-token rotate',
+    mctx(),
+  )
+  check(
+    'set --external-token rotate: missing --yes returns refusal (AC8)',
+    res.kind === 'reply' && res.text.includes('--yes'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  check(
+    'set --external-token rotate: not persisted when --yes missing',
+    loadConfig().projects['999888777666555444']?.externalToken === undefined,
+  )
+}
+
+// Invalid value → usage error
+{
+  const res = await handleMasterCommand(
+    '!project set support --external-token maybe',
+    mctx(),
+  )
+  check(
+    'set --external-token: invalid value rejected',
+    res.kind === 'reply' && res.text.includes('`--external-token` must be `rotate` or `none`'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+}
+
+// rotate --yes → persists 64-hex token, reply reveals it once (AC7)
+let firstExternalToken = ''
+{
+  const res = await handleMasterCommand(
+    '!project set support --external-token rotate --yes',
+    mctx(),
+  )
+  const persisted = loadConfig().projects['999888777666555444']?.externalToken ?? ''
+  firstExternalToken = persisted
+  check(
+    'set --external-token rotate --yes: persists 64-char hex token (AC7)',
+    /^[0-9a-f]{64}$/.test(persisted),
+    persisted,
+  )
+  check(
+    'set --external-token rotate --yes: reply reveals token + endpoint path (AC7)',
+    res.kind === 'reply' && res.text.includes(persisted) && res.text.includes('/mcp/999888777666555444'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+}
+
+// rotate again → replaces the old token (AC7)
+{
+  await handleMasterCommand('!project set support --external-token rotate --yes', mctx())
+  const persisted = loadConfig().projects['999888777666555444']?.externalToken ?? ''
+  check(
+    'set --external-token rotate: second rotate replaces token (AC7)',
+    /^[0-9a-f]{64}$/.test(persisted) && persisted !== firstExternalToken,
+  )
+}
+
+// show reports presence without the value
+{
+  const res = await handleMasterCommand('!project show support', mctx())
+  const token = loadConfig().projects['999888777666555444']?.externalToken ?? ''
+  check(
+    'show: external-token presence shown, value never printed (FR9)',
+    res.kind === 'reply' && res.text.includes('external-token: set') && !res.text.includes(token),
+    res.kind === 'reply' ? res.text.slice(0, 200) : res.kind,
+  )
+}
+
+// none → removes the field, no --yes needed (AC9)
+{
+  const res = await handleMasterCommand(
+    '!project set support --external-token none',
+    mctx(),
+  )
+  check(
+    'set --external-token none: succeeds without --yes (AC9)',
+    res.kind === 'reply' && res.text.includes('external token removed'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  check(
+    'set --external-token none: field removed from channels.json (AC9)',
+    loadConfig().projects['999888777666555444']?.externalToken === undefined,
+  )
+}
+
+// none when nothing set → friendly no-op
+{
+  const res = await handleMasterCommand(
+    '!project set support --external-token none',
+    mctx(),
+  )
+  check(
+    'set --external-token none: no-op when unset',
+    res.kind === 'reply' && res.text.includes('nothing to remove'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+}
+
+// Master channel as target → refusal (AC10)
+{
+  const res = await handleMasterCommand(
+    '!project set master-test --external-token rotate --yes',
+    mctx(),
+  )
+  check(
+    'set --external-token: master target refused (AC10)',
+    res.kind === 'reply' && res.text.includes('master channel cannot have an external token'),
+    res.kind === 'reply' ? res.text : res.kind,
+  )
+  check(
+    'set --external-token: master config unchanged (AC10)',
+    loadConfig().projects['123456789012345678']?.externalToken === undefined,
+  )
+}
+
 // --- peers config schema + effectivePeerLimits (FR1) -------------------------
 
 // Round-trip: project with full peers block
