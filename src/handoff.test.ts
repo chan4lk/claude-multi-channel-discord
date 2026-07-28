@@ -6,6 +6,17 @@
  * mock pool — no live claude needed. The server is stateless, so each
  * request stands alone and no initialize handshake is required.
  */
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+// Isolate state IO: the handoff tool writes shared/handoffs.json via the
+// lazily-resolved MCD_CHANNELS_DIR. Without this, test-fixture handoffs
+// (alpha→beta) leak into the live registry and the sweep escalates them
+// to the real master channel.
+const stateDir = mkdtempSync(join(tmpdir(), 'mcd-handoff-test-'))
+process.env.MCD_CHANNELS_DIR = stateDir
+
 import { ChannelsConfigSchema, type ChannelsConfig } from './channels-config.ts'
 import { MasterMcpServer } from './master-mcp-server.ts'
 import type { InboundEnvelope, OutboundReply } from './project-process.ts'
@@ -162,6 +173,7 @@ check('handoff: missing args → isError', noArgs.result?.isError === true, JSON
 check('handoff: error paths deliver nothing', delivered.length === 2, String(delivered.length))
 
 await server.stop()
+rmSync(stateDir, { recursive: true, force: true })
 
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)
