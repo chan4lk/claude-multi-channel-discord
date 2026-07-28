@@ -273,6 +273,15 @@ const ProjectSchema = z.object({
   /** Per-project Hermes bridge access (see ProjectHermesSchema). */
   hermes: ProjectHermesSchema.optional(),
   /**
+   * Static bearer token accepted on this project's /mcp/<chat_id> endpoint
+   * in addition to the per-boot in-memory token — lets an external caller
+   * (e.g. a claude.ai custom connector fronted by a Caddy capability-URL)
+   * survive server restarts. Absent = no external access. Managed via
+   * `!project set <target> --external-token rotate|none`; never valid for
+   * the master chat regardless of config.
+   */
+  externalToken: z.string().min(16).optional(),
+  /**
    * Override the watchdog base threshold for this project. Default is 5 min.
    * Set higher for channels that run long pipelines (TTS, video rendering).
    */

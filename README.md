@@ -355,6 +355,56 @@ MCD never kills a Hermes run (it can't own the pid across its own restarts). If 
 
 ---
 
+## claude.ai connector (optional)
+
+Lets a [claude.ai custom connector](https://support.anthropic.com/en/articles/11175166-getting-started-with-custom-connectors-using-remote-mcp) — e.g. a scheduled claude.ai routine — call one project's MCP endpoint from outside the host: `reply` into the project's Discord channel, `fetch_messages`, `handoff`, `share_learning`, etc. Cloud agents join the MCD org graph instead of dead-ending in the claude.ai UI.
+
+**Security model.** MCD keeps binding to `127.0.0.1`; only a reverse proxy routes in. Two independent secrets guard the endpoint: a random URL path prefix (the claude.ai-facing credential — connectors can't send custom headers, so the URL itself is the secret) and the project's persistent `externalToken` (the MCD-facing credential, injected as the `x-mcd-token` header by the proxy). The master project is structurally refused — even a hand-edited `externalToken` on the master entry never authenticates, so `run_master_command` stays local-only. Disabled projects refuse external calls. Every externally-authenticated request is logged with an `external` marker.
+
+**1. Fix the MCP port** (default is ephemeral) — set the env var before starting the server:
+
+```sh
+MCD_MCP_PORT=48620 MCD_CHANNELS_DIR=~/.claude/channels/discord-multi bun server.ts
+```
+
+**2. Mint the project's external token** (master channel; survives restarts, unlike the per-boot local tokens):
+
+```
+!project set <slug> --external-token rotate --yes   — mint + persist (token shown once)
+!project set <slug> --external-token none           — revoke external access
+```
+
+`rotate` requires `--yes` (grants external reach). Re-running `rotate` replaces the token instantly — no restart needed. `!project show <slug>` reports `external-token: set` without revealing the value.
+
+**3. Caddy route** — generate a URL secret (`openssl rand -hex 24`) and add:
+
+```caddyfile
+mcd.example.com {
+	handle_path /<url-secret>/* {
+		reverse_proxy 127.0.0.1:48620 {
+			header_up x-mcd-token <externalToken-from-step-2>
+		}
+	}
+	respond 404
+}
+```
+
+`handle_path` strips the secret prefix, so MCD sees a plain `/mcp/<chat_id>` request. Requests outside the secret prefix get 404 and never reach MCD.
+
+**4. Register in claude.ai** — Settings → Connectors → Add custom connector, URL:
+
+```
+https://mcd.example.com/<url-secret>/mcp/<chat_id>
+```
+
+No OAuth — leave authentication empty; the URL secret + injected header are the credentials. The chat_id is the project's Discord channel id (see `!project list`).
+
+**Rotation:** URL secret and token rotate independently (Caddyfile edit + reload vs `--external-token rotate` + Caddyfile header update). Rotate both if a claude.ai-side leak is suspected.
+
+Note: MCD's stateless MCP transport answers GET with 405 (permitted by the MCP Streamable HTTP spec). If a connector client hard-requires a GET/SSE stream, file an issue — v1 targets claude.ai's POST-only usage.
+
+---
+
 ## Documentation
 
 | Guide | Contents |

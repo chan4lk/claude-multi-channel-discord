@@ -12,3 +12,6 @@ git-credentials.json
 .specclaw/learnings.md
 /memory/
 watchdog-kills.jsonl
+
+# specclaw build/test logs (runtime artifacts, not planning trail)
+.specclaw/changes/*/logs/

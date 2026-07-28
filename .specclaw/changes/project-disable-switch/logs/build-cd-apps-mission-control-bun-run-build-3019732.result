@@ -1,7 +1,0 @@
-exit=0
-duration_s=89
-log=.specclaw/changes/project-disable-switch/logs/build-cd-apps-mission-control-bun-run-build-3019732.log
-head=16562ecf762e15122c2f7b6b868fd734d33d0e6e
-dirty=true
-cmd=cd apps/mission-control && bun run build
-interrupted=false
