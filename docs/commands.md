@@ -133,7 +133,7 @@ Reverts to Claude Code subscription auth.
 
 ### `!project collab <slug>`
 
-Shows the project's configured collab roles (entries that no longer resolve are marked `(stale)`) and its open handoffs (`#h-<id> from→to age task`). Read-only.
+Shows the project's configured collab roles (entries that no longer resolve are marked `(stale)`), its open handoffs (`#h-<id> from→to age task`), and its open chains with per-step glyphs — `✔` done, `▶` current, `·` unfired, `✖` gate-failed — plus the halt reason for halted chains. Read-only.
 
 ### `!project set <slug> --collab-role <name>=<value>`
 

@@ -50,7 +50,7 @@ Registry + pure state machine first, then MCP-server orchestration, then server/
   - Depends: T3
   - Notes: server.ts bot-ack path (`server.ts:2248`) → `await mcpServer.advanceChainsForClosed(handoffAckIds)` (AC3); sweep escalate callback checks `record.chainId` → `expireChain` + chain-flavored master message naming step (AC7) — scheduler.ts untouched per design decision 5. `handleCollab`: open (active/halted) chain rows with per-step glyphs `✔ ▶ · ✖` + age (AC9), injected registry loader keeps tests filesystem-free.
 
-- [ ] `T6` — docs
+- [x] `T6` — docs
   - Files: `CLAUDE.md`, `README.md`, `docs/commands.md`
   - Estimate: small
   - Kind: docs
