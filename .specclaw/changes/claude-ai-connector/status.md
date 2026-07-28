@@ -14,6 +14,7 @@
 | Tasks | ✅ Done | 4 build tasks + post-deploy AC11 step |
 | Build | ✅ Done | T1–T4 complete, all suites green |
 | Verify | ✅ Passed | AC1–AC10 met; AC11 deferred post-deploy |
+| PR | ✅ Raised | https://github.com/chan4lk/claude-multi-channel-discord/pull/322 |
 
 ## Task Progress
 
@@ -24,7 +25,9 @@
 
 | Task | Agent | Model | Status | Duration |
 |------|-------|-------|--------|----------|
+| T1–T4 | inline (main session) | claude-fable-5 | complete | — |
+| verify | general-purpose | claude-sonnet-4-6 | complete | 145s |
 
 ## Issues
 
-_None yet._
+- specclaw-pr status.md-mangling bug hit again (PR line duplicated after every line) — hand-repaired, 4th occurrence.

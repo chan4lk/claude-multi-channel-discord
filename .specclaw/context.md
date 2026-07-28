@@ -1,6 +1,6 @@
 # Project Context
 
-_Last updated: 2026-07-26 (collab-handoff-protocol)._
+_Last updated: 2026-07-28 (claude-ai-connector)._
 
 ## Architecture Overview
 
@@ -31,5 +31,6 @@ MCD (multi-channel-discord) runs one isolated `claude` CLI subprocess per Discor
 
 ## Recent Decisions
 
+- **claude-ai-connector (2026-07-28)**: MCP endpoint reachable by claude.ai custom connectors via a persistent per-project `externalToken` (`projects[*].externalToken`, `!project set <slug> --external-token rotate --yes` / `none`). `tokenValid()` became `tokenSource()` returning `'local' | 'external' | null`; external source is refused for the master chat inside `tokenSource()` itself (hand-edited config can't bypass), refused on `disabled` projects, and logged with an `external` marker. claude.ai can't send custom headers, so the auth bridge is a Caddy capability-URL (secret path prefix → strip → inject `x-mcd-token`) documented in README "claude.ai connector"; MCD keeps binding 127.0.0.1 (`MCD_MCP_PORT` fixes the port). No OAuth in MCD by design.
 - **hermes-project-invoke (2026-07-25)**: `hermes_run` widened from master-only to per-project opt-in (`projects[*].hermes.enabled`, `!project set <slug> --hermes on --yes`). Single `hermesAccess()` predicate guards both tool listing and execution; project runs report to their own channel and post a master audit notice (`🛰 hermes run <id> launched by <slug>`, 120-char prompt preview).
 - **collab-handoff-protocol (2026-07-26)**: `handoff` upgraded from fire-and-forget to tracked — registry in `shared/handoffs.json` (`src/handoffs.ts`, `pending → done | expired`, atomic writes, closed-record pruning), `#h-<id>` tags on every delivery, `handoff_complete` closes (target session or master; broad listing is safe because call-time enforces record ownership). Bot-peer targets (`collab.roles` values in `botPeers.allow`) get an `<@botId>` mention post in the source channel; an allowlisted bot reply containing a pending `#h-<id>` auto-closes it and is exempt from the bot-peer turn limit — exemption requires a matching *pending* id so it can't be abused for loops. 5-min scheduler sweep nags receiver at `timeoutMinutes` (defaults-level only in v1, built-in 30) and escalates to master + expires at 2×. High-churn runtime state goes in a separate `shared/*.json` file, never in `channels.json` (operator-owned config).
