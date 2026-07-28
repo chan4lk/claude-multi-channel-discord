@@ -27,21 +27,21 @@ Build the pure graph module first (model + both renderers + tests), then wire th
 
 ### Wave 2 — Verb wiring + docs
 
-- [ ] `T3` — `graph` verb in master-commands
+- [x] `T3` — `graph` verb in master-commands
   - Files: `src/master-commands.ts`
   - Estimate: small
   - Kind: impl
   - Depends: T1
   - Notes: dispatch case, async `handleGraph(rest, ctx)` (flags `--stats`, `--mermaid`), help line. Add optional `MasterContext.loadSchedulesFn` + `transcriptMtimeFn`; defaults fall back to real `loadSchedules` / `newestTranscriptMtimeMs`; handoffs via existing `ctx.loadHandoffRegistry ?? loadRegistry`; pool via `ctx.mutator?.poolStats` only when `--stats`. Every stats input try/catch-wrapped → null (NFR3). Zero writes.
 
-- [ ] `T4` — parser tests
+- [x] `T4` — parser tests
   - Files: `src/master-commands.test.ts`
   - Estimate: small
   - Kind: test
   - Depends: T3
   - Notes: verb reachable, injected deps only (no filesystem), `--stats` without mutator degrades not throws, help text contains `graph`, no mutator write methods invoked.
 
-- [ ] `T5` — docs
+- [x] `T5` — docs
   - Files: `README.md`, `docs/commands.md`, `CLAUDE.md`
   - Estimate: small
   - Kind: docs
