@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
 
@@ -250,6 +251,7 @@ function helpText(prefix: string): string {
     `${prefix} set    <chat_id-or-slug> --peers none               — remove cross-project peer allow list`,
     `${prefix} set    <chat_id-or-slug> --autopilot on|off [--seed "<goal>"] [--autopilot-interval N] [--backlog-file <path>]  — enable/disable backlog autopilot`,
     `${prefix} set    <chat_id-or-slug> --hermes on --yes             — grant this project's Claude the hermes_run tool (requires --yes)`,
+    `${prefix} set    <chat_id-or-slug> --external-token rotate --yes — mint a persistent token for external MCP callers, e.g. claude.ai connectors (\`none\` removes)`,
     `${prefix} set    <chat_id-or-slug> --hermes off                  — revoke the project's hermes access`,
     `${prefix} set    <chat_id-or-slug> --disabled on                 — suspend project: inbound messages dropped, warm session killed`,
     `${prefix} set    <chat_id-or-slug> --disabled off                — resume project: re-enables delivery, stamps enabledAt`,
@@ -320,6 +322,8 @@ function handleShow(config: ChannelsConfig, rest: string[]): string {
     `model: ${model}`,
   ]
   if (project.disabled) lines.push('disabled: yes')
+  // Presence only — the token value is revealed once at rotate time.
+  if (project.externalToken) lines.push('external-token: set')
   const providerName = project.provider ?? config.defaults.provider
   if (providerName) {
     const def = config.defaults.providers[providerName]
@@ -786,6 +790,23 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
     }
   }
 
+  // --external-token rotate|none — persistent token for external MCP callers (claude.ai connectors)
+  const externalTokenRaw = typeof flags['external-token'] === 'string' ? flags['external-token'] : null
+  if (externalTokenRaw !== null && externalTokenRaw !== 'rotate' && externalTokenRaw !== 'none') {
+    return '`--external-token` must be `rotate` or `none`'
+  }
+  const externalTokenAction: 'rotate' | 'none' | null = externalTokenRaw as 'rotate' | 'none' | null
+  if (externalTokenAction !== null) {
+    // Master's endpoint carries run_master_command — never externally reachable
+    if (isMasterChannel(config, entry.chatId)) {
+      return 'master channel cannot have an external token — its endpoint carries `run_master_command`'
+    }
+    // Requires --yes (grants external reach to this project's MCP endpoint)
+    if (externalTokenAction === 'rotate' && flags.yes !== true) {
+      return '`set --external-token rotate` requires `--yes` (grants external callers reach to this project\'s MCP endpoint)'
+    }
+  }
+
   // --collab-role <name>=<slug|botId> or <name>=none — add/update/remove a collab handoff role
   const collabRoleRaw = typeof flags['collab-role'] === 'string' ? flags['collab-role'] : null
   let collabRoleAction: { name: string; value: string | 'none' } | null = null
@@ -806,8 +827,8 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
     collabRoleAction = { name, value }
   }
 
-  if (prompt === null && stuckMinutes === null && heartbeatMode === null && heartbeatWindow === null && heartbeatStale === null && goalRaw === null && distillOnStop === null && developBranch === null && prApi === null && botPeersAction === null && peersAction === null && autopilotAction === null && autopilotInterval === null && backlogFile === null && hermesAction === null && disabledAction === null && collabRoleAction === null) {
-    return '`set` requires `--prompt "..."`, `--stuck-threshold-minutes N`, `--heartbeat-mode <supervised|autonomous>`, `--heartbeat-window <HH:MM-HH:MM>`, `--heartbeat-stale-minutes N`, `--goal "..."`, `--distill-on-stop`, `--develop-branch on|off`, `--pr-token-github <token>`, `--pr-token-azdo <token> --azdo-org X --azdo-project Y`, `--bot-peers <id,...>|none`, `--peers <slug,...>|none`, `--autopilot on|off [--seed "<goal>"] [--autopilot-interval N] [--backlog-file <path>]`, `--hermes on|off`, `--disabled on|off`, or `--collab-role <name>=<slug|botId|none>`'
+  if (prompt === null && stuckMinutes === null && heartbeatMode === null && heartbeatWindow === null && heartbeatStale === null && goalRaw === null && distillOnStop === null && developBranch === null && prApi === null && botPeersAction === null && peersAction === null && autopilotAction === null && autopilotInterval === null && backlogFile === null && hermesAction === null && disabledAction === null && externalTokenAction === null && collabRoleAction === null) {
+    return '`set` requires `--prompt "..."`, `--stuck-threshold-minutes N`, `--heartbeat-mode <supervised|autonomous>`, `--heartbeat-window <HH:MM-HH:MM>`, `--heartbeat-stale-minutes N`, `--goal "..."`, `--distill-on-stop`, `--develop-branch on|off`, `--pr-token-github <token>`, `--pr-token-azdo <token> --azdo-org X --azdo-project Y`, `--bot-peers <id,...>|none`, `--peers <slug,...>|none`, `--autopilot on|off [--seed "<goal>"] [--autopilot-interval N] [--backlog-file <path>]`, `--hermes on|off`, `--disabled on|off`, `--external-token rotate|none`, or `--collab-role <name>=<slug|botId|none>`'
   }
 
   const results: string[] = []
@@ -1005,6 +1026,27 @@ async function handleSet(rest: string[], ctx: MasterContext): Promise<string> {
       const { disabled: _removed, ...rest } = latestEntry
       saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: { ...rest, enabledAt: new Date().toISOString() } } })
       results.push(`✅ **${latestEntry.slug}** is now **enabled** — inbound messages will be delivered.`)
+    }
+  }
+
+  if (externalTokenAction !== null) {
+    const latestConfig = loadConfig()
+    const latestEntry = latestConfig.projects[entry.chatId] ?? entry.project
+    if (externalTokenAction === 'rotate') {
+      const token = randomBytes(32).toString('hex')
+      saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: { ...latestEntry, externalToken: token } } })
+      results.push([
+        `✅ external token rotated for **${latestEntry.slug}** — shown once, save it now:`,
+        `\`${token}\``,
+        `endpoint path: \`/mcp/${entry.chatId}\` — front with a Caddy capability-URL that injects it as \`x-mcd-token\` (see README "claude.ai connector").`,
+        `Any previous external token is now invalid.`,
+      ].join('\n'))
+    } else if (latestEntry.externalToken === undefined) {
+      results.push(`no external token set for **${latestEntry.slug}** — nothing to remove.`)
+    } else {
+      const { externalToken: _removed, ...rest } = latestEntry
+      saveConfig({ ...latestConfig, projects: { ...latestConfig.projects, [entry.chatId]: rest } })
+      results.push(`✅ external token removed for **${latestEntry.slug}** — external callers are locked out.`)
     }
   }
 
