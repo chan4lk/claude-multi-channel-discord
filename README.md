@@ -199,6 +199,10 @@ Tracked task handoffs between agents — internal projects or external bot peers
 - A sweep nags the receiver at `timeoutMinutes` (default 30) and escalates to the master channel (record → `expired`) at 2×.
 - Roles: `!project set <slug> --collab-role reviewer=<slug|botId>` — then `handoff { role: "reviewer", … }`. Inspect with `!project collab <slug>`.
 
+## Org-graph view
+
+`!project graph` renders the agent organization at a glance: projects + bot peers as nodes (`⛔` disabled, `🤖` autopilot, `🛰` hermes), `peers`/`botPeers`/`collab.roles` as edges (mutual `↔`, `(stale)` roles), enabled schedules as `⏰` self-loops, and `⚠` dead-edge warnings (e.g. a collab role configured while `handoff` is off). `--stats` overlays open-handoff counts, warm/cold session state, and idle age; `--mermaid` emits a GitHub-renderable Mermaid block. Read-only.
+
 ## Cross-project dialogue (optional)
 
 Lets two MCD project Claude sessions exchange messages directly — without operator relay — through constrained, mutual-consent peer links. Builds on the handoff plumbing but adds bidirectional threading, hop budgets, per-pair cooldowns, and a shared learnings board.

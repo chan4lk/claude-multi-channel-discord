@@ -139,6 +139,13 @@ Shows the project's configured collab roles (entries that no longer resolve are 
 
 Sets a collab role. `<value>` must be an existing project slug (not master, not the project itself) or a bot id in the project's `botPeers.allow`. `<name>=none` removes the role. Config-only — the `handoff` flag still gates the MCP tool.
 
+### `!project graph [--stats] [--mermaid]`
+
+Renders the org graph: master + every project as nodes (platform icon, `⛔` disabled, `🤖` autopilot, `🛰` hermes grant), plus `bot:<id>` nodes for allowlisted bot peers. Edges: `peers` (mutual `↔` vs one-way), `botPeers.allow`, `collab.roles` (labelled, `(stale)` when unresolvable), enabled schedules as `⏰` self-loops. Dead-edge `⚠` warnings always print — e.g. a collab role configured while the project's `handoff` flag is off. Read-only, zero writes.
+
+- `--stats` — traffic overlay: open handoff counts per edge, per-node `warm`/`cold` session state and `idle <age>` from transcript mtime. Missing sources degrade silently.
+- `--mermaid` — emits a fenced Mermaid `graph LR` block (renders on GitHub) instead of the text view; warnings follow the fence.
+
 ---
 
 ## Natural language
