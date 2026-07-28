@@ -1,7 +1,0 @@
-exit=0
-duration_s=91
-log=.specclaw/changes/claude-ai-connector/logs/build-cd-apps-mission-control-bun-run-build-3329826.log
-head=67853d0ca18b3ed9d76ac3a0e8602b4854d8484b
-dirty=true
-cmd=cd apps/mission-control && bun run build
-interrupted=false

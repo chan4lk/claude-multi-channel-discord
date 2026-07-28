@@ -1,7 +1,0 @@
-exit=0
-duration_s=8
-log=.specclaw/changes/claude-ai-connector/logs/test-bun-tsc-noemit-3351416.log
-head=503803e913af350546a34ccb5caa535129e91311
-dirty=true
-cmd=bun tsc --noEmit
-interrupted=false
