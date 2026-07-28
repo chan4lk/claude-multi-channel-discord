@@ -811,6 +811,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
           for (let i = 0; i < chunks.length; i++) {
             const shouldReplyTo =
               reply_to != null &&
+              isDiscordSnowflake(reply_to) &&
               replyMode !== 'off' &&
               (replyMode === 'all' || i === 0)
             const sent = await ch.send({
@@ -1773,6 +1774,16 @@ function routeNotification(cfg: ReturnType<typeof loadChannelsConfig>, reply: Ex
   }
 }
 
+/**
+ * Scheduler fires, autopilot nudges, and handoffs inject synthetic message ids
+ * (e.g. `sched-s_heartbeat_master-<ts>`). Claude may echo one back as reply_to;
+ * Discord then rejects the WHOLE message ("message_reference.message_id is not
+ * snowflake"), silently dropping it. Thread only on real snowflakes.
+ */
+function isDiscordSnowflake(id: string): boolean {
+  return /^\d{17,20}$/.test(id)
+}
+
 async function dispatchProjectReply(reply: OutboundReply): Promise<void> {
   if (reply.kind !== 'text') return // react / other reply kinds land in phase 3c+
   const access = loadAccess()
@@ -1803,6 +1814,7 @@ async function dispatchProjectReply(reply: OutboundReply): Promise<void> {
     const isFirst = i === 0
     const threadThis =
       reply.replyTo != null &&
+      isDiscordSnowflake(reply.replyTo) &&
       (replyToMode === 'all' || (replyToMode === 'first' && isFirst))
     const send: { content: string; reply?: { messageReference: string; failIfNotExists: boolean } } = {
       content: chunks[i]!,
