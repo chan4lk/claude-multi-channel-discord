@@ -231,12 +231,26 @@ export class MasterMcpServer {
     return token
   }
 
-  private tokenValid(chatId: string, presented: string | string[] | undefined): boolean {
-    const expected = this.chatTokens.get(chatId)
-    if (!expected || typeof presented !== 'string') return false
+  /**
+   * Which credential authenticated this request: 'local' (per-boot token,
+   * the project's own claude subprocess), 'external' (the project's
+   * persistent `externalToken` from channels.json — e.g. a claude.ai
+   * connector fronted by Caddy), or null (unauthenticated). External is
+   * never valid for the master chat, even if an operator hand-edits a
+   * token onto the master entry — `run_master_command` must stay local.
+   */
+  private tokenSource(chatId: string, presented: string | string[] | undefined): 'local' | 'external' | null {
+    if (typeof presented !== 'string' || presented.length === 0) return null
     const a = Buffer.from(presented)
-    const b = Buffer.from(expected)
-    return a.length === b.length && timingSafeEqual(a, b)
+    const matches = (expected: string): boolean => {
+      const b = Buffer.from(expected)
+      return a.length === b.length && timingSafeEqual(a, b)
+    }
+    const local = this.chatTokens.get(chatId)
+    if (local && matches(local)) return 'local'
+    const external = this.getConfig?.()?.projects[chatId]?.externalToken
+    if (external && chatId !== this.getMasterChatId() && matches(external)) return 'external'
+    return null
   }
 
   // Stateless transport: no persistent server-side state per chat. The
@@ -270,11 +284,23 @@ export class MasterMcpServer {
     }
     const chatId = match[1]!
 
-    if (!this.tokenValid(chatId, req.headers['x-mcd-token'])) {
+    const authSource = this.tokenSource(chatId, req.headers['x-mcd-token'])
+    if (!authSource) {
       this.log(`rejected /mcp/${chatId}: missing or bad x-mcd-token`)
       res.writeHead(401, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32000, message: 'unauthorized' } }))
       return
+    }
+    if (authSource === 'external') {
+      // Disabled means "drops all inbound" — an external caller must not
+      // be able to reply into (or otherwise act as) a disabled project.
+      if (this.getConfig?.()?.projects[chatId]?.disabled) {
+        this.log(`rejected external /mcp/${chatId}: project disabled`)
+        res.writeHead(403, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32000, message: 'target project is disabled' } }))
+        return
+      }
+      this.log(`external request /mcp/${chatId}`)
     }
 
     if (req.method === 'GET' || req.method === 'DELETE') {
