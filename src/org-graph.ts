@@ -1,0 +1,337 @@
+/**
+ * Org-graph model + renderers for the `!project graph` master verb.
+ *
+ * Pure module: no IO. All inputs (config, schedules, handoff registry,
+ * activity mtimes, pool liveness) arrive pre-loaded via `GraphInputs`;
+ * the caller (`handleGraph` in master-commands.ts) owns loading and
+ * fail-soft degradation. Every judgment (mutuality, staleness, dead
+ * edges) is computed once on the model so the text and mermaid views
+ * agree by construction.
+ */
+import {
+  findProjectBySlug,
+  handoffEnabled,
+  isMasterChannel,
+  resolveCollabTarget,
+  type ChannelsConfig,
+} from './channels-config.ts'
+
+export interface ScheduleInput {
+  chatId: string
+  enabled: boolean
+  at?: string
+  interval?: string
+  cron?: string
+}
+
+export interface HandoffInput {
+  state: string
+  from: string
+  to: { kind: 'project' | 'botPeer'; slug?: string; botId?: string; chatId: string }
+}
+
+export interface GraphInputs {
+  /** Entries from schedules.json (disabled ones are filtered here). */
+  schedules?: ScheduleInput[]
+  /** Handoff registry records (only `pending` ones are counted). */
+  handoffs?: HandoffInput[]
+  /** chatId → newest session-transcript mtime ms; null/absent = never used. */
+  activityMtimeMs?: Record<string, number | null>
+  /** chatId → subprocess alive. Absent entirely = pool state unknown. */
+  poolAlive?: Record<string, boolean>
+  nowMs?: number
+}
+
+export interface GraphNode {
+  id: string
+  label: string
+  kind: 'master' | 'project' | 'bot' | 'unknown'
+  platform?: 'discord' | 'teams' | 'whatsapp'
+  disabled?: boolean
+  autopilot?: boolean
+  hermes?: boolean
+  /** true = warm subprocess, false = cold, null = pool state unknown. */
+  warm?: boolean | null
+  /** ms since last transcript write; null = never used. */
+  idleMs?: number | null
+  /** Cadence summaries for enabled schedules targeting this node. */
+  schedules: string[]
+}
+
+export interface GraphEdge {
+  from: string
+  to: string
+  kind: 'peer' | 'botPeer' | 'role'
+  role?: string
+  mutual?: boolean
+  stale?: boolean
+  dead?: boolean
+  openHandoffs?: number
+}
+
+export interface OrgGraph {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+  warnings: string[]
+}
+
+export interface RenderOpts {
+  stats?: boolean
+}
+
+/** Mermaid-safe node id: [A-Za-z0-9_] only, letter-prefixed, collision-suffixed. */
+function makeIdAllocator(): (label: string) => string {
+  const taken = new Map<string, string>()
+  const used = new Set<string>()
+  return (label: string) => {
+    const hit = taken.get(label)
+    if (hit) return hit
+    let base = label.replace(/[^A-Za-z0-9_]/g, '_')
+    if (!/^[A-Za-z_]/.test(base)) base = `n_${base}`
+    if (base === '') base = 'n'
+    let id = base
+    for (let i = 2; used.has(id); i++) id = `${base}_${i}`
+    used.add(id)
+    taken.set(label, id)
+    return id
+  }
+}
+
+function cadence(s: ScheduleInput): string {
+  if (s.at) return `daily ${s.at}`
+  if (s.interval) return s.interval
+  if (s.cron) return `cron ${s.cron}`
+  return 'unknown'
+}
+
+export function buildOrgGraph(config: ChannelsConfig, inputs: GraphInputs = {}): OrgGraph {
+  const nowMs = inputs.nowMs ?? Date.now()
+  const allocId = makeIdAllocator()
+  const nodes: GraphNode[] = []
+  const nodeByLabel = new Map<string, GraphNode>()
+  const edges: GraphEdge[] = []
+  const warnings: string[] = []
+
+  const addNode = (node: GraphNode): GraphNode => {
+    const existing = nodeByLabel.get(node.label)
+    if (existing) return existing
+    nodes.push(node)
+    nodeByLabel.set(node.label, node)
+    return node
+  }
+
+  const scheduleSummaries = (chatId: string): string[] =>
+    (inputs.schedules ?? []).filter(s => s.enabled && s.chatId === chatId).map(cadence)
+
+  const statsFor = (chatId: string): Pick<GraphNode, 'warm' | 'idleMs'> => {
+    const warm = inputs.poolAlive === undefined ? null : (inputs.poolAlive[chatId] ?? false)
+    let idleMs: number | null = null
+    const mtime = inputs.activityMtimeMs?.[chatId]
+    if (typeof mtime === 'number') idleMs = Math.max(0, nowMs - mtime)
+    return { warm, idleMs }
+  }
+
+  // Master node first.
+  const masterChatId = config.master?.chatId
+  if (masterChatId) {
+    addNode({
+      id: allocId('master'),
+      label: 'master',
+      kind: 'master',
+      schedules: scheduleSummaries(masterChatId),
+      ...statsFor(masterChatId),
+    })
+  }
+
+  // Project nodes, sorted by slug for stable output.
+  const projectEntries = Object.entries(config.projects)
+    .filter(([chatId]) => chatId !== masterChatId)
+    .sort(([, a], [, b]) => a.slug.localeCompare(b.slug))
+
+  for (const [chatId, project] of projectEntries) {
+    addNode({
+      id: allocId(project.slug),
+      label: project.slug,
+      kind: 'project',
+      platform: project.platform ?? 'discord',
+      disabled: project.disabled === true,
+      autopilot: project.autopilot?.enabled === true,
+      hermes: project.hermes?.enabled === true,
+      schedules: scheduleSummaries(chatId),
+      ...statsFor(chatId),
+    })
+  }
+
+  // Edges. Mutual peer pairs dedup to a single edge (first slug encountered owns it).
+  const mutualSeen = new Set<string>()
+  for (const [chatId, project] of projectEntries) {
+    const fromNode = nodeByLabel.get(project.slug)!
+
+    for (const peerSlug of project.peers?.allow ?? []) {
+      if (peerSlug === project.slug) {
+        warnings.push(`⚠ ${project.slug}: peers.allow references itself — invalid edge`)
+        continue
+      }
+      const hit = findProjectBySlug(config, peerSlug)
+      if (!hit) {
+        warnings.push(`⚠ ${project.slug}: peers.allow references unknown slug "${peerSlug}"`)
+        continue
+      }
+      if (isMasterChannel(config, hit.chatId)) {
+        warnings.push(`⚠ ${project.slug}: peers.allow references the master project — invalid edge`)
+        continue
+      }
+      const mutual = (hit.project.peers?.allow ?? []).includes(project.slug)
+      if (mutual) {
+        const pairKey = [project.slug, peerSlug].sort().join('|')
+        if (mutualSeen.has(pairKey)) continue
+        mutualSeen.add(pairKey)
+      }
+      edges.push({ from: fromNode.id, to: nodeByLabel.get(hit.project.slug)!.id, kind: 'peer', mutual })
+    }
+
+    for (const botId of project.botPeers?.allow ?? []) {
+      const botNode = addNode({
+        id: allocId(`bot:${botId}`),
+        label: `bot:${botId}`,
+        kind: 'bot',
+        schedules: [],
+      })
+      edges.push({ from: fromNode.id, to: botNode.id, kind: 'botPeer' })
+    }
+
+    const roles = project.collab?.roles ?? {}
+    const roleNames = Object.keys(roles)
+    const handoffOff = roleNames.length > 0 && !handoffEnabled(config, project)
+    if (handoffOff) {
+      warnings.push(
+        `⚠ ${project.slug}: collab role(s) configured but handoff flag off — ${roleNames.join(', ')} can never fire`,
+      )
+    }
+    for (const roleName of roleNames) {
+      const rawValue = roles[roleName]!
+      const resolved = resolveCollabTarget(config, chatId, roleName)
+      if ('error' in resolved) {
+        warnings.push(`⚠ ${project.slug}: collab role ${roleName} → ${rawValue} unresolvable (stale)`)
+        const ghost = addNode({ id: allocId(rawValue), label: rawValue, kind: 'unknown', schedules: [] })
+        edges.push({ from: fromNode.id, to: ghost.id, kind: 'role', role: roleName, stale: true, dead: handoffOff || undefined })
+        continue
+      }
+      const targetLabel = resolved.kind === 'project' ? resolved.slug : `bot:${resolved.botId}`
+      const targetNode =
+        nodeByLabel.get(targetLabel) ??
+        addNode({ id: allocId(targetLabel), label: targetLabel, kind: 'bot', schedules: [] })
+      edges.push({ from: fromNode.id, to: targetNode.id, kind: 'role', role: roleName, dead: handoffOff || undefined })
+    }
+  }
+
+  // Traffic overlay: pending handoff counts per matching edge.
+  const nodeById = new Map(nodes.map(n => [n.id, n]))
+  for (const h of inputs.handoffs ?? []) {
+    if (h.state !== 'pending') continue
+    const targetLabel = h.to.kind === 'project' ? h.to.slug : `bot:${h.to.botId}`
+    if (!targetLabel) continue
+    const edge = edges.find(e => {
+      const fromLabel = nodeById.get(e.from)?.label
+      const toLabel = nodeById.get(e.to)?.label
+      if (fromLabel === h.from && toLabel === targetLabel) return true
+      return e.mutual === true && toLabel === h.from && fromLabel === targetLabel
+    })
+    if (edge) edge.openHandoffs = (edge.openHandoffs ?? 0) + 1
+  }
+
+  return { nodes, edges, warnings }
+}
+
+function humanizeIdle(idleMs: number | null | undefined): string {
+  if (idleMs === null || idleMs === undefined) return 'idle never'
+  const m = Math.floor(idleMs / 60_000)
+  if (m < 60) return `idle ${m}m`
+  const h = Math.floor(m / 60)
+  if (h < 48) return `idle ${h}h`
+  return `idle ${Math.floor(h / 24)}d`
+}
+
+const PLATFORM_ICON: Record<string, string> = { discord: '💬', teams: '🟦', whatsapp: '🟩' }
+
+function nodeDecorations(node: GraphNode): string {
+  const parts: string[] = []
+  if (node.platform) parts.push(PLATFORM_ICON[node.platform] ?? '')
+  if (node.disabled) parts.push('⛔')
+  if (node.autopilot) parts.push('🤖')
+  if (node.hermes) parts.push('🛰')
+  return parts.filter(Boolean).join(' ')
+}
+
+export function renderGraphText(graph: OrgGraph, opts: RenderOpts = {}): string {
+  const projectCount = graph.nodes.filter(n => n.kind === 'project').length
+  const botCount = graph.nodes.filter(n => n.kind === 'bot').length
+  const lines: string[] = [`**Org graph** — ${projectCount} project(s), ${botCount} bot peer(s)`]
+  if (projectCount === 0) lines.push('_no projects_')
+
+  const nodeById = new Map(graph.nodes.map(n => [n.id, n]))
+  const openSuffix = (e: GraphEdge): string =>
+    opts.stats && e.openHandoffs ? ` [${e.openHandoffs} open]` : ''
+
+  for (const node of graph.nodes) {
+    if (node.kind === 'bot' || node.kind === 'unknown') continue
+    let line = `• **${node.label}**`
+    const decor = nodeDecorations(node)
+    if (decor) line += ` ${decor}`
+    if (opts.stats) {
+      const state = node.warm === null || node.warm === undefined ? [] : [node.warm ? 'warm' : 'cold']
+      line += ` [${[...state, humanizeIdle(node.idleMs)].join(', ')}]`
+    }
+    for (const s of node.schedules) line += ` ⏰ ${s}`
+    lines.push(line)
+
+    for (const edge of graph.edges) {
+      if (edge.from !== node.id) continue
+      const to = nodeById.get(edge.to)
+      const toLabel = to?.label ?? edge.to
+      if (edge.kind === 'peer') {
+        lines.push(
+          edge.mutual
+            ? `    ↔ ${toLabel} (peers)${openSuffix(edge)}`
+            : `    → ${toLabel} (peers, one-way — no consent back)${openSuffix(edge)}`,
+        )
+      } else if (edge.kind === 'botPeer') {
+        lines.push(`    ⇢ ${toLabel} (bot peer)${openSuffix(edge)}`)
+      } else {
+        const marks = [edge.stale ? ' (stale)' : '', edge.dead ? ' (dead)' : ''].join('')
+        lines.push(`    —${edge.role}→ ${toLabel}${marks}${openSuffix(edge)}`)
+      }
+    }
+  }
+
+  if (graph.warnings.length > 0) {
+    lines.push('')
+    lines.push(...graph.warnings)
+  }
+  return lines.join('\n')
+}
+
+/** Fenced Mermaid `graph LR` block. Warnings are NOT included — caller appends them. */
+export function renderGraphMermaid(graph: OrgGraph, opts: RenderOpts = {}): string {
+  const lines: string[] = ['```mermaid', 'graph LR']
+  for (const node of graph.nodes) {
+    const decor = nodeDecorations(node)
+    const label = `${node.label}${decor ? ' ' + decor : ''}`.replace(/"/g, "'")
+    lines.push(`  ${node.id}["${label}"]`)
+  }
+  for (const edge of graph.edges) {
+    const open = opts.stats && edge.openHandoffs ? ` (${edge.openHandoffs} open)` : ''
+    if (edge.kind === 'peer') {
+      const arrow = edge.mutual ? '---' : '-->'
+      lines.push(`  ${edge.from} ${arrow}|"peers${open}"| ${edge.to}`)
+    } else if (edge.kind === 'botPeer') {
+      lines.push(`  ${edge.from} -->|"bot peer${open}"| ${edge.to}`)
+    } else {
+      const label = `${edge.role}${edge.stale ? ' (stale)' : ''}${edge.dead ? ' (dead)' : ''}${open}`.replace(/"/g, "'")
+      const arrow = edge.stale || edge.dead ? '-.->' : '-->'
+      lines.push(`  ${edge.from} ${arrow}|"${label}"| ${edge.to}`)
+    }
+  }
+  lines.push('```')
+  return lines.join('\n')
+}

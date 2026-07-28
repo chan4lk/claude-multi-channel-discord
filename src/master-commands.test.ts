@@ -1998,6 +1998,70 @@ const collabRegistry = [
   )
 }
 
+// --- graph verb (org-graph-view) -------------------------------------------
+{
+  // Dedicated fixture: one-way peers, a collab role while handoff is off,
+  // a bot peer — exercises edges + dead-edge warnings through the verb.
+  saveConfig(ChannelsConfigSchema.parse({
+    master: { chatId: '123456789012345678' },
+    projects: {
+      '123456789012345678': { slug: 'master-test' },
+      '999888777666555444': {
+        slug: 'support',
+        peers: { allow: ['newproj'] },
+        collab: { roles: { reviewer: 'newproj' } },
+        botPeers: { allow: ['222222222222222222'] },
+      },
+      '444444444444444444': { slug: 'newproj' },
+    },
+  }))
+  const configBefore = readFileSync(join(stateDir, 'channels.json'), 'utf8')
+
+  const injected: Partial<MasterContext> = {
+    loadHandoffRegistry: () => [
+      { id: 'h-g1', from: 'support', to: { kind: 'project', slug: 'newproj', chatId: '444444444444444444' }, task: 'x', state: 'pending', createdAt: new Date().toISOString() },
+    ],
+    loadSchedulesFn: () => ({ schedules: [{ chatId: '999888777666555444', enabled: true, at: '09:00' }] }),
+    transcriptMtimeFn: () => Date.now() - 5 * 60_000,
+  }
+
+  const plain = await handleMasterCommand('!project graph', mctx(injected))
+  const plainText = plain.kind === 'reply' ? plain.text : ''
+  check('graph: renders header', plainText.includes('**Org graph**'), plainText.slice(0, 80))
+  check('graph: one-way peer edge', plainText.includes('one-way'), plainText)
+  check('graph: bot peer edge', plainText.includes('bot:222222222222222222'))
+  check('graph: dead-edge warning (handoff off)', plainText.includes('handoff flag off'))
+  check('graph: schedule self-loop', plainText.includes('⏰ daily 09:00'))
+  check('graph: no open-count without --stats', !plainText.includes('[1 open]'))
+
+  // --stats without poolStats in the mutator degrades, never throws.
+  const stats = await handleMasterCommand('!project graph --stats', mctx(injected))
+  const statsText = stats.kind === 'reply' ? stats.text : ''
+  check('graph --stats: idle age rendered', statsText.includes('idle 5m'), statsText)
+  check('graph --stats: open handoff count on edge', statsText.includes('[1 open]'), statsText)
+  check('graph --stats: no warm/cold without poolStats', !statsText.includes('warm'))
+
+  const mermaid = await handleMasterCommand('!project graph --mermaid', mctx(injected))
+  const mermaidText = mermaid.kind === 'reply' ? mermaid.text : ''
+  check('graph --mermaid: fenced block', mermaidText.startsWith('```mermaid'), mermaidText.slice(0, 30))
+  check('graph --mermaid: graph LR', mermaidText.includes('graph LR'))
+  check('graph --mermaid: warnings appended after fence', mermaidText.includes('⚠') && mermaidText.indexOf('⚠') > mermaidText.indexOf('```\n'))
+
+  // Broken injected sources degrade silently (NFR3).
+  const broken = await handleMasterCommand('!project graph --stats', mctx({
+    loadHandoffRegistry: () => { throw new Error('boom') },
+    loadSchedulesFn: () => { throw new Error('boom') },
+    transcriptMtimeFn: () => { throw new Error('boom') },
+  }))
+  check('graph: broken sources degrade, verb still replies', broken.kind === 'reply' && broken.text.includes('**Org graph**'))
+
+  const helpRes = await handleMasterCommand('!project help', mctx())
+  check('help: mentions graph verb', helpRes.kind === 'reply' && helpRes.text.includes('graph  [--stats] [--mermaid]'))
+
+  const configAfter = readFileSync(join(stateDir, 'channels.json'), 'utf8')
+  check('graph: performs zero config writes', configBefore === configAfter)
+}
+
 // Restore config after autopilot tests
 saveConfig(config)
 
