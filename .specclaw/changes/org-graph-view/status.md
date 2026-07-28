@@ -13,7 +13,7 @@
 | Design | ✅ Complete | pure `src/org-graph.ts` + verb wiring |
 | Tasks | ✅ Complete | 5 tasks, 2 waves |
 | Build | ⬜ Pending | |
-| Verify | ⬜ Pending | |
+| Verify | ✅ Passed |  |
 
 ## Task Progress
 
