@@ -27,6 +27,8 @@ import { readSpecclawStatus } from './specclaw-status.ts'
 import { launchHermesRun, tailHermesRun, listRecentRuns } from './hermes-bridge.ts'
 import { detectBacklogSource, snapshotBacklog } from './backlog.ts'
 import { loadRegistry, type HandoffRecord } from './handoffs.ts'
+import { buildOrgGraph, renderGraphMermaid, renderGraphText, type GraphInputs } from './org-graph.ts'
+import { newestTranscriptMtimeMs } from './transcript-path.ts'
 
 export type MasterCommandResult =
   | { kind: 'no-master-configured' }
@@ -51,6 +53,10 @@ export interface MasterContext {
   hermesSpawnFn?: (...args: any[]) => any
   /** Injectable handoff-registry loader (tests avoid the filesystem). */
   loadHandoffRegistry?: () => HandoffRecord[]
+  /** Injectable schedules loader for the `graph` verb (tests avoid the filesystem). */
+  loadSchedulesFn?: () => { schedules: Array<{ chatId: string; enabled: boolean; at?: string; interval?: string; cron?: string }> }
+  /** Injectable transcript-mtime probe for `graph --stats` (tests avoid the filesystem). */
+  transcriptMtimeFn?: (cwd: string) => number | null
 }
 
 export interface MasterMutator {
@@ -200,6 +206,8 @@ export async function handleMasterCommand(
         result = { kind: 'reply', text: await handleBacklog(rest, ctx) }; break
       case 'collab':
         result = { kind: 'reply', text: handleCollab(rest, ctx) }; break
+      case 'graph':
+        result = { kind: 'reply', text: await handleGraph(rest, ctx) }; break
       default:
         result = {
           kind: 'reply',
@@ -246,6 +254,7 @@ function helpText(prefix: string): string {
     `${prefix} set    <chat_id-or-slug> --collab-role <name>=<slug|botId> — add/update a collab handoff role (<name>=none removes)`,
     `${prefix} backlog <chat_id-or-slug>                            — show backlog source, progress, and autopilot state`,
     `${prefix} collab <chat_id-or-slug>                             — show collab roles and open handoffs`,
+    `${prefix} graph  [--stats] [--mermaid]                          — render the org graph (projects, peers, roles, schedules)`,
     `${prefix} rename <chat_id-or-slug> --slug NEW                    — rename slug + dir`,
     `${prefix} remote <chat_id-or-slug> [--set URL] [--creds NAME]    — show/set git remote`,
     `${prefix} pull   <chat_id-or-slug>                               — git pull --ff-only`,
@@ -2404,4 +2413,54 @@ function handleCollab(rest: string[], ctx: MasterContext): string {
   }
 
   return lines.join('\n')
+}
+
+/**
+ * `!project graph [--stats] [--mermaid]` — read-only org-graph view.
+ * Assembles nodes/edges from channels.json plus (fail-soft) schedules,
+ * the handoff registry, transcript mtimes, and pool liveness, then
+ * renders via src/org-graph.ts. Performs zero writes.
+ */
+async function handleGraph(rest: string[], ctx: MasterContext): Promise<string> {
+  const { flags } = parseFlags(rest)
+  const stats = flags['stats'] === true
+  const mermaid = flags['mermaid'] === true
+
+  const config = loadConfig()
+  const inputs: GraphInputs = { nowMs: Date.now() }
+
+  // Every input is fail-soft: a broken source degrades its overlay, never
+  // the whole verb (NFR3).
+  try {
+    inputs.handoffs = (ctx.loadHandoffRegistry ?? loadRegistry)()
+  } catch { /* no handoff overlay */ }
+  try {
+    inputs.schedules = (ctx.loadSchedulesFn ?? loadSchedules)().schedules
+  } catch { /* no schedule self-loops */ }
+
+  if (stats) {
+    const mtimeFn = ctx.transcriptMtimeFn ?? newestTranscriptMtimeMs
+    const activity: Record<string, number | null> = {}
+    for (const [chatId, project] of Object.entries(config.projects)) {
+      try {
+        activity[chatId] = mtimeFn(projectDir(project.slug))
+      } catch {
+        activity[chatId] = null
+      }
+    }
+    inputs.activityMtimeMs = activity
+    if (ctx.mutator?.poolStats) {
+      try {
+        const entries = await ctx.mutator.poolStats()
+        inputs.poolAlive = Object.fromEntries(entries.map(e => [e.chatId, e.alive]))
+      } catch { /* pool state unknown → warm null */ }
+    }
+  }
+
+  const graph = buildOrgGraph(config, inputs)
+  if (mermaid) {
+    const fence = renderGraphMermaid(graph, { stats })
+    return graph.warnings.length > 0 ? `${fence}\n${graph.warnings.join('\n')}` : fence
+  }
+  return renderGraphText(graph, { stats })
 }
