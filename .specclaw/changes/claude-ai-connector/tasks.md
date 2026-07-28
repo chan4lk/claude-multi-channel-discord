@@ -2,7 +2,7 @@
 
 **Change:** claude-ai-connector
 **Created:** 2026-07-28
-**Total Tasks:** 5
+**Total Tasks:** 4
 
 ## Summary
 
@@ -45,12 +45,9 @@ Two implementation tasks (schema + token source in the MCP server, then the oper
   - Depends: T2
   - Notes: New "claude.ai connector" section: `MCD_MCP_PORT` env, full Caddyfile snippet (secret path prefix match → `uri strip_prefix` → `reverse_proxy 127.0.0.1:{$MCD_MCP_PORT}` with `header_up x-mcd-token <token>`), claude.ai custom-connector registration steps, security model (two secrets, master never exposed, disabled respected), rotation procedure.
 
-- [ ] `T5` — Live connector registration check (AC11)
-  - Files: none (operator-assisted verification)
-  - Estimate: small
-  - Kind: test
-  - Depends: T4
-  - Notes: After deploy + Caddy config: register the connector in claude.ai against the agent-nexus chat endpoint, run one `fetch_messages`/`reply` round-trip. Specifically watch whether claude.ai tolerates 405 on GET (stateless transport). If registration hard-fails on GET, file follow-up change — do not scope-creep into this one.
+## Post-deploy verification (not a build task)
+
+Live connector registration check (AC11) — requires merged + deployed code, an applied Caddy route, and claude.ai UI access, so it cannot run inside the build: register the connector in claude.ai against the agent-nexus chat endpoint and run one `fetch_messages`/`reply` round-trip. Specifically watch whether claude.ai tolerates 405 on GET (stateless transport). If registration hard-fails on GET, file a follow-up change — do not scope-creep into this one. Until performed, AC11 is unverified.
 
 ---
 

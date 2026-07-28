@@ -8,16 +8,16 @@
 
 | Phase | Status | Notes |
 |-------|--------|-------|
-| Proposal | 🟡 Draft | Awaiting operator approval |
-| Spec | ⏳ Pending | |
-| Design | ⏳ Pending | |
-| Tasks | ⏳ Pending | |
-| Build | ⏳ Pending | |
-| Verify | ⏳ Pending | |
+| Proposal | ✅ Approved | Operator approved 2026-07-28 |
+| Spec | ✅ Done | 10 FRs, 11 ACs |
+| Design | ✅ Done | tokenSource() + Caddy capability-URL |
+| Tasks | ✅ Done | 4 build tasks + post-deploy AC11 step |
+| Build | ✅ Done | T1–T4 complete, all suites green |
+| Verify | ✅ Passed | AC1–AC10 met; AC11 deferred post-deploy |
 
 ## Task Progress
 
-**Completed:** 0 / 0
+**Completed:** 4 / 4
 **Failed:** 0
 
 ## Agent Runs
