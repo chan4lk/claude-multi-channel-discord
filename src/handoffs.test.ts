@@ -5,7 +5,7 @@
  * escalate-once / expire lifecycle, sweep idempotence across runs, prune,
  * corrupt file → empty, write-then-reload survival. (AC5 core, AC8)
  */
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -21,10 +21,21 @@ freshChannelsDir('boot')
 
 // Import AFTER setting env so handoffsPath() picks up the temp dir
 import {
+  advanceChainStep,
+  completeChain,
   completeHandoff,
+  createChain,
   createHandoff,
+  expireChain,
+  findChain,
+  haltChain,
   loadRegistry,
+  loadRegistryFile,
   matchPendingIds,
+  nextChainAction,
+  saveRegistryFile,
+  validateChainSteps,
+  type ChainRecord,
   saveRegistry,
   sweepHandoffs,
   type HandoffRecord,
@@ -237,7 +248,8 @@ const T0  = Date.UTC(2026, 6, 26, 12, 0, 0)  // fixed base clock
   )
   const reloaded = loadRegistry()
   check('write after corruption rewrites clean', reloaded.length === 1 && reloaded[0].id === rec.id)
-  check('file on disk is valid JSON array', Array.isArray(JSON.parse(readFileSync(filePath, 'utf8'))))
+  const onDisk = JSON.parse(readFileSync(filePath, 'utf8'))
+  check('file on disk is v2 envelope', onDisk.version === 2 && Array.isArray(onDisk.handoffs) && Array.isArray(onDisk.chains))
 }
 
 // ---------------------------------------------------------------------------
@@ -260,6 +272,152 @@ const T0  = Date.UTC(2026, 6, 26, 12, 0, 0)  // fixed base clock
     r.state === 'pending' && r.createdAt === rec.createdAt &&
     r.naggedAt === new Date(T0 + 30 * MIN).toISOString() &&
     r.to.kind === 'botPeer' && r.to.botId === 'bot-9' && r.to.chatId === 'chat-z')
+}
+
+// ---------------------------------------------------------------------------
+// chains: legacy migration + v2 round-trip (AC10)
+// ---------------------------------------------------------------------------
+{
+  const dir = freshChannelsDir('chain-migrate')
+  const filePath = join(dir, 'shared', 'handoffs.json')
+  mkdirSync(dirname(filePath), { recursive: true })
+  const legacy: HandoffRecord[] = [{
+    id: 'h-legacy-1', from: 'proj-a', to: { kind: 'project', slug: 'proj-b', chatId: 'chat-b' },
+    task: 'old hop', state: 'pending', createdAt: new Date(T0).toISOString(),
+  }]
+  writeFileSync(filePath, JSON.stringify(legacy), 'utf8')
+
+  const file = loadRegistryFile()
+  check('migrate: legacy array → handoffs', file.handoffs.length === 1 && file.handoffs[0].id === 'h-legacy-1')
+  check('migrate: legacy array → empty chains', file.chains.length === 0)
+  check('migrate: legacy loadRegistry still works', loadRegistry().length === 1)
+
+  saveRegistryFile(file, T0)
+  const onDisk = JSON.parse(readFileSync(filePath, 'utf8'))
+  check('migrate: first save writes v2', onDisk.version === 2 && onDisk.handoffs.length === 1)
+  const roundTrip = loadRegistryFile()
+  check('migrate: v2 round-trips', roundTrip.handoffs[0].id === 'h-legacy-1' && roundTrip.chains.length === 0)
+
+  // saveRegistry (legacy API) must preserve chains already on disk.
+  const { chain } = createChain(
+    { from: 'proj-a', sourceChatId: 'chat-a', steps: [{ target: 'proj-b', task: 'x' }], firstTo: { kind: 'project', slug: 'proj-b', chatId: 'chat-b' } },
+    T0,
+  )
+  saveRegistry(loadRegistry(), T0)
+  check('migrate: legacy saveRegistry preserves chains', loadRegistryFile().chains.some(c => c.id === chain.id))
+}
+
+// ---------------------------------------------------------------------------
+// chains: validateChainSteps (AC6 shape half)
+// ---------------------------------------------------------------------------
+{
+  check('validate: empty steps refused', validateChainSteps([], 6) !== null)
+  check('validate: over budget refused', validateChainSteps(
+    [{ target: 'a', task: 'x' }, { target: 'b', task: 'y' }, { target: 'c', task: 'z' }], 2) !== null)
+  check('validate: both role and target refused', validateChainSteps([{ role: 'r', target: 't', task: 'x' }], 6) !== null)
+  check('validate: neither role nor target refused', validateChainSteps([{ task: 'x' }], 6) !== null)
+  check('validate: missing task refused', validateChainSteps([{ target: 'a', task: '' }], 6) !== null)
+  check('validate: bad gate refused', validateChainSteps([{ target: 'a', task: 'x', gate: 'nope' as any }], 6) !== null)
+  check('validate: 1-step chain ok', validateChainSteps([{ target: 'a', task: 'x' }], 6) === null)
+  check('validate: gated step ok', validateChainSteps([{ role: 'r', task: 'x', gate: 'approve' }], 6) === null)
+}
+
+// ---------------------------------------------------------------------------
+// chains: nextChainAction — advance / complete / gate (AC2, AC4, AC5)
+// ---------------------------------------------------------------------------
+{
+  const chain: ChainRecord = {
+    id: 'c-t', from: 'proj-a', sourceChatId: 'chat-a',
+    steps: [
+      { target: 'proj-b', task: 's1' },
+      { role: 'reviewer', task: 's2', gate: 'approve' },
+      { target: 'proj-c', task: 's3' },
+    ],
+    cursor: 0, stepHandoffIds: ['h-1'], state: 'active', createdAt: new Date(T0).toISOString(),
+  }
+  const a0 = nextChainAction(chain, 0, 'done it')
+  check('action: mid-step advances', a0.kind === 'advance' && a0.kind === 'advance' && a0.nextIndex === 1)
+  const a1bad = nextChainAction(chain, 1, 'rejected: tests fail')
+  check('action: gate fails on non-approve outcome', a1bad.kind === 'halt-gate')
+  const a1empty = nextChainAction(chain, 1, undefined)
+  check('action: gate fails on empty outcome', a1empty.kind === 'halt-gate')
+  const a1ok = nextChainAction(chain, 1, '  Approved — LGTM')
+  check('action: gate passes on approve prefix (trim/case)', a1ok.kind === 'advance' && a1ok.nextIndex === 2)
+  const aLast = nextChainAction(chain, 2, 'shipped')
+  check('action: last step completes', aLast.kind === 'complete')
+}
+
+// ---------------------------------------------------------------------------
+// chains: createChain atomicity + advance latch + close idempotence (AC1, NFR4)
+// ---------------------------------------------------------------------------
+{
+  freshChannelsDir('chain-life')
+  const steps = [
+    { target: 'proj-b', task: 'build it' },
+    { target: 'proj-c', task: 'review it' },
+  ]
+  const { chain, record } = createChain(
+    { from: 'proj-a', sourceChatId: 'chat-a', steps, firstTo: { kind: 'project', slug: 'proj-b', chatId: 'chat-b' } },
+    T0,
+  )
+  check('create: chain active, cursor 0', chain.state === 'active' && chain.cursor === 0)
+  check('create: step-1 handoff tagged', record.chainId === chain.id && record.chainStep === 0 && record.state === 'pending')
+  check('create: one atomic write persists both',
+    loadRegistryFile().chains.length === 1 && loadRegistry().some(r => r.id === record.id))
+  check('create: step-1 id tracked', findChain(chain.id)?.stepHandoffIds[0] === record.id)
+
+  // advance
+  const adv = advanceChainStep(chain.id, 1, { kind: 'project', slug: 'proj-c', chatId: 'chat-c' }, T0 + MIN)
+  check('advance: fires step 2', adv !== null && adv.chain.cursor === 1 && adv.record.chainStep === 1)
+  check('advance: step task copied', adv?.record.task === 'review it')
+  check('advance: double-advance latch (same index) → null',
+    advanceChainStep(chain.id, 1, { kind: 'project', slug: 'proj-c', chatId: 'chat-c' }, T0 + MIN) === null)
+  check('advance: out-of-order index → null',
+    advanceChainStep(chain.id, 3, { kind: 'project', slug: 'proj-c', chatId: 'chat-c' }, T0 + MIN) === null)
+
+  // close
+  const done = completeChain(chain.id, T0 + 2 * MIN)
+  check('complete: chain done', done?.state === 'done' && done.closedAt !== undefined)
+  check('complete: idempotent no-op', completeChain(chain.id, T0 + 3 * MIN)?.state === 'done')
+  check('advance on closed chain → null',
+    advanceChainStep(chain.id, 2, { kind: 'project', slug: 'proj-d', chatId: 'chat-d' }, T0 + 3 * MIN) === null)
+  check('halt on closed chain keeps state', haltChain(chain.id, 'late', T0 + 3 * MIN)?.state === 'done')
+
+  // halt + expire reasons on fresh chains
+  const h = createChain(
+    { from: 'proj-a', sourceChatId: 'chat-a', steps: [{ target: 'proj-b', task: 'x' }], firstTo: { kind: 'project', slug: 'proj-b', chatId: 'chat-b' } },
+    T0,
+  )
+  const halted = haltChain(h.chain.id, 'gate not approved', T0 + MIN)
+  check('halt: state + reason', halted?.state === 'halted' && halted.closeReason === 'gate not approved')
+  const e = createChain(
+    { from: 'proj-a', sourceChatId: 'chat-a', steps: [{ target: 'proj-b', task: 'x' }], firstTo: { kind: 'project', slug: 'proj-b', chatId: 'chat-b' } },
+    T0 + 1,
+  )
+  const expired = expireChain(e.chain.id, 'step 1 unanswered', T0 + MIN)
+  check('expire: state + reason', expired?.state === 'expired' && expired.closeReason === 'step 1 unanswered')
+  check('unknown chain id → null', completeChain('c-nope', T0) === null)
+}
+
+// ---------------------------------------------------------------------------
+// chains: prune policy mirrors closed handoffs (30d)
+// ---------------------------------------------------------------------------
+{
+  freshChannelsDir('chain-prune')
+  const old = createChain(
+    { from: 'proj-a', sourceChatId: 'chat-a', steps: [{ target: 'proj-b', task: 'old' }], firstTo: { kind: 'project', slug: 'proj-b', chatId: 'chat-b' } },
+    T0,
+  )
+  completeChain(old.chain.id, T0)
+  const live = createChain(
+    { from: 'proj-a', sourceChatId: 'chat-a', steps: [{ target: 'proj-b', task: 'live' }], firstTo: { kind: 'project', slug: 'proj-b', chatId: 'chat-b' } },
+    T0,
+  )
+  // Save 31 days later: closed chain pruned, active chain kept.
+  saveRegistryFile(loadRegistryFile(), T0 + 31 * 24 * 60 * MIN)
+  const after = loadRegistryFile()
+  check('prune: closed chain >30d dropped', !after.chains.some(c => c.id === old.chain.id))
+  check('prune: active chain never pruned', after.chains.some(c => c.id === live.chain.id))
 }
 
 // ---------------------------------------------------------------------------
