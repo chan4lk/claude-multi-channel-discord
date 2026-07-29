@@ -1316,6 +1316,145 @@ await serverPeer.stop()
   await serverExt.stop()
 }
 
+// ─── ops-mcp-surface: read-only /mcp/ops operator endpoint ───
+
+{
+  const OPS_MASTER = '661111111111111111'
+  const OPS_PROJECT = '662222222222222222'
+  const OPS_TOKEN = 'a'.repeat(64)
+
+  const opsConfig = {
+    version: 1 as const,
+    master: { chatId: OPS_MASTER, commandPrefix: '!project' },
+    defaults: {
+      model: 'sonnet',
+      idleEvictMinutes: 15,
+      maxConcurrent: 8,
+      git: { userName: 'bot', userEmail: 'bot@local', branchPrefix: 'claude/' },
+      claude: { permissionMode: 'auto' as const },
+      providers: {},
+      progressMode: 'off' as const,
+      handoff: false,
+      contextWarningThresholdPct: 80,
+    },
+    opsToken: OPS_TOKEN,
+    projects: {
+      [OPS_PROJECT]: { slug: 'ops-project' },
+    },
+  } as unknown as import('./channels-config.ts').ChannelsConfig
+
+  const opsCommands: string[] = []
+  const opsPool = {
+    deliver: async () => {},
+    size: () => 2,
+  } as unknown as ProjectPool
+  const serverOps = new MasterMcpServer({
+    onReply: () => {},
+    getMasterChatId: () => OPS_MASTER,
+    getPool: () => opsPool,
+    getConfig: () => opsConfig,
+    executeMasterCommand: async (cmd) => {
+      opsCommands.push(cmd)
+      return `ran: ${cmd}`
+    },
+    log: () => {},
+  })
+  const { host: oh, port: op } = await serverOps.start()
+  const opsUrl = `http://${oh}:${op}/mcp/ops`
+
+  // AC1: missing / wrong token → 401
+  const opsNoTok = await fetch(opsUrl, { method: 'POST', body: '{}' })
+  check('ops AC1: no token → 401', opsNoTok.status === 401)
+  const opsBadTok = await fetch(opsUrl, { method: 'POST', body: '{}', headers: { 'x-mcd-token': 'b'.repeat(64) } })
+  check('ops AC1: wrong token → 401', opsBadTok.status === 401)
+
+  // GET → 405 (authed)
+  const opsGet = await fetch(opsUrl, { headers: { 'x-mcd-token': OPS_TOKEN } })
+  check('ops edge: GET → 405', opsGet.status === 405)
+
+  // AC2: correct token → exactly the seven ops tools, none of the session/master tools
+  const opsList = await rpc(opsUrl, OPS_TOKEN, 'tools/list', {})
+  const opsTools = ((opsList.result?.tools ?? []) as Array<{ name: string }>).map((t) => t.name).sort()
+  const expectedOpsTools = ['backlog_state', 'collab_state', 'list_projects', 'project_status', 'schedules', 'server_info', 'usage']
+  check('ops AC2: tools/list is exactly the 7 ops tools', JSON.stringify(opsTools) === JSON.stringify(expectedOpsTools), JSON.stringify(opsTools))
+
+  // AC3/AC4: command composition
+  const opsCall = async (name: string, args: Record<string, unknown> = {}) =>
+    rpc(opsUrl, OPS_TOKEN, 'tools/call', { name, arguments: args })
+
+  await opsCall('list_projects')
+  check('ops AC3: list_projects composes `list`', opsCommands.at(-1) === 'list')
+  await opsCall('project_status', { slug: 'ops-project' })
+  check('ops AC4: project_status composes `show <slug>`', opsCommands.at(-1) === 'show ops-project')
+  await opsCall('backlog_state', { slug: 'ops-project' })
+  check('ops AC4: backlog_state composes `backlog <slug>`', opsCommands.at(-1) === 'backlog ops-project')
+  await opsCall('collab_state', { slug: 'ops-project' })
+  check('ops AC4: collab_state composes `collab <slug>`', opsCommands.at(-1) === 'collab ops-project')
+  await opsCall('usage')
+  check('ops AC4: usage composes `usage`', opsCommands.at(-1) === 'usage')
+  await opsCall('schedules')
+  check('ops AC4: schedules (no slug) composes `schedule list`', opsCommands.at(-1) === 'schedule list')
+  await opsCall('schedules', { slug: 'ops-project' })
+  check('ops AC4: schedules (slug) composes `schedule list <slug>`', opsCommands.at(-1) === 'schedule list ops-project')
+
+  // Tool result carries the executeMasterCommand rendering
+  const listRender = await opsCall('list_projects')
+  check('ops AC3: result text is the command rendering', JSON.stringify(listRender.result?.content ?? '').includes('ran: list'))
+
+  // AC5: injection-shaped slug → error, stub NOT called
+  const before = opsCommands.length
+  const inj = await opsCall('project_status', { slug: 'foo --yes' })
+  check('ops AC5: injection slug → tool error', inj.result?.isError === true, JSON.stringify(inj).slice(0, 200))
+  check('ops AC5: stub not called for bad slug', opsCommands.length === before)
+  const inj2 = await opsCall('backlog_state', { slug: 'a b' })
+  check('ops AC5: whitespace slug → tool error', inj2.result?.isError === true)
+  check('ops AC5: stub still not called', opsCommands.length === before)
+
+  // AC6: mutation/session tools structurally absent from the call handler
+  const denied = await opsCall('run_master_command', { command: 'rm x --yes' })
+  check('ops AC6: run_master_command unknown on ops endpoint', denied.result?.isError === true && JSON.stringify(denied).includes('unknown tool'))
+  const deniedReply = await opsCall('reply', { text: 'hi' })
+  check('ops AC6: reply unknown on ops endpoint', deniedReply.result?.isError === true && JSON.stringify(deniedReply).includes('unknown tool'))
+
+  // AC6: cross-route isolation — opsToken on a chat route → 401
+  const opsOnChat = await fetch(`http://${oh}:${op}/mcp/${OPS_PROJECT}`, { method: 'POST', body: '{}', headers: { 'x-mcd-token': OPS_TOKEN } })
+  check('ops AC6: opsToken rejected on chat route', opsOnChat.status === 401)
+  // ...and a chat's local token on /mcp/ops → 401
+  const chatOnOps = await fetch(opsUrl, { method: 'POST', body: '{}', headers: { 'x-mcd-token': serverOps.tokenFor(OPS_PROJECT) } })
+  check('ops AC6: chat local token rejected on /mcp/ops', chatOnOps.status === 401)
+
+  // AC8: server_info has counts, no token material
+  const info = await opsCall('server_info')
+  const infoText = JSON.stringify(info.result?.content ?? '')
+  check('ops AC8: server_info reports counts', infoText.includes('\\"projects\\":1') && infoText.includes('\\"warmSessions\\":2'), infoText.slice(0, 200))
+  check('ops AC8: server_info leaks no token', !infoText.includes(OPS_TOKEN))
+
+  await serverOps.stop()
+
+  // AC1: no opsToken configured → endpoint off (401 even with a token presented)
+  const offConfig = { ...opsConfig, opsToken: undefined } as unknown as import('./channels-config.ts').ChannelsConfig
+  const serverOff = new MasterMcpServer({
+    onReply: () => {},
+    getConfig: () => offConfig,
+    log: () => {},
+  })
+  const { host: fh, port: fp } = await serverOff.start()
+  const offRes = await fetch(`http://${fh}:${fp}/mcp/ops`, { method: 'POST', body: '{}', headers: { 'x-mcd-token': OPS_TOKEN } })
+  check('ops AC1: unconfigured opsToken → 401', offRes.status === 401)
+  await serverOff.stop()
+
+  // executeMasterCommand absent → authed tool call returns "not configured"
+  const serverNoExec = new MasterMcpServer({
+    onReply: () => {},
+    getConfig: () => opsConfig,
+    log: () => {},
+  })
+  const { host: nh, port: np } = await serverNoExec.start()
+  const noExec = await rpc(`http://${nh}:${np}/mcp/ops`, OPS_TOKEN, 'tools/call', { name: 'list_projects', arguments: {} })
+  check('ops edge: executeMasterCommand absent → not-configured error', noExec.result?.isError === true && JSON.stringify(noExec).includes('not configured'))
+  await serverNoExec.stop()
+}
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)
   process.exit(1)
