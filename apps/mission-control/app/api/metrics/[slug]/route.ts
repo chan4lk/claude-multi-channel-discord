@@ -1,7 +1,8 @@
 import * as fs from 'fs'
 import * as path from 'path'
-import * as os from 'os'
 import { NextRequest } from 'next/server'
+import { requireSession } from '@/src/security'
+import { monthlyTokens, slugToolCounts, slugTurns } from '@/src/fact-index'
 
 export const dynamic = 'force-dynamic'
 
@@ -47,114 +48,67 @@ function pricingForModel(model: string): [number, number] {
   return MODEL_PRICING.sonnet
 }
 
-function encodeProjectCwd(realPath: string): string {
-  return realPath.replace(/[^a-zA-Z0-9]/g, '-')
-}
-
 function resolveProjectDir(slug: string, mcdDir: string): string | null {
   const p = path.join(mcdDir, 'projects', slug)
   if (!fs.existsSync(p)) return null
   try { return fs.realpathSync(p) } catch { return p }
 }
 
-function findAllJsonl(slug: string, mcdDir: string): string[] {
-  const projectPath = path.join(mcdDir, 'projects', slug)
-  let realPath = projectPath
-  try { realPath = fs.realpathSync(projectPath) } catch { return [] }
-  const encoded = encodeProjectCwd(realPath)
-  const transcriptDir = path.join(os.homedir(), '.claude', 'projects', encoded)
-  try {
-    return fs.readdirSync(transcriptDir)
-      .filter((f) => f.endsWith('.jsonl'))
-      .map((f) => path.join(transcriptDir, f))
-  } catch { return [] }
-}
-
 function isoToDate(ts: string): string {
   return ts.slice(0, 10)
 }
 
-function parseMetrics(jsonlFiles: string[], model: string): Omit<SlugMetrics, 'slug' | 'stale' | 'checkedAt' | 'monthlyTokenBudget'> {
+function computeMetrics(slug: string, model: string): Omit<SlugMetrics, 'slug' | 'stale' | 'checkedAt' | 'monthlyTokenBudget'> {
   const [inputRate, outputRate] = pricingForModel(model)
-
-  let totalInput = 0
-  let totalOutput = 0
-  let monthlyTokens = 0
-  const latencies: number[] = []
-  const dayMap: Map<string, number> = new Map()
-  const toolCounts: Map<string, number> = new Map()
-  const callsPerTurn: number[] = []
 
   const now = Date.now()
   const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000
   const currentMonth = new Date().toISOString().slice(0, 7)
 
+  const dayMap: Map<string, number> = new Map()
   for (let d = 6; d >= 0; d--) {
     const date = new Date(now - d * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
     dayMap.set(date, 0)
   }
 
-  let prevAssistantTs: number | null = null
+  // Turn series (ts-ordered) and tool counts come from the fact index instead
+  // of a full transcript scan.
+  const turns = slugTurns({ slug })
+
+  let totalInput = 0
+  let totalOutput = 0
+  const latencies: number[] = []
+  let prevTurnTs: number | null = null
   let firstTs: number | null = null
   let lastTs: number | null = null
-  let totalTurns = 0
-  let totalToolCalls = 0
 
-  for (const file of jsonlFiles) {
-    let raw = ''
-    try { raw = fs.readFileSync(file, 'utf-8') } catch { continue }
-    const lines = raw.trim().split('\n').filter(Boolean)
+  for (const turn of turns) {
+    totalInput += turn.input_tokens
+    totalOutput += turn.output_tokens
 
-    for (const line of lines) {
-      let record: Record<string, unknown>
-      try { record = JSON.parse(line) } catch { continue }
+    if (firstTs === null || turn.ts_ms < firstTs) firstTs = turn.ts_ms
+    if (lastTs === null || turn.ts_ms > lastTs) lastTs = turn.ts_ms
 
-      const ts = typeof record.timestamp === 'string'
-        ? new Date(record.timestamp).getTime()
-        : null
-
-      if (ts) {
-        if (firstTs === null || ts < firstTs) firstTs = ts
-        if (lastTs === null || ts > lastTs) lastTs = ts
-      }
-
-      if (record.type === 'assistant') {
-        totalTurns++
-        const msg = (record as { message?: { usage?: { input_tokens?: number; output_tokens?: number }; content?: unknown[] } }).message
-        const usage = msg?.usage
-        const inTok = usage?.input_tokens ?? 0
-        const outTok = usage?.output_tokens ?? 0
-        totalInput += inTok
-        totalOutput += outTok
-
-        const recordMonth = ts ? new Date(ts).toISOString().slice(0, 7) : null
-        if (recordMonth === currentMonth) monthlyTokens += inTok + outTok
-
-        if (ts && ts >= sevenDaysAgo) {
-          const date = isoToDate(new Date(ts).toISOString())
-          dayMap.set(date, (dayMap.get(date) ?? 0) + inTok + outTok)
-        }
-
-        if (ts && prevAssistantTs !== null) {
-          const latency = ts - prevAssistantTs
-          if (latency > 0 && latency < 30 * 60 * 1000) latencies.push(latency)
-        }
-        if (ts) prevAssistantTs = ts
-
-        let turnToolCalls = 0
-        const content = Array.isArray(msg?.content) ? msg.content : []
-        for (const block of content) {
-          if (block && typeof block === 'object' && (block as Record<string, unknown>).type === 'tool_use') {
-            const name = String((block as Record<string, unknown>).name ?? 'unknown')
-            toolCounts.set(name, (toolCounts.get(name) ?? 0) + 1)
-            turnToolCalls++
-            totalToolCalls++
-          }
-        }
-        callsPerTurn.push(turnToolCalls)
-      }
+    if (turn.ts_ms >= sevenDaysAgo) {
+      const date = isoToDate(new Date(turn.ts_ms).toISOString())
+      dayMap.set(date, (dayMap.get(date) ?? 0) + turn.input_tokens + turn.output_tokens)
     }
+
+    if (prevTurnTs !== null) {
+      const latency = turn.ts_ms - prevTurnTs
+      if (latency > 0 && latency < 30 * 60 * 1000) latencies.push(latency)
+    }
+    prevTurnTs = turn.ts_ms
   }
+
+  const totalTurns = turns.length
+
+  const toolCounts = slugToolCounts({ slug })
+  const totalToolCalls = toolCounts.reduce((s, t) => s + t.count, 0)
+  const topTools = [...toolCounts]
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10)
+    .map(({ tool_name, count }) => ({ name: tool_name, count }))
 
   const cost = (totalInput / 1_000_000) * inputRate + (totalOutput / 1_000_000) * outputRate
 
@@ -167,13 +121,8 @@ function parseMetrics(jsonlFiles: string[], model: string): Omit<SlugMetrics, 's
 
   const dayBuckets = [...dayMap.entries()].map(([date, tokens]) => ({ date, tokens }))
 
-  const topTools = [...toolCounts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 10)
-    .map(([name, count]) => ({ name, count }))
-
-  const avgCallsPerTurn = callsPerTurn.length > 0
-    ? Math.round((callsPerTurn.reduce((s, v) => s + v, 0) / callsPerTurn.length) * 10) / 10
+  const avgCallsPerTurn = totalTurns > 0
+    ? Math.round((totalToolCalls / totalTurns) * 10) / 10
     : 0
   const avgOutputTokensPerTurn = totalTurns > 0 ? Math.round(totalOutput / totalTurns) : 0
   const rawEfficiency = totalToolCalls > 0 ? totalOutput / totalToolCalls : 0
@@ -188,7 +137,7 @@ function parseMetrics(jsonlFiles: string[], model: string): Omit<SlugMetrics, 's
     avgLatencyMs: Math.round(avgLatency),
     p95LatencyMs: Math.round(p95Latency),
     turnsPerDay: Math.round(turnsPerDay * 10) / 10,
-    monthlyTokens,
+    monthlyTokens: monthlyTokens({ slug, yearMonth: currentMonth }).totalTokens,
     dayBuckets,
     toolStats,
   }
@@ -198,6 +147,9 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<Response> {
+  const unauth = await requireSession()
+  if (unauth) return unauth
+
   const { slug } = await params
   const mcdDir = process.env.MCD_CHANNELS_DIR
   if (!mcdDir) {
@@ -231,8 +183,7 @@ export async function GET(
     } satisfies SlugMetrics)
   }
 
-  const files = findAllJsonl(slug, mcdDir)
-  const metrics = parseMetrics(files, model)
+  const metrics = computeMetrics(slug, model)
 
   return Response.json({
     slug,

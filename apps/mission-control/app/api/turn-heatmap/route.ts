@@ -1,6 +1,5 @@
-import * as fs from 'fs'
-import * as path from 'path'
-import * as os from 'os'
+import { requireSession } from '@/src/security'
+import { turnHourDowBuckets } from '@/src/fact-index'
 
 export const dynamic = 'force-dynamic'
 
@@ -24,49 +23,12 @@ export interface TurnHeatmapResponse {
   generatedAt: string
 }
 
-interface JsonlLine {
-  message?: { role?: string }
-  timestamp?: string
-}
-
 function emptyGrid(): HeatGrid {
   return Array.from({ length: 7 }, () => Array<number>(24).fill(0))
 }
 
 function jsDayToMon(jsDay: number): number {
   return jsDay === 0 ? 6 : jsDay - 1
-}
-
-function findJsonlFiles(slug: string, mcdDir: string): string[] {
-  const projectPath = path.join(mcdDir, 'projects', slug)
-  let realPath = projectPath
-  try { realPath = fs.realpathSync(projectPath) } catch { return [] }
-  const encoded = realPath.replace(/[^a-zA-Z0-9]/g, '-')
-  const transcriptDir = path.join(os.homedir(), '.claude', 'projects', encoded)
-  try {
-    return fs.readdirSync(transcriptDir)
-      .filter((f) => f.endsWith('.jsonl'))
-      .map((f) => path.join(transcriptDir, f))
-  } catch { return [] }
-}
-
-function parseJsonlForTurns(jsonlPath: string, cutoffMs: number, grid: HeatGrid): number {
-  let lines: string[]
-  try { lines = fs.readFileSync(jsonlPath, 'utf-8').split('\n').filter(Boolean) } catch { return 0 }
-  let count = 0
-  for (const raw of lines) {
-    let line: JsonlLine
-    try { line = JSON.parse(raw) } catch { continue }
-    if (line.message?.role !== 'assistant' || !line.timestamp) continue
-    const tsMs = Date.parse(line.timestamp)
-    if (isNaN(tsMs) || tsMs < cutoffMs) continue
-    const d = new Date(tsMs)
-    const day = jsDayToMon(d.getUTCDay())
-    const hour = d.getUTCHours()
-    grid[day]![hour]!++
-    count++
-  }
-  return count
 }
 
 function addGrids(a: HeatGrid, b: HeatGrid): HeatGrid {
@@ -85,38 +47,31 @@ function findPeak(grid: HeatGrid): { day: number; hour: number } {
   return { day, hour }
 }
 
-function getProjectSlugs(mcdDir: string): string[] {
-  const projectsDir = path.join(mcdDir, 'projects')
-  try {
-    return fs.readdirSync(projectsDir).filter((s) => {
-      if (s.startsWith('.')) return false
-      try {
-        const stat = fs.statSync(path.join(projectsDir, s))
-        return stat.isDirectory() || stat.isSymbolicLink()
-      } catch { return false }
-    })
-  } catch { return [] }
-}
-
 export async function GET(request: Request): Promise<Response> {
+  const unauth = await requireSession()
+  if (unauth) return unauth
+
   const url = new URL(request.url)
   const windowDays = Math.max(1, Math.min(90, parseInt(url.searchParams.get('days') ?? '30', 10)))
-  const mcdDir =
-    process.env.MCD_CHANNELS_DIR ??
-    path.join(os.homedir(), '.claude', 'channels', 'discord-multi')
-
-  const slugs = getProjectSlugs(mcdDir)
   const cutoffMs = Date.now() - windowDays * 24 * 3_600_000
+
+  // Group the fact-index (slug, UTC dow, hour) buckets into per-project grids.
+  const grids = new Map<string, { grid: HeatGrid; total: number }>()
+  for (const b of turnHourDowBuckets({ sinceMs: cutoffMs })) {
+    let entry = grids.get(b.slug)
+    if (!entry) {
+      entry = { grid: emptyGrid(), total: 0 }
+      grids.set(b.slug, entry)
+    }
+    const day = jsDayToMon(b.dow)
+    entry.grid[day]![b.hour]! += b.count
+    entry.total += b.count
+  }
 
   const projects: TurnHeatmapProject[] = []
   let fleetGrid = emptyGrid()
 
-  for (const slug of slugs) {
-    const grid = emptyGrid()
-    let total = 0
-    for (const f of findJsonlFiles(slug, mcdDir)) {
-      total += parseJsonlForTurns(f, cutoffMs, grid)
-    }
+  for (const [slug, { grid, total }] of grids) {
     if (total === 0) continue
     const { day: peakDay, hour: peakHour } = findPeak(grid)
     projects.push({ slug, grid, total, peakDay, peakHour })
