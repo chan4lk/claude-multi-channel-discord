@@ -253,6 +253,20 @@ export class MasterMcpServer {
     return null
   }
 
+  /**
+   * Auth for the read-only /mcp/ops endpoint: the instance-level `opsToken`
+   * from channels.json, and nothing else. Per-boot chat tokens and project
+   * externalTokens are never valid here; no token configured = endpoint off.
+   */
+  private opsTokenValid(presented: string | string[] | undefined): boolean {
+    if (typeof presented !== 'string' || presented.length === 0) return false
+    const expected = this.getConfig?.()?.opsToken
+    if (!expected) return false
+    const a = Buffer.from(presented)
+    const b = Buffer.from(expected)
+    return a.length === b.length && timingSafeEqual(a, b)
+  }
+
   // Stateless transport: no persistent server-side state per chat. The
   // pool used to call isChatReady / waitForChatReady / closeChat /
   // notifyChat against this server; with stateless HTTP MCP all of those
@@ -273,6 +287,27 @@ export class MasterMcpServer {
         res.writeHead(503, { 'Content-Type': 'text/plain' })
         res.end('Teams adapter not configured')
       }
+      return
+    }
+
+    // Read-only operator endpoint. Checked before ChatIdRoute — "ops" would
+    // otherwise parse as a chat id. Auth is the instance-level opsToken only;
+    // per-chat tokens are never valid here (and opsToken is never valid on
+    // chat routes — opsTokenValid is only consulted for this branch).
+    if (url === '/mcp/ops' || url === '/mcp/ops/') {
+      if (!this.opsTokenValid(req.headers['x-mcd-token'])) {
+        this.log('rejected /mcp/ops: missing or bad x-mcd-token')
+        res.writeHead(401, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32000, message: 'unauthorized' } }))
+        return
+      }
+      if (req.method !== 'POST') {
+        res.writeHead(405, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32000, message: 'method not allowed' } }))
+        return
+      }
+      this.log('ops request')
+      await this.serveStateless(req, res, this.buildOpsServer(), 'ops')
       return
     }
 
@@ -315,12 +350,14 @@ export class MasterMcpServer {
       return
     }
 
-    const body = await readBody(req)
+    await this.serveStateless(req, res, this.buildServer(chatId), chatId)
+  }
 
-    // Per-request server + transport (stateless pattern from SDK example).
-    const server = this.buildServer(chatId)
+  /** Per-request server + transport (stateless pattern from SDK example). */
+  private async serveStateless(req: IncomingMessage, res: ServerResponse, server: Server, label: string): Promise<void> {
+    const body = await readBody(req)
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
-    transport.onerror = (err) => this.log(`transport error on ${chatId}: ${err.message}`)
+    transport.onerror = (err) => this.log(`transport error on ${label}: ${err.message}`)
 
     try {
       await server.connect(transport)
@@ -330,7 +367,7 @@ export class MasterMcpServer {
         void server.close().catch(() => {})
       })
     } catch (err) {
-      this.log(`handleRequest crashed for ${chatId}: ${err}`)
+      this.log(`handleRequest crashed for ${label}: ${err}`)
       try {
         await transport.close()
       } catch {}
@@ -1019,6 +1056,135 @@ export class MasterMcpServer {
             if (this.getMasterChatId() !== chatId) return errorResult('memory_stats is only available in the master channel')
             const stats = this.memoryStore.stats()
             return okResult(JSON.stringify(stats))
+          }
+          default:
+            return errorResult(`unknown tool: ${name}`)
+        }
+      } catch (err) {
+        return errorResult(`${name} failed: ${(err as Error).message}`)
+      }
+    })
+
+    return server
+  }
+
+  /**
+   * MCP server for the read-only /mcp/ops operator endpoint. A separate
+   * Server from buildServer(): session/master tools aren't gated out here,
+   * they are structurally absent — neither the list handler nor the call
+   * handler below knows they exist.
+   */
+  private buildOpsServer(): Server {
+    const server = new Server(
+      { name: 'multi-channel-discord-ops', version: '0.1.0' },
+      {
+        capabilities: { tools: {} },
+        instructions: [
+          'Read-only operator surface for a multi-channel-discord (MCD) instance.',
+          'Query the project fleet: list projects, per-project status, backlog progress, schedules, resource usage, collab handoffs.',
+          'All tools are read-only — nothing here can mutate projects, deliver messages, or touch the host.',
+        ].join('\n'),
+      },
+    )
+
+    const slugSchema = { type: 'string', description: 'Project slug or chat id, as shown by list_projects.' }
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({
+      tools: [
+        {
+          name: 'list_projects',
+          description: 'List every project on this MCD instance: slug, platform, model, disabled/warm state.',
+          inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+        },
+        {
+          name: 'project_status',
+          description: 'Full status for one project: git state, session, provider, flags.',
+          inputSchema: { type: 'object', additionalProperties: false, properties: { slug: slugSchema }, required: ['slug'] },
+        },
+        {
+          name: 'backlog_state',
+          description: 'Backlog source, done/total progress, and autopilot state for one project.',
+          inputSchema: { type: 'object', additionalProperties: false, properties: { slug: slugSchema }, required: ['slug'] },
+        },
+        {
+          name: 'schedules',
+          description: 'Configured scheduled jobs, optionally filtered to one project.',
+          inputSchema: { type: 'object', additionalProperties: false, properties: { slug: { ...slugSchema, description: 'Optional filter — omit for all projects.' } } },
+        },
+        {
+          name: 'usage',
+          description: 'Warm claude sessions with memory and activity stats.',
+          inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+        },
+        {
+          name: 'collab_state',
+          description: 'Collab roles and open handoffs/chains for one project.',
+          inputSchema: { type: 'object', additionalProperties: false, properties: { slug: slugSchema }, required: ['slug'] },
+        },
+        {
+          name: 'server_info',
+          description: 'Instance identity: server name/version, project count, warm-session count.',
+          inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+        },
+      ],
+    }))
+
+    server.setRequestHandler(CallToolRequestSchema, async (req) => {
+      const name = req.params.name
+      const args = (req.params.arguments ?? {}) as Record<string, unknown>
+      // Slugs are interpolated into a command line that goes through
+      // splitArgv — reject anything that could smuggle extra argv tokens
+      // (whitespace, quotes, flag prefixes) before composing.
+      const slugOf = (raw: unknown): string | null => {
+        const s = String(raw ?? '').trim()
+        return /^[A-Za-z0-9._-]{1,64}$/.test(s) ? s : null
+      }
+      // SECURITY BOUNDARY: run() may only ever be called with the read-only
+      // master verbs list / show / backlog / schedule list / usage / collab.
+      // Never add a mutating verb (create/set/rm/stop/schedule add/...) here —
+      // the ops endpoint's read-only guarantee rests on this whitelist.
+      const run = async (commandLine: string) => {
+        if (!this.executeMasterCommand) return errorResult('ops tools not configured')
+        this.log(`ops tool ${name}: ${commandLine}`)
+        return okResult(await this.executeMasterCommand(commandLine))
+      }
+      try {
+        switch (name) {
+          case 'list_projects':
+            return await run('list')
+          case 'project_status': {
+            const slug = slugOf(args.slug)
+            if (!slug) return errorResult('invalid slug')
+            return await run(`show ${slug}`)
+          }
+          case 'backlog_state': {
+            const slug = slugOf(args.slug)
+            if (!slug) return errorResult('invalid slug')
+            return await run(`backlog ${slug}`)
+          }
+          case 'schedules': {
+            if (args.slug === undefined || String(args.slug).trim() === '') return await run('schedule list')
+            const slug = slugOf(args.slug)
+            if (!slug) return errorResult('invalid slug')
+            return await run(`schedule list ${slug}`)
+          }
+          case 'usage':
+            return await run('usage')
+          case 'collab_state': {
+            const slug = slugOf(args.slug)
+            if (!slug) return errorResult('invalid slug')
+            return await run(`collab ${slug}`)
+          }
+          case 'server_info': {
+            const config = this.getConfig?.() ?? null
+            const pool = this.getPool?.() ?? null
+            this.log('ops tool server_info')
+            return okResult(JSON.stringify({
+              name: 'multi-channel-discord-ops',
+              version: '0.1.0',
+              projects: config ? Object.keys(config.projects).length : 0,
+              warmSessions: pool ? pool.size() : 0,
+              masterConfigured: Boolean(config?.master),
+            }))
           }
           default:
             return errorResult(`unknown tool: ${name}`)

@@ -2223,6 +2223,59 @@ const collabRegistry = [
 // Restore config after autopilot tests
 saveConfig(config)
 
+// --- ops verb: read-only /mcp/ops endpoint token lifecycle (AC7) -----------
+{
+  // status with no token configured
+  const off = await handleMasterCommand('!project ops', ctx())
+  check('ops: status shows off when unconfigured', off.kind === 'reply' && off.text.includes('**off**'), JSON.stringify(off).slice(0, 200))
+
+  // rotate without --yes refused, nothing persisted
+  const noYes = await handleMasterCommand('!project ops rotate', ctx())
+  check('ops: rotate without --yes refused', noYes.kind === 'reply' && noYes.text.includes('requires `--yes`'))
+  check('ops: refused rotate persists nothing', loadConfig().opsToken === undefined)
+
+  // rotate --yes mints 64-hex, reveals once, reminds about Caddy
+  const rot = await handleMasterCommand('!project ops rotate --yes', ctx())
+  const rotText = rot.kind === 'reply' ? rot.text : ''
+  const minted = loadConfig().opsToken
+  check('ops: rotate --yes persists 64-hex token', typeof minted === 'string' && /^[0-9a-f]{64}$/.test(minted ?? ''))
+  check('ops: rotate reveals the token once', minted !== undefined && rotText.includes(minted!))
+  check('ops: rotate reminds to update Caddy header_up', rotText.includes('header_up x-mcd-token'))
+
+  // status now masked — full token must not appear
+  const on = await handleMasterCommand('!project ops', ctx())
+  const onText = on.kind === 'reply' ? on.text : ''
+  check('ops: status shows on with masked token', onText.includes('**on**') && onText.includes(`${minted!.slice(0, 4)}…${minted!.slice(-3)}`), onText)
+  check('ops: status never shows the full token', !onText.includes(minted!))
+
+  // second rotate replaces the token
+  const rot2 = await handleMasterCommand('!project ops rotate --yes', ctx())
+  const minted2 = loadConfig().opsToken
+  check('ops: second rotate replaces token', rot2.kind === 'reply' && minted2 !== undefined && minted2 !== minted)
+
+  // none removes it
+  const none = await handleMasterCommand('!project ops none', ctx())
+  check('ops: none removes token', none.kind === 'reply' && none.text.includes('removed') && loadConfig().opsToken === undefined)
+  const noneAgain = await handleMasterCommand('!project ops none', ctx())
+  check('ops: none is a friendly no-op when unset', noneAgain.kind === 'reply' && noneAgain.text.includes('nothing to remove'))
+
+  // unknown action → usage hint
+  const bad = await handleMasterCommand('!project ops frobnicate', ctx())
+  check('ops: unknown action → usage hint', bad.kind === 'reply' && bad.text.includes('`ops` takes'))
+
+  // non-allowFrom user refused (global gate applies to ops like any verb)
+  const stranger = await handleMasterCommand('!project ops rotate --yes', ctx({ userId: '000000000000000000' }))
+  check('ops: non-allowFrom user unauthorized', stranger.kind === 'unauthorized')
+  check('ops: unauthorized rotate persists nothing', loadConfig().opsToken === undefined)
+
+  // help mentions the verb
+  const opsHelp = await handleMasterCommand('!project help', ctx())
+  check('ops: help lists the ops verb', opsHelp.kind === 'reply' && opsHelp.text.includes('ops    [rotate --yes | none]'))
+}
+
+// Restore config after ops tests
+saveConfig(config)
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)
   process.exit(1)

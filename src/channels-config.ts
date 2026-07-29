@@ -516,6 +516,12 @@ export const ChannelsConfigSchema = z.object({
   version: z.literal(1).default(1),
   master: MasterSchema.optional(),
   defaults: DefaultsSchema.default({}),
+  /**
+   * Instance-level token for the read-only `/mcp/ops` endpoint. Absent =
+   * ops endpoint refuses all requests. Minted via `!project ops rotate --yes`.
+   * Valid ONLY on /mcp/ops — never on per-chat routes.
+   */
+  opsToken: z.string().min(16).optional(),
   projects: z.record(ChatIdSchema, ProjectSchema).default({}),
 })
 
