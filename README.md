@@ -405,6 +405,47 @@ Note: MCD's stateless MCP transport answers GET with 405 (permitted by the MCP S
 
 ---
 
+## Ops MCP surface (optional)
+
+Query the whole project fleet from **any** standard MCP client — Claude Code, Claude desktop, another agent — without opening Discord: "what projects exist, what state are they in, is anything stalled?"
+
+`POST /mcp/ops` is a dedicated **read-only** endpoint on the same MCP server. It exposes seven tools — `list_projects`, `project_status`, `backlog_state`, `schedules`, `usage`, `collab_state`, `server_info` — that render the same output as the corresponding `!project` read verbs. There are no mutation tools: a leaked ops URL can read fleet state but cannot create/modify/stop projects, deliver messages, or reach `run_master_command` (those tools are structurally absent from this endpoint, not merely gated).
+
+**1. Mint the ops token** (master channel):
+
+```
+!project ops rotate --yes   — mint + persist opsToken (shown once)
+!project ops                — status (masked token)
+!project ops none           — remove token, endpoint off
+```
+
+No token configured = endpoint refuses everything. The token is instance-level (top-level `opsToken` in `channels.json`) and is valid **only** on `/mcp/ops` — never on per-project routes, and per-project tokens are never valid on `/mcp/ops`.
+
+**2. Caddy route** — same capability-URL pattern as the claude.ai connector, with its own URL secret:
+
+```caddyfile
+mcd.example.com {
+	handle_path /<ops-url-secret>/* {
+		reverse_proxy 127.0.0.1:48620 {
+			header_up x-mcd-token <opsToken-from-step-1>
+		}
+	}
+	respond 404
+}
+```
+
+**3. Attach a client:**
+
+```sh
+claude mcp add --transport http mcd-ops https://mcd.example.com/<ops-url-secret>/mcp/ops
+```
+
+Then ask that Claude things like "list my MCD projects and flag any stalled backlogs."
+
+> **Gotcha:** every `ops rotate` invalidates the previous token immediately — update the Caddyfile `header_up x-mcd-token` value and reload Caddy in the same breath, or external calls 401 until you do (same drift trap as `--external-token rotate`).
+
+---
+
 ## Documentation
 
 | Guide | Contents |
