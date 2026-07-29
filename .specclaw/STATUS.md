@@ -1,7 +1,7 @@
 # 🦞 SpecClaw Dashboard
 
 **Project:** claude-mcd
-**Last Updated:** 2026-07-29 05:39 UTC
+**Last Updated:** 2026-07-29 05:46 UTC
 
 ## Active Changes
 
@@ -18,7 +18,6 @@
 - ✅ **idle-gated-schedules** — 4/4 tasks (100%) | 0 failed
 - ✅ **loop-halt-escalation** — 4/4 tasks (100%) | 0 failed | PR #302 merged
 - ✅ **mcd-reliability-fixes** — 5/5 tasks (100%) | 0 failed
-- 🔨 **ops-mcp-surface** — 6/7 tasks (85%) | 0 failed
 - ✅ **org-graph-view** — 5/5 tasks (100%) | 0 failed | PR #319 merged
 - ✅ **orphan-session-sweep** — 4/4 tasks (100%) | 0 failed | PR #314 merged
 - ✅ **pr-credential-store** — 5/5 tasks (100%) | 0 failed | PR #304 merged
@@ -42,9 +41,10 @@ _None._
 - ✅ **2026-07-18-heartbeat-attention-report**
 - ✅ **2026-07-18-heartbeat-live-task-count**
 - ✅ **2026-07-18-watchdog-status-noise-collapse**
+- ✅ **2026-07-29-ops-mcp-surface**
 
 ## Stats
 
 - **Total changes:** 28
-- **Active:** 23
-- **Completed:** 5
+- **Active:** 22
+- **Completed:** 6
