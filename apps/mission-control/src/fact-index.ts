@@ -332,6 +332,40 @@ export function toolCounts(opts: { sinceMs: number }): ToolCountRow[] {
     .all(opts.sinceMs) as ToolCountRow[];
 }
 
+export type ToolCallRow = {
+  id: number;
+  slug: string;
+  ts_ms: number;
+  tool_name: string;
+};
+
+/**
+ * Highest mc_tool_call id (0 when the table is empty). The SSE broadcaster
+ * initializes its watermark to this at startup so a fresh process never
+ * replays the whole table as live tool events.
+ */
+export function maxToolCallId(): number {
+  const row = db
+    .prepare(`SELECT COALESCE(MAX(id), 0) AS maxId FROM mc_tool_call`)
+    .get() as { maxId: number };
+  return row.maxId;
+}
+
+/**
+ * Tool-call rows with id > `afterId`, ascending by id — the SSE tick's
+ * incremental feed (each tick emits only rows past its watermark).
+ */
+export function toolCallsSince(opts: { afterId: number }): ToolCallRow[] {
+  return db
+    .prepare(
+      `SELECT id, slug, ts_ms, tool_name
+         FROM mc_tool_call
+        WHERE id > ?
+        ORDER BY id ASC`
+    )
+    .all(opts.afterId) as ToolCallRow[];
+}
+
 export type TurnDurationRow = {
   slug: string;
   duration_ms: number;
@@ -422,4 +456,91 @@ export function monthlyTokens(opts: { slug: string; yearMonth: string }): Monthl
     outputTokens: row.outputTokens,
     totalTokens: row.inputTokens + row.outputTokens,
   };
+}
+
+export type SlugTurnRow = {
+  ts_ms: number;
+  input_tokens: number;
+  output_tokens: number;
+};
+
+/**
+ * Every turn for one slug in ts order (all time). Powers the per-project
+ * metrics route (`/api/metrics/[slug]`) — latency gaps, day buckets, and
+ * totals are computed by the caller from the ordered series.
+ */
+export function slugTurns(opts: { slug: string }): SlugTurnRow[] {
+  return db
+    .prepare(
+      `SELECT ts_ms, input_tokens, output_tokens
+         FROM mc_turn
+        WHERE slug = ?
+        ORDER BY ts_ms ASC`
+    )
+    .all(opts.slug) as SlugTurnRow[];
+}
+
+export type SlugToolCountRow = {
+  tool_name: string;
+  count: number;
+};
+
+/**
+ * All-time tool-call counts for one slug, for the per-project metrics route's
+ * topTools/efficiency stats.
+ */
+export function slugToolCounts(opts: { slug: string }): SlugToolCountRow[] {
+  return db
+    .prepare(
+      `SELECT tool_name, COUNT(*) AS count
+         FROM mc_tool_call
+        WHERE slug = ?
+        GROUP BY tool_name`
+    )
+    .all(opts.slug) as SlugToolCountRow[];
+}
+
+export type SlugTokenTotalsRow = {
+  slug: string;
+  inputTokens: number;
+  outputTokens: number;
+};
+
+/**
+ * Per-slug token totals since `sinceMs` (unix ms), for the momentum-index
+ * route's 7-day burn signal.
+ */
+export function tokensSince(opts: { sinceMs: number }): SlugTokenTotalsRow[] {
+  return db
+    .prepare(
+      `SELECT slug,
+              COALESCE(SUM(input_tokens), 0)  AS inputTokens,
+              COALESCE(SUM(output_tokens), 0) AS outputTokens
+         FROM mc_turn
+        WHERE ts_ms >= ?
+        GROUP BY slug`
+    )
+    .all(opts.sinceMs) as SlugTokenTotalsRow[];
+}
+
+export type SessionFileStatsRow = {
+  slug: string;
+  sessions: number;
+  lastMtimeMs: number;
+};
+
+/**
+ * Per-slug transcript-file stats from mc_ingest_state: session-file count and
+ * the newest file mtime seen at last ingest. Replaces the health-scorecard
+ * route's readdir + per-file statSync over transcript dirs; freshness is
+ * bounded by the ingest interval.
+ */
+export function sessionFileStats(): SessionFileStatsRow[] {
+  return db
+    .prepare(
+      `SELECT slug, COUNT(*) AS sessions, MAX(mtime_ms) AS lastMtimeMs
+         FROM mc_ingest_state
+        GROUP BY slug`
+    )
+    .all() as SessionFileStatsRow[];
 }

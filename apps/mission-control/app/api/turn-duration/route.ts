@@ -1,6 +1,8 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
+import { requireSession } from '@/src/security'
+import { turnDurations } from '@/src/fact-index'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,66 +32,8 @@ export interface TurnDurationResponse {
   generatedAt: string
 }
 
-interface JsonlLine {
-  type?: string
-  message?: {
-    role?: string
-    content?: Array<{ type?: string }>
-  }
-  timestamp?: string
-}
-
 function readJson<T>(p: string): T | null {
   try { return JSON.parse(fs.readFileSync(p, 'utf-8')) as T } catch { return null }
-}
-
-function findJsonlFiles(slug: string, mcdDir: string): string[] {
-  const projectPath = path.join(mcdDir, 'projects', slug)
-  let realPath = projectPath
-  try { realPath = fs.realpathSync(projectPath) } catch { return [] }
-  const encoded = realPath.replace(/[^a-zA-Z0-9]/g, '-')
-  const transcriptDir = path.join(os.homedir(), '.claude', 'projects', encoded)
-  try {
-    return fs.readdirSync(transcriptDir)
-      .filter((f) => f.endsWith('.jsonl'))
-      .map((f) => path.join(transcriptDir, f))
-  } catch { return [] }
-}
-
-function isGenuineUserMessage(line: JsonlLine): boolean {
-  if (line.message?.role !== 'user') return false
-  const content = line.message?.content
-  if (!Array.isArray(content) || content.length === 0) return false
-  return content[0]?.type !== 'tool_result'
-}
-
-function extractTurnDurations(jsonlPath: string, cutoffMs: number): number[] {
-  let lines: string[]
-  try {
-    lines = fs.readFileSync(jsonlPath, 'utf-8').split('\n').filter(Boolean)
-  } catch { return [] }
-
-  const durations: number[] = []
-  let turnStartMs: number | null = null
-
-  for (const raw of lines) {
-    let line: JsonlLine
-    try { line = JSON.parse(raw) } catch { continue }
-
-    if (!line.timestamp) continue
-    const tsMs = Date.parse(line.timestamp)
-    if (isNaN(tsMs) || tsMs < cutoffMs) continue
-
-    if (isGenuineUserMessage(line)) {
-      if (turnStartMs !== null && tsMs > turnStartMs) {
-        const durSec = (tsMs - turnStartMs) / 1000
-        if (durSec > 0 && durSec < 3600) durations.push(durSec)
-      }
-      turnStartMs = tsMs
-    }
-  }
-
-  return durations
 }
 
 function percentile(sorted: number[], p: number): number {
@@ -115,6 +59,9 @@ function buildHistogram(allDurations: Record<string, number[]>): HistogramBucket
 }
 
 export async function GET(request: Request): Promise<Response> {
+  const unauth = await requireSession()
+  if (unauth) return unauth
+
   const url = new URL(request.url)
   const windowDays = Math.max(1, Math.min(90, parseInt(url.searchParams.get('days') ?? '30', 10)))
   const selectedSlug = url.searchParams.get('slug') ?? null
@@ -137,15 +84,22 @@ export async function GET(request: Request): Promise<Response> {
   const cutoffMs = Date.now() - windowDays * 24 * 3_600_000
   const defaultThresholdSec = (channels?.defaults?.stuckThresholdMinutes ?? 5) * 60
 
+  // Per-slug turn durations from the fact index (recorded turn_duration
+  // events), same sanity bounds as the previous transcript-gap scan.
+  const durationsBySlug = new Map<string, number[]>()
+  for (const row of turnDurations({ sinceMs: cutoffMs })) {
+    const durSec = row.duration_ms / 1000
+    if (!(durSec > 0 && durSec < 3600)) continue
+    const durs = durationsBySlug.get(row.slug) ?? []
+    durs.push(durSec)
+    durationsBySlug.set(row.slug, durs)
+  }
+
   const allDurations: Record<string, number[]> = {}
   const stats: TurnDurationStats[] = []
 
   for (const slug of slugs) {
-    const jsonlFiles = findJsonlFiles(slug, mcdDir)
-    const durs: number[] = []
-    for (const f of jsonlFiles) {
-      durs.push(...extractTurnDurations(f, cutoffMs))
-    }
+    const durs = durationsBySlug.get(slug) ?? []
     if (durs.length === 0) continue
 
     durs.sort((a, b) => a - b)
