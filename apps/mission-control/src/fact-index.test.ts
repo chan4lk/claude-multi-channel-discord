@@ -4,6 +4,10 @@
  *
  * Imports from ./fact-index-parse (not ./fact-index) because ./fact-index
  * imports ./db → better-sqlite3, a native module bun cannot load.
+ *
+ * Ingester tests (resume/idempotency/truncation/parity) need better-sqlite3
+ * and therefore run under Node — see ./fact-index-ingest.test.ts for those
+ * and its run command.
  */
 import { parseTranscriptLines } from "./fact-index-parse.ts";
 
