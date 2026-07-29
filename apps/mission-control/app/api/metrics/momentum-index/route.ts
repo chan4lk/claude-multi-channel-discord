@@ -1,6 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
-import * as os from 'os'
+import { requireSession } from '@/src/security'
+import { tokensSince } from '@/src/fact-index'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,48 +31,6 @@ function readJson<T>(filePath: string): T | null {
 
 function readFile(filePath: string): string | null {
   try { return fs.readFileSync(filePath, 'utf-8') } catch { return null }
-}
-
-function encodeProjectCwd(realPath: string): string {
-  return realPath.replace(/[^a-zA-Z0-9]/g, '-')
-}
-
-function findAllJsonl(slug: string, mcdDir: string): string[] {
-  const projectPath = path.join(mcdDir, 'projects', slug)
-  let realPath = projectPath
-  try { realPath = fs.realpathSync(projectPath) } catch { return [] }
-  const encoded = encodeProjectCwd(realPath)
-  const transcriptDir = path.join(os.homedir(), '.claude', 'projects', encoded)
-  try {
-    return fs.readdirSync(transcriptDir)
-      .filter((f) => f.endsWith('.jsonl'))
-      .map((f) => path.join(transcriptDir, f))
-  } catch { return [] }
-}
-
-interface AssistantRecord {
-  type: string
-  timestamp?: string
-  message?: { usage?: { input_tokens?: number; output_tokens?: number } }
-}
-
-function burn7d(slug: string, mcdDir: string, now: number): number {
-  const cutoff = now - WEEK_MS
-  let total = 0
-  for (const file of findAllJsonl(slug, mcdDir)) {
-    let raw = ''
-    try { raw = fs.readFileSync(file, 'utf-8') } catch { continue }
-    for (const line of raw.trim().split('\n').filter(Boolean)) {
-      let rec: AssistantRecord
-      try { rec = JSON.parse(line) as AssistantRecord } catch { continue }
-      if (rec.type !== 'assistant') continue
-      const tsMs = typeof rec.timestamp === 'string' ? new Date(rec.timestamp).getTime() : NaN
-      if (isNaN(tsMs) || tsMs < cutoff) continue
-      const usage = rec.message?.usage ?? {}
-      total += (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0)
-    }
-  }
-  return total
 }
 
 // Freshness proxy for goal advancement: how recently GOAL.md was edited (0 = stale/missing, 7 = touched today).
@@ -104,6 +63,9 @@ function proposalsDone(slug: string, mcdDir: string, now: number): number {
 }
 
 export async function GET(): Promise<Response> {
+  const unauth = await requireSession()
+  if (unauth) return unauth
+
   const now = Date.now()
   const mcdDir = process.env.MCD_CHANNELS_DIR
   if (!mcdDir) {
@@ -114,6 +76,12 @@ export async function GET(): Promise<Response> {
     path.join(mcdDir, 'channels.json')
   )
 
+  // 7-day token burn per slug from the fact index (was a full-transcript scan).
+  const burnBySlug = new Map<string, number>()
+  for (const row of tokensSince({ sinceMs: now - WEEK_MS })) {
+    burnBySlug.set(row.slug, row.inputTokens + row.outputTokens)
+  }
+
   interface Raw { slug: string; burn7d: number; goalDelta: number; proposalsDone: number }
   const raws: Raw[] = []
   for (const proj of Object.values(channels?.projects ?? {})) {
@@ -121,7 +89,7 @@ export async function GET(): Promise<Response> {
     if (!slug) continue
     raws.push({
       slug,
-      burn7d: burn7d(slug, mcdDir, now),
+      burn7d: burnBySlug.get(slug) ?? 0,
       goalDelta: goalDelta(slug, mcdDir, now),
       proposalsDone: proposalsDone(slug, mcdDir, now),
     })

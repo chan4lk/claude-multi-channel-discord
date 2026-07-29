@@ -1,6 +1,5 @@
-import * as fs from 'fs'
-import * as path from 'path'
-import * as os from 'os'
+import { requireSession } from '@/src/security'
+import { toolCounts } from '@/src/fact-index'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,83 +12,23 @@ export interface ToolHeatmapResponse {
   generatedAt: string
 }
 
-interface JsonlLine {
-  type?: string
-  message?: {
-    role?: string
-    content?: Array<{ type?: string; name?: string }>
-  }
-  timestamp?: string
-}
-
-function getProjectSlugs(mcdDir: string): string[] {
-  const projectsDir = path.join(mcdDir, 'projects')
-  try {
-    return fs.readdirSync(projectsDir).filter((s) => {
-      if (s.startsWith('.')) return false
-      try {
-        const stat = fs.statSync(path.join(projectsDir, s))
-        return stat.isDirectory() || stat.isSymbolicLink()
-      } catch { return false }
-    })
-  } catch { return [] }
-}
-
-function findJsonlFiles(slug: string, mcdDir: string): string[] {
-  const projectPath = path.join(mcdDir, 'projects', slug)
-  let realPath = projectPath
-  try { realPath = fs.realpathSync(projectPath) } catch { return [] }
-  const encoded = realPath.replace(/[^a-zA-Z0-9]/g, '-')
-  const transcriptDir = path.join(os.homedir(), '.claude', 'projects', encoded)
-  try {
-    return fs.readdirSync(transcriptDir)
-      .filter((f) => f.endsWith('.jsonl'))
-      .map((f) => path.join(transcriptDir, f))
-  } catch { return [] }
-}
-
-function countToolCalls(jsonlPaths: string[], cutoffMs: number): Record<string, number> {
-  const counts: Record<string, number> = {}
-  for (const p of jsonlPaths) {
-    let lines: string[]
-    try { lines = fs.readFileSync(p, 'utf-8').split('\n').filter(Boolean) } catch { continue }
-    for (const raw of lines) {
-      let line: JsonlLine
-      try { line = JSON.parse(raw) } catch { continue }
-      if (line.timestamp) {
-        const tsMs = Date.parse(line.timestamp)
-        if (isNaN(tsMs) || tsMs < cutoffMs) continue
-      }
-      const content = line.message?.content
-      if (!Array.isArray(content)) continue
-      for (const block of content) {
-        if (block.type === 'tool_use' && block.name) {
-          counts[block.name] = (counts[block.name] ?? 0) + 1
-        }
-      }
-    }
-  }
-  return counts
-}
-
 export async function GET(request: Request): Promise<Response> {
+  const unauth = await requireSession()
+  if (unauth) return unauth
+
   const url = new URL(request.url)
   const windowDays = Math.max(1, Math.min(90, parseInt(url.searchParams.get('days') ?? '30', 10)))
-  const mcdDir =
-    process.env.MCD_CHANNELS_DIR ??
-    path.join(os.homedir(), '.claude', 'channels', 'discord-multi')
-
-  const slugs = getProjectSlugs(mcdDir)
   const cutoffMs = Date.now() - windowDays * 24 * 3_600_000
 
-  const perProject: { slug: string; counts: Record<string, number> }[] = []
-  for (const slug of slugs) {
-    const files = findJsonlFiles(slug, mcdDir)
-    if (files.length === 0) continue
-    const counts = countToolCalls(files, cutoffMs)
-    if (Object.keys(counts).length === 0) continue
-    perProject.push({ slug, counts })
+  // Pivot the fact-index rows into per-project tool-count maps.
+  const bySlug = new Map<string, Record<string, number>>()
+  for (const row of toolCounts({ sinceMs: cutoffMs })) {
+    const counts = bySlug.get(row.slug) ?? {}
+    counts[row.tool_name] = (counts[row.tool_name] ?? 0) + row.count
+    bySlug.set(row.slug, counts)
   }
+
+  const perProject = [...bySlug.entries()].map(([slug, counts]) => ({ slug, counts }))
 
   // Sort projects by total tool calls desc, max 20
   perProject.sort((a, b) =>

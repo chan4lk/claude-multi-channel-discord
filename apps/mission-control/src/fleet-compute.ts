@@ -1,6 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
+import { monthlyTokens } from './fact-index'
 
 export type ProjectState = 'idle' | 'active' | 'stalled' | 'autonomous'
 export type GoalStatus = 'active' | 'paused' | 'completed'
@@ -199,33 +200,12 @@ function stallReason(ageMins: number): string {
   return `Inactive ${ageMins}m — possible stall or slow tool call`
 }
 
-function computeMonthlyTokensUsed(slug: string, mcdDir: string): number {
+// Sums current-month tokens from the fact index (mc_turn) instead of reading
+// every transcript file — see src/fact-index.ts (mission-control-perf-hardening).
+function computeMonthlyTokensUsed(slug: string): number {
   const now = new Date()
   const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-  const files: string[] = []
-  const projectPath = path.join(mcdDir, 'projects', slug)
-  let realPath = projectPath
-  try { realPath = fs.realpathSync(projectPath) } catch { return 0 }
-  const encoded = encodeProjectCwd(realPath)
-  const transcriptDir = path.join(os.homedir(), '.claude', 'projects', encoded)
-  try {
-    files.push(...fs.readdirSync(transcriptDir).filter((f) => f.endsWith('.jsonl')).map((f) => path.join(transcriptDir, f)))
-  } catch { return 0 }
-  let total = 0
-  for (const file of files) {
-    let raw = ''
-    try { raw = fs.readFileSync(file, 'utf-8') } catch { continue }
-    for (const line of raw.trim().split('\n').filter(Boolean)) {
-      let rec: Record<string, unknown>
-      try { rec = JSON.parse(line) } catch { continue }
-      if (rec.type !== 'assistant') continue
-      const ts = typeof rec.timestamp === 'string' ? rec.timestamp : null
-      if (!ts || !ts.startsWith(currentYearMonth)) continue
-      const usage = (rec as { message?: { usage?: { input_tokens?: number; output_tokens?: number } } }).message?.usage
-      total += (usage?.input_tokens ?? 0) + (usage?.output_tokens ?? 0)
-    }
-  }
-  return total
+  return monthlyTokens({ slug, yearMonth: currentYearMonth }).totalTokens
 }
 
 interface ProjectEntry {
@@ -302,7 +282,7 @@ export function computeFleet(mcdDir: string | undefined): FleetResponse {
     const result: FleetProject = { slug, state, ageMins, stuckThresholdMinutes }
     if (monthlyTokenBudget != null) {
       result.monthlyTokenBudget = monthlyTokenBudget
-      const used = computeMonthlyTokensUsed(slug, mcdDir)
+      const used = computeMonthlyTokensUsed(slug)
       result.monthlyTokensUsed = used
       result.budgetStatus = computeBudgetStatus(used, monthlyTokenBudget)
       if (result.budgetStatus === 'exhausted') {

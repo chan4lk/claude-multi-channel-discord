@@ -1,6 +1,8 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
+import { requireSession } from '@/src/security'
+import { sessionFileStats } from '@/src/fact-index'
 
 export const dynamic = 'force-dynamic'
 
@@ -28,10 +30,6 @@ export interface HealthScorecardResponse {
   generatedAt: string
 }
 
-function readJson<T>(p: string): T | null {
-  try { return JSON.parse(fs.readFileSync(p, 'utf-8')) as T } catch { return null }
-}
-
 function getProjectSlugs(mcdDir: string): string[] {
   const projectsDir = path.join(mcdDir, 'projects')
   try {
@@ -49,37 +47,11 @@ function getRealProjectPath(mcdDir: string, slug: string): string | null {
   try { return fs.realpathSync(path.join(mcdDir, 'projects', slug)) } catch { return null }
 }
 
-function getTranscriptDir(realPath: string): string {
-  const encoded = realPath.replace(/[^a-zA-Z0-9]/g, '-')
-  return path.join(os.homedir(), '.claude', 'projects', encoded)
-}
-
 function countMemoryFiles(realPath: string): number {
   const memDir = path.join(realPath, 'memory')
   try {
     return fs.readdirSync(memDir).filter((f) => f.endsWith('.md') && !f.startsWith('MEMORY')).length
   } catch { return 0 }
-}
-
-function getSessionData(transcriptDir: string): { sessions: number; lastActiveMsAgo: number | null } {
-  let sessions = 0
-  let lastModifiedMs: number | null = null
-  try {
-    const files = fs.readdirSync(transcriptDir).filter((f) => f.endsWith('.jsonl'))
-    sessions = files.length
-    for (const f of files) {
-      try {
-        const stat = fs.statSync(path.join(transcriptDir, f))
-        if (lastModifiedMs === null || stat.mtimeMs > lastModifiedMs) {
-          lastModifiedMs = stat.mtimeMs
-        }
-      } catch { /* skip */ }
-    }
-  } catch { /* dir missing */ }
-  return {
-    sessions,
-    lastActiveMsAgo: lastModifiedMs !== null ? Date.now() - lastModifiedMs : null,
-  }
 }
 
 function countRecentKills(mcdDir: string, slug: string, windowMs: number): number {
@@ -147,6 +119,9 @@ function computeScore(
 }
 
 export async function GET(): Promise<Response> {
+  const unauth = await requireSession()
+  if (unauth) return unauth
+
   const mcdDir =
     process.env.MCD_CHANNELS_DIR ??
     path.join(os.homedir(), '.claude', 'channels', 'discord-multi')
@@ -155,13 +130,19 @@ export async function GET(): Promise<Response> {
   const killWindow = 7 * 24 * 3_600_000
   const projects: ProjectHealth[] = []
 
+  // Transcript-activity signal (session-file count + newest mtime) comes from
+  // the fact index's per-file ingest state instead of readdir + statSync over
+  // every transcript dir. Memory/specclaw/watchdog fs reads stay as-is.
+  const statsBySlug = new Map(sessionFileStats().map((r) => [r.slug, r]))
+
   for (const slug of slugs) {
     const realPath = getRealProjectPath(mcdDir, slug)
     if (!realPath) continue
 
-    const transcriptDir = getTranscriptDir(realPath)
     const memoryFiles = countMemoryFiles(realPath)
-    const { sessions, lastActiveMsAgo } = getSessionData(transcriptDir)
+    const fileStats = statsBySlug.get(slug)
+    const sessions = fileStats?.sessions ?? 0
+    const lastActiveMsAgo = fileStats ? Date.now() - fileStats.lastMtimeMs : null
     const recentKills = countRecentKills(mcdDir, slug, killWindow)
     const openProposals = countOpenProposals(realPath)
     const lastActiveDaysAgo = lastActiveMsAgo !== null ? lastActiveMsAgo / (24 * 3_600_000) : null

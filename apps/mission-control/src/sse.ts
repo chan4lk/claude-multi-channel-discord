@@ -1,21 +1,17 @@
-import * as fs from 'fs'
-import * as path from 'path'
-import * as os from 'os'
 import { computeFleet, computeStalls } from './fleet-compute'
 import { insertAlertEvent, getWebhooks } from './db'
+import { maxToolCallId, toolCallsSince } from './fact-index'
 
 // Use globalThis to survive Next.js hot module replacement
 const g = globalThis as {
   __mcdClients?: Set<ReadableStreamDefaultController>
   __mcdFleetInterval?: ReturnType<typeof setInterval>
   __mcdBudgetAlertState?: Map<string, string>
-  __mcdToolLineTracker?: Map<string, { file: string; lineCount: number }>
+  __mcdToolEventWatermark?: number
 };
 const clients = (g.__mcdClients ??= new Set<ReadableStreamDefaultController>());
 // Tracks "slug:threshold:YYYY-MM" → fired. Prevents duplicate alerts per threshold per month.
 const budgetAlertState = (g.__mcdBudgetAlertState ??= new Map<string, string>());
-// Tracks last-seen transcript line count per project for tool-event detection.
-const toolLineTracker = (g.__mcdToolLineTracker ??= new Map<string, { file: string; lineCount: number }>());
 
 export function addClient(controller: ReadableStreamDefaultController): void {
   clients.add(controller);
@@ -73,69 +69,21 @@ async function fireWebhooks(eventType: string, slug: string, detail: string): Pr
   }
 }
 
-function encodeProjectCwd(realPath: string): string {
-  return realPath.replace(/[^a-zA-Z0-9]/g, '-')
-}
-
-function getLatestTranscriptFile(slug: string, mcdDir: string): string | null {
-  const projectPath = path.join(mcdDir, 'projects', slug)
-  let realPath = projectPath
-  try { realPath = fs.realpathSync(projectPath) } catch { return null }
-  const encoded = encodeProjectCwd(realPath)
-  const transcriptDir = path.join(os.homedir(), '.claude', 'projects', encoded)
-  let files: string[] = []
-  try {
-    files = fs.readdirSync(transcriptDir).filter((f) => f.endsWith('.jsonl'))
-  } catch { return null }
-  if (files.length === 0) return null
-  let latestFile = ''
-  let latestMtime = 0
-  for (const f of files) {
-    try {
-      const m = fs.statSync(path.join(transcriptDir, f)).mtimeMs
-      if (m > latestMtime) { latestMtime = m; latestFile = path.join(transcriptDir, f) }
-    } catch {}
-  }
-  return latestFile || null
-}
-
-function checkToolEvents(mcdDir: string): void {
+// Emits tool events from mc_tool_call rows past the id watermark — the fact
+// index (fed by the incremental ingester) replaces the old full-transcript
+// read + per-slug line tracker, so the broadcaster never opens transcript
+// files. The ingester already excludes mcp__mcd__* internal tools. On first
+// tick the watermark initializes to the current max id (nothing emitted), so
+// a fresh process never replays the whole table as live events.
+function checkToolEvents(): void {
   if (clients.size === 0) return
-  const channels = JSON.parse(fs.readFileSync(path.join(mcdDir, 'channels.json'), 'utf-8')) as {
-    projects?: Record<string, { slug?: string }>
+  if (g.__mcdToolEventWatermark == null) {
+    g.__mcdToolEventWatermark = maxToolCallId()
+    return
   }
-  const slugs = Object.values(channels.projects ?? {}).map((p) => p.slug).filter(Boolean) as string[]
-
-  for (const slug of slugs) {
-    const latestFile = getLatestTranscriptFile(slug, mcdDir)
-    if (!latestFile) continue
-
-    let raw = ''
-    try { raw = fs.readFileSync(latestFile, 'utf-8') } catch { continue }
-    const lines = raw.split('\n').filter(Boolean)
-    const tracker = toolLineTracker.get(slug)
-
-    // Reset tracker if transcript file changed
-    const startLine = (tracker && tracker.file === latestFile) ? tracker.lineCount : lines.length
-    toolLineTracker.set(slug, { file: latestFile, lineCount: lines.length })
-
-    if (startLine >= lines.length) continue
-
-    for (let i = startLine; i < lines.length; i++) {
-      try {
-        const rec = JSON.parse(lines[i]) as {
-          type?: string
-          message?: { content?: Array<{ type?: string; name?: string }> }
-        }
-        if (rec.type !== 'assistant') continue
-        const content = rec.message?.content ?? []
-        for (const block of content) {
-          if (block.type === 'tool_use' && block.name && !block.name.startsWith('mcp__mcd__')) {
-            broadcast({ type: 'tool-event', data: { slug, toolName: block.name } })
-          }
-        }
-      } catch {}
-    }
+  for (const row of toolCallsSince({ afterId: g.__mcdToolEventWatermark })) {
+    broadcast({ type: 'tool-event', data: { slug: row.slug, toolName: row.tool_name } })
+    g.__mcdToolEventWatermark = row.id
   }
 }
 
@@ -156,7 +104,7 @@ function broadcastFleetUpdate(): void {
       }
     }
     checkBudgetAlerts(fleet.projects);
-    try { checkToolEvents(mcdDir) } catch {}
+    try { checkToolEvents() } catch {}
   } catch {
     // Non-fatal: skip this tick
   }

@@ -1,0 +1,7 @@
+exit=0
+duration_s=7
+log=.specclaw/changes/ops-mcp-surface/logs/test-bun-tsc-noemit-273640.log
+head=81aed5f24256f1f450b012816e9b6207bf642b5e
+dirty=true
+cmd=bun tsc --noEmit
+interrupted=false
