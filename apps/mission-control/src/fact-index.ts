@@ -39,6 +39,15 @@ CREATE TABLE IF NOT EXISTS mc_ingest_state (
 );
 `);
 
+// ── Pure parser (re-exported) ─────────────────────────────────────────────
+//
+// parseTranscriptLines lives in ./fact-index-parse so its unit tests can run
+// under plain `bun` — this module's ./db import (better-sqlite3, a native
+// module) does not load in bun. Consumers import it from here.
+
+export { parseTranscriptLines } from "./fact-index-parse";
+export type { TurnFact, ToolCallFact, ParsedTranscript } from "./fact-index-parse";
+
 // ── Query helpers ─────────────────────────────────────────────────────────
 
 export type ToolCountRow = {
