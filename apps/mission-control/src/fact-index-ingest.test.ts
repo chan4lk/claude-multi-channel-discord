@@ -162,7 +162,8 @@ function directMonthTokens(
 
 async function main() {
   // Dynamic imports so MC_DB_PATH/HOME above are set before ./db loads.
-  const { ingestOnce, toolCounts, monthlyTokens } = await import("./fact-index");
+  const { ingestOnce, toolCounts, monthlyTokens, maxToolCallId, toolCallsSince } =
+    await import("./fact-index");
   const db = (await import("./db")).default;
 
   const countTurns = () =>
@@ -332,6 +333,31 @@ async function main() {
         `expected=${JSON.stringify(expected)} actual=${JSON.stringify(actual)}`
       );
     }
+  }
+
+  // ── AC10: SSE watermark helpers — toolCallsSince / maxToolCallId ─────────
+  {
+    const mark = maxToolCallId();
+    check("wm-1: maxToolCallId is the newest row id", mark === (db.prepare("SELECT MAX(id) AS m FROM mc_tool_call").get() as { m: number }).m, `got ${mark}`);
+    check("wm-2: toolCallsSince(max) is empty", toolCallsSince({ afterId: mark }).length === 0);
+    check("wm-3: toolCallsSince(0) returns every row ascending", (() => {
+      const all = toolCallsSince({ afterId: 0 });
+      return all.length === countToolCalls() && all.every((r, i) => i === 0 || r.id > all[i - 1].id);
+    })());
+    fs.appendFileSync(
+      alphaS1,
+      assistantLine({
+        ts: "2026-07-29T13:00:00.000Z",
+        input: 2,
+        output: 2,
+        blocks: [{ type: "tool_use", name: "Grep" }],
+      }) + "\n"
+    );
+    await ingestOnce(mcdDir);
+    const fresh = toolCallsSince({ afterId: mark });
+    check("wm-4: only rows past the watermark returned", fresh.length === 1, `got ${fresh.length}`);
+    check("wm-5: fresh row carries slug/tool_name", fresh[0]?.slug === "alpha" && fresh[0]?.tool_name === "Grep", JSON.stringify(fresh[0]));
+    check("wm-6: watermark advances to the fresh row", maxToolCallId() === fresh[0]!.id);
   }
 
   db.close();
