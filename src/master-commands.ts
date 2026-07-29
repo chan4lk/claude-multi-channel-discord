@@ -97,7 +97,7 @@ export interface MasterMutator {
 }
 
 const READ_VERBS = ['list', 'show', 'status', 'help'] as const
-const MUTATION_VERBS = ['create', 'set', 'rename', 'rm', 'memory', 'hermes'] as const
+const MUTATION_VERBS = ['create', 'set', 'rename', 'rm', 'memory', 'hermes', 'ops'] as const
 const PHASE_5_VERBS = ['clone', 'remote', 'pull'] as const
 
 function appendCommandLog(
@@ -211,6 +211,8 @@ export async function handleMasterCommand(
         result = { kind: 'reply', text: handleCollab(rest, ctx) }; break
       case 'graph':
         result = { kind: 'reply', text: await handleGraph(rest, ctx) }; break
+      case 'ops':
+        result = { kind: 'reply', text: handleOps(rest, ctx) }; break
       default:
         result = {
           kind: 'reply',
@@ -259,6 +261,7 @@ function helpText(prefix: string): string {
     `${prefix} backlog <chat_id-or-slug>                            — show backlog source, progress, and autopilot state`,
     `${prefix} collab <chat_id-or-slug>                             — show collab roles and open handoffs`,
     `${prefix} graph  [--stats] [--mermaid]                          — render the org graph (projects, peers, roles, schedules)`,
+    `${prefix} ops    [rotate --yes | none]                           — read-only /mcp/ops operator endpoint: status / mint token / remove`,
     `${prefix} rename <chat_id-or-slug> --slug NEW                    — rename slug + dir`,
     `${prefix} remote <chat_id-or-slug> [--set URL] [--creds NAME]    — show/set git remote`,
     `${prefix} pull   <chat_id-or-slug>                               — git pull --ff-only`,
@@ -2366,6 +2369,50 @@ async function handleHermes(rest: string[], ctx: MasterContext): Promise<string>
  * `!project backlog <chat_id-or-slug>` — read-only backlog status.
  * Shows source, X/Y progress, autopilot state, and effective settings.
  */
+/**
+ * `!project ops` — status of the read-only /mcp/ops operator endpoint.
+ * `ops rotate --yes` mints the instance-level opsToken (revealed once);
+ * `ops none` removes it, turning the endpoint off.
+ */
+function handleOps(rest: string[], _ctx: MasterContext): string {
+  const { positional, flags } = parseFlags(rest)
+  const action = positional[0] ?? 'status'
+  const config = loadConfig()
+  switch (action) {
+    case 'status': {
+      if (!config.opsToken) {
+        return 'ops endpoint: **off** (no opsToken configured). enable with `ops rotate --yes`.'
+      }
+      const t = config.opsToken
+      return [
+        `ops endpoint: **on** — token \`${t.slice(0, 4)}…${t.slice(-3)}\``,
+        'endpoint path: `/mcp/ops` — front with a Caddy capability-URL that injects the token as `x-mcd-token` (see README "Ops MCP surface").',
+      ].join('\n')
+    }
+    case 'rotate': {
+      if (flags.yes !== true) {
+        return '`ops rotate` requires `--yes` (grants external callers read access to fleet state)'
+      }
+      const token = randomBytes(32).toString('hex')
+      saveConfig({ ...config, opsToken: token })
+      return [
+        '✅ ops token rotated — shown once, save it now:',
+        `\`${token}\``,
+        'endpoint path: `/mcp/ops` — update the Caddy `header_up x-mcd-token` to this value or external calls will 401 (see README "Ops MCP surface").',
+        'Any previous ops token is now invalid.',
+      ].join('\n')
+    }
+    case 'none': {
+      if (config.opsToken === undefined) return 'no ops token set — nothing to remove.'
+      const { opsToken: _removed, ...restCfg } = config
+      saveConfig(restCfg)
+      return '✅ ops token removed — `/mcp/ops` is off.'
+    }
+    default:
+      return '`ops` takes `rotate --yes`, `none`, or no argument for status'
+  }
+}
+
 async function handleBacklog(rest: string[], _ctx: MasterContext): Promise<string> {
   const { positional } = parseFlags(rest)
   if (positional.length === 0) return '`backlog` needs a chat_id or slug'
