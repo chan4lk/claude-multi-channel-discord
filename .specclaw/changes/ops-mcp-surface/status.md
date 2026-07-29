@@ -14,6 +14,7 @@
 | Tasks | ✅ Done | 6 tasks, 2 waves |
 | Build | ✅ Done | 6/6 tasks, 6 commits on specclaw/ops-mcp-surface |
 | Verify | ✅ Passed | All 10 ACs met; tsc + 7 suites green |
+| PR | ✅ Raised | https://github.com/chan4lk/claude-multi-channel-discord/pull/323 |
 
 ## Task Progress
 
@@ -27,3 +28,4 @@
 
 ## Issues
 
+**PR:** https://github.com/chan4lk/claude-multi-channel-discord/pull/323
