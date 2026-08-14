@@ -385,6 +385,19 @@ const ProjectSchema = z.object({
    * defaults.autoDisable setting. Absent = follow defaults.
    */
   autoDisable: z.boolean().optional(),
+  /**
+   * MCD-maintained ISO timestamp of the first observation that this
+   * project's Discord channel no longer exists (gateway channelDelete
+   * event or channel-watch sweep probe returning Unknown Channel).
+   * Cleared by any successful probe. Not operator-set.
+   */
+  channelMissingSince: z.string().optional(),
+  /**
+   * MCD-maintained ISO timestamp of the last "channel deleted — remove
+   * project?" prompt posted to the master channel. Gates the re-nag
+   * interval. Cleared when the channel is seen again. Not operator-set.
+   */
+  lastMissingAlertAt: z.string().optional(),
 }).superRefine((val, ctx) => {
   if (val.platform === 'whatsapp' && !val.whatsappJid) {
     ctx.addIssue({

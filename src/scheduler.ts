@@ -25,6 +25,12 @@ import type { InboundEnvelope } from './project-process.ts'
 import type { BacklogWatchConfig, ChannelsConfig } from './channels-config.ts'
 import type { HandoffSweepAction } from './handoffs.ts'
 
+/** Grace before a missing channel prompts the operator (~2 hourly ticks). Exported for tests. */
+export const CHANNEL_MISSING_GRACE_MS = 90 * 60_000
+
+/** Minimum interval between repeat prompts for the same missing channel. Exported for tests. */
+export const CHANNEL_MISSING_RENAG_MS = 7 * 86_400_000
+
 function resolveInjectVars(template: string, slug: string): string {
   const now = new Date()
   return template
@@ -930,6 +936,118 @@ export class Scheduler {
         }
       } catch (err) {
         this.log(`[auto-disable] ${project.slug}: sweep error — ${(err as Error).message}`)
+      }
+    }
+  }
+
+  /**
+   * Register a periodic sweep that probes each Discord project's channel for
+   * existence and prompts the operator when a channel has been deleted and
+   * stayed missing past the grace window. The probe is injected — the sweep
+   * itself never touches Discord, and it never deletes anything (the operator
+   * is the sole destructive trigger via `!project rm`).
+   *
+   * Safe to call once at startup — re-registering creates an additional timer,
+   * so don't call more than once.
+   */
+  registerChannelWatchSweep(opts: {
+    getChannels: () => ChannelsConfig
+    saveChannels: (cfg: ChannelsConfig) => void
+    channelExists: (chatId: string) => Promise<'exists' | 'missing' | 'unknown'>
+    onPrompt?: (slug: string, chatId: string) => void
+    sweepIntervalMs?: number
+    nowMs?: () => number
+  }): void {
+    const intervalMs = opts.sweepIntervalMs ?? 3_600_000
+    const timer = setInterval(() => void this.runChannelWatchSweep(opts), intervalMs)
+    if (typeof timer.unref === 'function') timer.unref()
+    this.log('channel-watch sweep registered')
+  }
+
+  async runChannelWatchSweep(opts: {
+    getChannels: () => ChannelsConfig
+    saveChannels: (cfg: ChannelsConfig) => void
+    channelExists: (chatId: string) => Promise<'exists' | 'missing' | 'unknown'>
+    onPrompt?: (slug: string, chatId: string) => void
+    nowMs?: () => number
+  }): Promise<void> {
+    const config = opts.getChannels()
+    const nowMs = opts.nowMs ? opts.nowMs() : Date.now()
+
+    for (const [chatId, project] of Object.entries(config.projects)) {
+      try {
+        // Master channel is never probed or prompted
+        if (config.master?.chatId === chatId) continue
+
+        // v1 is Discord-only — Teams/WhatsApp channels have no fetch probe
+        if (project.platform && project.platform !== 'discord') continue
+
+        const result = await opts.channelExists(chatId)
+
+        // Transient failure (rate limit, network, 5xx, missing access) — no state change
+        if (result === 'unknown') continue
+
+        if (result === 'exists') {
+          // Channel is alive — clear any stale missing/alert stamps
+          if (project.channelMissingSince === undefined && project.lastMissingAlertAt === undefined) continue
+          // Read fresh config before writing to avoid overwriting concurrent mutations
+          const latest = opts.getChannels()
+          const proj = latest.projects[chatId]
+          if (!proj) continue
+          const updated = { ...proj }
+          delete (updated as Record<string, unknown>).channelMissingSince
+          delete (updated as Record<string, unknown>).lastMissingAlertAt
+          opts.saveChannels({
+            ...latest,
+            projects: {
+              ...latest.projects,
+              [chatId]: updated,
+            },
+          })
+          this.log(`[channel-watch] ${project.slug}: channel restored — cleared missing state`)
+          continue
+        }
+
+        // result === 'missing'
+        // Invalid stored timestamps (NaN) are treated as unset
+        const missingSinceMs = project.channelMissingSince ? Date.parse(project.channelMissingSince) : NaN
+        if (isNaN(missingSinceMs)) {
+          // First observation — stamp it; the prompt waits for a later sweep to re-confirm
+          const latest = opts.getChannels()
+          const proj = latest.projects[chatId]
+          if (!proj) continue
+          opts.saveChannels({
+            ...latest,
+            projects: {
+              ...latest.projects,
+              [chatId]: { ...proj, channelMissingSince: new Date(nowMs).toISOString() },
+            },
+          })
+          this.log(`[channel-watch] ${project.slug}: channel missing — grace window started`)
+          continue
+        }
+
+        // Still inside the grace window — deletion not yet confirmed
+        if (nowMs - missingSinceMs < CHANNEL_MISSING_GRACE_MS) continue
+
+        // Past grace: prompt at most once per re-nag window
+        const lastAlertMs = project.lastMissingAlertAt ? Date.parse(project.lastMissingAlertAt) : NaN
+        if (!isNaN(lastAlertMs) && nowMs - lastAlertMs < CHANNEL_MISSING_RENAG_MS) continue
+
+        opts.onPrompt?.(project.slug, chatId)
+        const latest = opts.getChannels()
+        const proj = latest.projects[chatId]
+        if (!proj) continue
+        opts.saveChannels({
+          ...latest,
+          projects: {
+            ...latest.projects,
+            [chatId]: { ...proj, lastMissingAlertAt: new Date(nowMs).toISOString() },
+          },
+        })
+        this.log(`[channel-watch] ${project.slug}: missing past grace — operator prompted`)
+      } catch (err) {
+        this.log(`[channel-watch] ${project.slug}: sweep error — ${(err as Error).message}`)
       }
     }
   }

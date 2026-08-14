@@ -1,10 +1,10 @@
 # Goals: claude-mcd
 
 ## Scheduling
-- **Recommended interval:** 260 min
-- **Peak hour:** 04:00 UTC
-- **Avg turns/day:** 5.5
-- **Last updated:** 2026-07-29T02:01:12.338Z
+- **Recommended interval:** 215 min
+- **Peak hour:** 05:00 UTC
+- **Avg turns/day:** 6.7
+- **Last updated:** 2026-08-14T02:01:14.426Z
 
 ## Proposals
 - [ ] backlog-autopilot
@@ -19,6 +19,7 @@
 - [ ] idle-gated-schedules
 - [x] loop-halt-escalation
 - [ ] mcd-reliability-fixes
+- [ ] mission-control-perf-hardening
 - [ ] org-graph-view
 - [ ] orphan-session-sweep
 - [x] pr-credential-store

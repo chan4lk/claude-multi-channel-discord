@@ -1682,6 +1682,29 @@ async function maybeInitProjectsBackend(): Promise<void> {
     },
   })
 
+  // Channel-watch sweep: detect deleted Discord channels, prompt master for cleanup
+  scheduler.registerChannelWatchSweep({
+    getChannels: () => loadChannelsConfig(),
+    saveChannels: (cfg) => saveConfig(cfg),
+    channelExists: async (chatId) => {
+      try {
+        const ch = await client.channels.fetch(chatId)
+        return ch ? 'exists' : 'unknown'
+      } catch (err) {
+        // Only Unknown Channel (10003) is a definitive deletion; everything
+        // else (rate limit, network, missing access) is transient.
+        return (err as { code?: number }).code === 10003 ? 'missing' : 'unknown'
+      }
+    },
+    onPrompt: (slug, _chatId) => {
+      const cfg = loadChannelsConfig()
+      const masterChatId = cfg.master?.chatId
+      if (!masterChatId) return
+      const text = `🗑 channel for **${slug}** was deleted — remove project + files? run: \`!project rm ${slug} --yes --purge\` (or keep archive: \`!project rm ${slug} --yes\`)`
+      routeNotification(cfg, { kind: 'text', chatId: masterChatId, text }, 'channel-watch prompt')
+    },
+  })
+
   // Handoff sweep: nag receivers on stalled handoffs, escalate expired ones to master
   scheduler.registerHandoffSweep({
     getChannels: () => loadChannelsConfig(),
@@ -2529,6 +2552,28 @@ client.once('clientReady', c => {
 
 // Also register when bot joins a new guild
 client.on('guildCreate', guild => registerVoiceCommands(guild))
+
+// Early mark for deleted project channels — the hourly channel-watch sweep
+// re-verifies via REST and owns the grace window + master prompt.
+client.on('channelDelete', channel => {
+  try {
+    const cfg = loadChannelsConfig()
+    const project = cfg.projects[channel.id]
+    if (!project || project.channelMissingSince) return
+    if (project.platform && project.platform !== 'discord') return
+    if (cfg.master?.chatId === channel.id) return
+    saveConfig({
+      ...cfg,
+      projects: {
+        ...cfg.projects,
+        [channel.id]: { ...project, channelMissingSince: new Date().toISOString() },
+      },
+    })
+    console.log(`[channel-watch] channelDelete: marked ${project.slug} missing`)
+  } catch (err) {
+    console.error('[channel-watch] channelDelete handler failed:', err)
+  }
+})
 
 void maybeInitProjectsBackend().catch(err => {
   process.stderr.write(`discord: project backend init failed: ${err}\n`)

@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
-import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
-import { isAbsolute, join, resolve } from 'node:path'
+import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { isAbsolute, join, resolve, sep } from 'node:path'
 
 import { parseFlags, splitArgv } from './argv.ts'
 import { type MemoryStore, type MemoryType } from './memory-store.ts'
@@ -21,7 +21,7 @@ import {
 } from './channels-config.ts'
 import { assertSafeGitRef, buildGitEnv, gitClone, gitPullFastForward, gitSetRemote, gitStatusSummary } from './git-ops.ts'
 import { describePrAuth, getCredential, loadCredentials, saveCredentials, type PrApi } from './git-credentials.ts'
-import { accessFile, archiveDir, channelsDir, projectClaudeMd, projectDir, projectGoalFile } from './paths.ts'
+import { accessFile, archiveDir, channelsDir, projectClaudeMd, projectDir, projectGoalFile, projectsDir } from './paths.ts'
 import { IntervalSchema, loadSchedules, newScheduleId, saveSchedules, validateCron, type Schedule } from './schedules-config.ts'
 import { buildAttentionReport } from './heartbeat.ts'
 import { readSpecclawStatus } from './specclaw-status.ts'
@@ -279,7 +279,7 @@ function helpText(prefix: string): string {
     `${prefix} memory backup                    — trigger immediate R2 backup`,
     `${prefix} memory clear [--slug S] [--type T] --yes — delete matching memories`,
     `${prefix} heartbeat [--channel <slug>] [--quiet]        — attention report (quiet: HEARTBEAT_OK sentinel when healthy)`,
-    `${prefix} rm     <chat_id-or-slug> --yes                         — archive + remove`,
+    `${prefix} rm     <chat_id-or-slug> --yes [--purge]               — archive + remove (--purge deletes the working dir instead of archiving)`,
     `${prefix} hermes "<prompt>" [--model <m>] [--no-report]         — launch a detached Hermes agent run (ops tasks, self-restart)`,
     `${prefix} hermes --tail <run-id> [--lines <n>]                  — tail the log of a previous Hermes run`,
     `${prefix} help                          — this message`,
@@ -298,9 +298,10 @@ function handleList(config: ChannelsConfig): string {
   for (const [chatId, project] of entries.sort((a, b) => a[1].slug.localeCompare(b[1].slug))) {
     const tag = chatId === masterId ? '★' : ' '
     const disabledMark = project.disabled ? ' ⛔' : ''
+    const missingMark = project.channelMissingSince ? ' 🗑' : ''
     const model = project.model ?? config.defaults.model
     const repo = project.git?.remote ?? '(no remote)'
-    lines.push(`${tag} ${project.slug.padEnd(20)}${disabledMark} chat=${chatId}  model=${model}  ${repo}`)
+    lines.push(`${tag} ${project.slug.padEnd(20)}${disabledMark}${missingMark} chat=${chatId}  model=${model}  ${repo}`)
   }
   lines.push('```')
   lines.push(`★ = master channel · ${entries.length} project${entries.length === 1 ? '' : 's'}`)
@@ -325,6 +326,7 @@ function handleShow(config: ChannelsConfig, rest: string[]): string {
     `model: ${model}`,
   ]
   if (project.disabled) lines.push('disabled: yes')
+  if (project.channelMissingSince) lines.push(`channel: missing since ${project.channelMissingSince}`)
   // Presence only — the token value is revealed once at rotate time.
   if (project.externalToken) lines.push('external-token: set')
   const providerName = project.provider ?? config.defaults.provider
@@ -1170,8 +1172,9 @@ async function handleRm(rest: string[], ctx: MasterContext): Promise<string> {
   if (positional.length === 0) return '`rm` needs a chat_id or slug'
   const target = positional[0]!
   if (flags.yes !== true) {
-    return `_destructive: pass \`--yes\` to confirm._\nWill archive the project's working dir and remove it from channels.json. CLAUDE.md content + git history (if any) are preserved under \`projects/.archive/\`.`
+    return `_destructive: pass \`--yes\` to confirm._\nWill archive the project's working dir and remove it from channels.json. CLAUDE.md content + git history (if any) are preserved under \`projects/.archive/\`.\nWith \`--purge\` the working dir is DELETED from disk instead of archived.`
   }
+  const purge = flags.purge === true
 
   const config = loadConfig()
   const entry = resolveTarget(config, target)
@@ -1190,7 +1193,29 @@ async function handleRm(rest: string[], ctx: MasterContext): Promise<string> {
   }
 
   const oldDir = projectDir(entry.project.slug)
-  if (existsSync(oldDir)) {
+  if (purge) {
+    // Hard-delete instead of archiving. lstat-first: existsSync follows
+    // symlinks, so a dangling symlink would look absent — lstat catches it.
+    let st: ReturnType<typeof lstatSync> | null = null
+    try {
+      st = lstatSync(oldDir)
+    } catch {
+      st = null // nothing on disk — config-only removal below
+    }
+    if (st) {
+      if (st.isSymbolicLink()) {
+        // Symlinked project (--repo-dir): remove the link only, never the target.
+        unlinkSync(oldDir)
+      } else {
+        const real = realpathSync(oldDir)
+        const projectsRoot = realpathSync(projectsDir())
+        if (real !== projectsRoot && !real.startsWith(projectsRoot + sep)) {
+          return `refusing to purge **${entry.project.slug}**: its dir resolves outside \`projects/\` (\`${real}\`). Nothing was deleted.`
+        }
+        rmSync(real, { recursive: true, force: true })
+      }
+    }
+  } else if (existsSync(oldDir)) {
     mkdirSync(archiveDir(), { recursive: true, mode: 0o700 })
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
     const archiveTarget = join(archiveDir(), `${entry.project.slug}-${stamp}`)
@@ -1207,6 +1232,9 @@ async function handleRm(rest: string[], ctx: MasterContext): Promise<string> {
   // a confusing diagnostic).
   removeChannelFromAccessGroups(entry.chatId)
 
+  if (purge) {
+    return `✅ purged project **${entry.project.slug}** — working dir deleted, removed from channels.json.`
+  }
   return `✅ archived project **${entry.project.slug}** and removed from channels.json.\n_(working tree moved under \`projects/.archive/\` — manual cleanup if you want it gone.)_`
 }
 
