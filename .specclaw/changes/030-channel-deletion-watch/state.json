@@ -1,0 +1,11 @@
+{
+  "change": "030-channel-deletion-watch",
+  "phase": "tasks",
+  "branch": "",
+  "phases": {
+    "proposal": {"status":"approved","at":"2026-08-14T06:10:16Z"},
+    "spec": {"status":"done","at":"2026-08-14T06:12:25Z"},
+    "design": {"status":"done","at":"2026-08-14T06:13:33Z"},
+    "tasks": {"status":"done","at":"2026-08-14T06:14:24Z"}
+  }
+}
