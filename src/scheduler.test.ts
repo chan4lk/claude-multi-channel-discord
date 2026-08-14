@@ -1793,6 +1793,239 @@ import { createHandoff, loadRegistry } from './handoffs.ts'
 }
 
 // ============================================================
+// runChannelWatchSweep — AC2–AC6, AC10, AC11 + invalid-timestamp edge
+// ============================================================
+
+import { CHANNEL_MISSING_GRACE_MS, CHANNEL_MISSING_RENAG_MS } from './scheduler.ts'
+
+type CwProject = {
+  slug: string
+  platform?: 'discord' | 'teams' | 'whatsapp'
+  whatsappJid?: string
+  channelMissingSince?: string
+  lastMissingAlertAt?: string
+}
+
+/**
+ * Build a minimal ChannelsConfig for channel-watch sweep tests.
+ */
+function makeCwConfig(opts: {
+  masterChatId?: string
+  projects: Record<string, CwProject>
+}): ChannelsConfigForAD {
+  return {
+    version: 1,
+    master: opts.masterChatId ? { chatId: opts.masterChatId, commandPrefix: '!project' } : undefined,
+    defaults: {
+      model: 'sonnet',
+      idleEvictMinutes: 15,
+      maxConcurrent: 8,
+      git: { userName: 'bot', userEmail: 'bot@local', branchPrefix: 'claude/' },
+      claude: { permissionMode: 'auto' },
+      providers: {},
+      progressMode: 'off',
+      handoff: false,
+      contextWarningThresholdPct: 80,
+    },
+    projects: opts.projects,
+  }
+}
+
+/**
+ * Build channel-watch sweep opts with an in-memory config, a scripted probe
+ * (records every invocation per chatId), an onPrompt recorder, and a mutable
+ * injected clock.
+ */
+function makeCwOpts(opts: {
+  config: ChannelsConfigForAD
+  probe: Record<string, 'exists' | 'missing' | 'unknown'>
+  nowMs: number
+}): {
+  getChannels: () => ChannelsConfigForAD
+  saveChannels: (cfg: ChannelsConfigForAD) => void
+  channelExists: (chatId: string) => Promise<'exists' | 'missing' | 'unknown'>
+  onPrompt: (slug: string, chatId: string) => void
+  nowMs: () => number
+  setNow: (ms: number) => void
+  saved: ChannelsConfigForAD[]
+  prompts: Array<{ slug: string; chatId: string }>
+  probed: string[]
+} {
+  const saved: ChannelsConfigForAD[] = []
+  const prompts: Array<{ slug: string; chatId: string }> = []
+  const probed: string[] = []
+  let currentConfig = opts.config
+  let now = opts.nowMs
+  return {
+    getChannels: () => currentConfig,
+    saveChannels: (cfg: ChannelsConfigForAD) => { saved.push(cfg); currentConfig = cfg },
+    channelExists: async (chatId: string) => { probed.push(chatId); return opts.probe[chatId] ?? 'unknown' },
+    onPrompt: (slug, chatId) => { prompts.push({ slug, chatId }) },
+    nowMs: () => now,
+    setNow: (ms: number) => { now = ms },
+    saved,
+    prompts,
+    probed,
+  }
+}
+
+const CW_CHAT = '777777777777777777'
+const CW_NOW = 1_000_000_000_000
+
+// CW1 (AC2 first half): probe 'missing', field unset → channelMissingSince stamped, no prompt
+{
+  const config = makeCwConfig({ projects: { [CW_CHAT]: { slug: 'cwproj' } } })
+  const sweepOpts = makeCwOpts({ config, probe: { [CW_CHAT]: 'missing' }, nowMs: CW_NOW })
+  const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+  await scheduler.runChannelWatchSweep(sweepOpts)
+  check('CW1: missing + unset → saved once', sweepOpts.saved.length === 1)
+  check('CW1: channelMissingSince stamped to now',
+    sweepOpts.saved[0]?.projects[CW_CHAT]?.channelMissingSince === new Date(CW_NOW).toISOString())
+  check('CW1: no prompt on first observation', sweepOpts.prompts.length === 0)
+}
+
+// CW2 (AC2): missing since 30 min ago (grace 90) → still no prompt, no save
+{
+  const config = makeCwConfig({
+    projects: {
+      [CW_CHAT]: { slug: 'cwproj', channelMissingSince: new Date(CW_NOW - 30 * 60_000).toISOString() },
+    },
+  })
+  const sweepOpts = makeCwOpts({ config, probe: { [CW_CHAT]: 'missing' }, nowMs: CW_NOW })
+  const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+  await scheduler.runChannelWatchSweep(sweepOpts)
+  check('CW2: mid-grace → no prompt', sweepOpts.prompts.length === 0)
+  check('CW2: mid-grace → no save', sweepOpts.saved.length === 0)
+}
+
+// CW3 (AC3): missing since 91+ min ago → exactly one prompt, lastMissingAlertAt stamped
+// CW4 (AC4): re-sweep 1 day later → no re-prompt; 8 days later → reminder fires
+{
+  const missingSince = new Date(CW_NOW - CHANNEL_MISSING_GRACE_MS - 60_000).toISOString()
+  const config = makeCwConfig({
+    projects: { [CW_CHAT]: { slug: 'cwproj', channelMissingSince: missingSince } },
+  })
+  const sweepOpts = makeCwOpts({ config, probe: { [CW_CHAT]: 'missing' }, nowMs: CW_NOW })
+  const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+  await scheduler.runChannelWatchSweep(sweepOpts)
+  check('CW3: past grace → exactly one prompt', sweepOpts.prompts.length === 1)
+  check('CW3: prompt carries slug + chatId',
+    sweepOpts.prompts[0]?.slug === 'cwproj' && sweepOpts.prompts[0]?.chatId === CW_CHAT)
+  check('CW3: lastMissingAlertAt stamped',
+    sweepOpts.saved[sweepOpts.saved.length - 1]?.projects[CW_CHAT]?.lastMissingAlertAt === new Date(CW_NOW).toISOString())
+  check('CW3: channelMissingSince preserved',
+    sweepOpts.saved[sweepOpts.saved.length - 1]?.projects[CW_CHAT]?.channelMissingSince === missingSince)
+
+  // CW4a: next sweep 1 day later — within the 7-day re-nag window → no second prompt
+  sweepOpts.setNow(CW_NOW + 86_400_000)
+  await scheduler.runChannelWatchSweep(sweepOpts)
+  check('CW4a: sweep 1d later → no re-prompt', sweepOpts.prompts.length === 1)
+
+  // CW4b: sweep 8 days after the alert — past the re-nag window → reminder fires
+  sweepOpts.setNow(CW_NOW + CHANNEL_MISSING_RENAG_MS + 86_400_000)
+  await scheduler.runChannelWatchSweep(sweepOpts)
+  check('CW4b: sweep 8d later → reminder fires', sweepOpts.prompts.length === 2)
+  check('CW4b: reminder re-stamps lastMissingAlertAt',
+    sweepOpts.saved[sweepOpts.saved.length - 1]?.projects[CW_CHAT]?.lastMissingAlertAt
+      === new Date(CW_NOW + CHANNEL_MISSING_RENAG_MS + 86_400_000).toISOString())
+}
+
+// CW5 (AC5): probe 'exists' after missing+alert state → both fields cleared, no prompt
+{
+  const config = makeCwConfig({
+    projects: {
+      [CW_CHAT]: {
+        slug: 'cwproj',
+        channelMissingSince: new Date(CW_NOW - 2 * CHANNEL_MISSING_GRACE_MS).toISOString(),
+        lastMissingAlertAt: new Date(CW_NOW - CHANNEL_MISSING_GRACE_MS).toISOString(),
+      },
+    },
+  })
+  const sweepOpts = makeCwOpts({ config, probe: { [CW_CHAT]: 'exists' }, nowMs: CW_NOW })
+  const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+  await scheduler.runChannelWatchSweep(sweepOpts)
+  check('CW5: exists → saved once', sweepOpts.saved.length === 1)
+  const cw5Proj = sweepOpts.saved[0]?.projects[CW_CHAT]
+  check('CW5: channelMissingSince cleared',
+    cw5Proj !== undefined && !Object.prototype.hasOwnProperty.call(cw5Proj, 'channelMissingSince'))
+  check('CW5: lastMissingAlertAt cleared',
+    cw5Proj !== undefined && !Object.prototype.hasOwnProperty.call(cw5Proj, 'lastMissingAlertAt'))
+  check('CW5: no prompt on restore', sweepOpts.prompts.length === 0)
+}
+
+// CW6 (AC6): probe 'unknown' mid-grace → state unchanged, no prompt
+{
+  const midGrace = new Date(CW_NOW - 30 * 60_000).toISOString()
+  const config = makeCwConfig({
+    projects: { [CW_CHAT]: { slug: 'cwproj', channelMissingSince: midGrace } },
+  })
+  const sweepOpts = makeCwOpts({ config, probe: { [CW_CHAT]: 'unknown' }, nowMs: CW_NOW })
+  const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+  await scheduler.runChannelWatchSweep(sweepOpts)
+  check('CW6: unknown → no save', sweepOpts.saved.length === 0)
+  check('CW6: unknown → no prompt', sweepOpts.prompts.length === 0)
+  check('CW6: channelMissingSince untouched',
+    sweepOpts.getChannels().projects[CW_CHAT]?.channelMissingSince === midGrace)
+}
+
+// CW7 (AC10): master project is never probed
+{
+  const MASTER_CHAT = '888888888888888888'
+  const config = makeCwConfig({
+    masterChatId: MASTER_CHAT,
+    projects: {
+      [MASTER_CHAT]: { slug: 'master' },
+      [CW_CHAT]: { slug: 'cwproj' },
+    },
+  })
+  const sweepOpts = makeCwOpts({
+    config,
+    probe: { [MASTER_CHAT]: 'missing', [CW_CHAT]: 'exists' },
+    nowMs: CW_NOW,
+  })
+  const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+  await scheduler.runChannelWatchSweep(sweepOpts)
+  check('CW7: master never probed', !sweepOpts.probed.includes(MASTER_CHAT))
+  check('CW7: non-master project still probed', sweepOpts.probed.includes(CW_CHAT))
+  check('CW7: no prompt, no save', sweepOpts.prompts.length === 0 && sweepOpts.saved.length === 0)
+}
+
+// CW8 (AC11): whatsapp + teams projects skipped by the sweep
+{
+  const WA_CHAT = 'wa-chat-1'
+  const TEAMS_CHAT = 'teams-chat-1'
+  const config = makeCwConfig({
+    projects: {
+      [WA_CHAT]: { slug: 'waproj', platform: 'whatsapp', whatsappJid: '15551234567@s.whatsapp.net' },
+      [TEAMS_CHAT]: { slug: 'teamsproj', platform: 'teams' },
+    },
+  })
+  const sweepOpts = makeCwOpts({
+    config,
+    probe: { [WA_CHAT]: 'missing', [TEAMS_CHAT]: 'missing' },
+    nowMs: CW_NOW,
+  })
+  const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+  await scheduler.runChannelWatchSweep(sweepOpts)
+  check('CW8: whatsapp project not probed', !sweepOpts.probed.includes(WA_CHAT))
+  check('CW8: teams project not probed', !sweepOpts.probed.includes(TEAMS_CHAT))
+  check('CW8: no save, no prompt', sweepOpts.saved.length === 0 && sweepOpts.prompts.length === 0)
+}
+
+// CW9: invalid channelMissingSince + probe 'missing' → treated as unset, re-stamped, no crash
+{
+  const config = makeCwConfig({
+    projects: { [CW_CHAT]: { slug: 'cwproj', channelMissingSince: 'garbage' } },
+  })
+  const sweepOpts = makeCwOpts({ config, probe: { [CW_CHAT]: 'missing' }, nowMs: CW_NOW })
+  const scheduler = new Scheduler({ deliver: async () => {}, log: () => {} })
+  await scheduler.runChannelWatchSweep(sweepOpts)
+  check('CW9: garbage timestamp → re-stamped to now',
+    sweepOpts.saved[0]?.projects[CW_CHAT]?.channelMissingSince === new Date(CW_NOW).toISOString())
+  check('CW9: garbage timestamp → no prompt', sweepOpts.prompts.length === 0)
+}
+
+// ============================================================
 // Final result
 // ============================================================
 
