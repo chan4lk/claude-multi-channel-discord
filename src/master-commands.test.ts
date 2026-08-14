@@ -3,7 +3,7 @@
  * Exits 0 on pass, 1 on first failure. Keeps phase 2 tight without pulling
  * in a test framework.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -2274,6 +2274,111 @@ saveConfig(config)
 }
 
 // Restore config after ops tests
+saveConfig(config)
+
+// --- rm --purge (030-channel-deletion-watch AC7–AC10) ----------------------
+{
+  const archiveRoot = join(stateDir, 'projects', '.archive')
+  const archiveEntries = () => (existsSync(archiveRoot) ? readdirSync(archiveRoot) : [])
+
+  // Fixture: real project dir under projects/.
+  const createP = await handleMasterCommand(
+    '!project create 777700000000000001 --slug purgeme --prompt "purge target"',
+    mctx(),
+  )
+  check(
+    'purge: fixture project created',
+    createP.kind === 'reply' && existsSync(join(stateDir, 'projects', 'purgeme')),
+    JSON.stringify(createP).slice(0, 200),
+  )
+
+  // Confirm gate: --purge without --yes returns confirm text, deletes nothing.
+  const purgeNoYes = await handleMasterCommand('!project rm purgeme --purge', mctx())
+  check(
+    'purge: without --yes returns confirm text mentioning purge',
+    purgeNoYes.kind === 'reply' && purgeNoYes.text.includes('--yes') && purgeNoYes.text.includes('--purge'),
+  )
+  check(
+    'purge: without --yes nothing deleted',
+    existsSync(join(stateDir, 'projects', 'purgeme')) &&
+      loadConfig().projects['777700000000000001'] !== undefined,
+  )
+
+  // AC7: purge a real dir — deleted outright, no .archive copy, config entry gone.
+  const archiveCountBefore = archiveEntries().length
+  const purged = await handleMasterCommand('!project rm purgeme --yes --purge', mctx())
+  check('purge: success reply says purged', purged.kind === 'reply' && purged.text.includes('purged'))
+  check('purge: working dir deleted', !existsSync(join(stateDir, 'projects', 'purgeme')))
+  check('purge: no new .archive entry', archiveEntries().length === archiveCountBefore)
+  check('purge: removed from channels.json', loadConfig().projects['777700000000000001'] === undefined)
+
+  // AC8: symlinked project dir — only the link is removed, target survives.
+  const symTarget = mkdtempSync(join(tmpdir(), 'mcd-purge-target-'))
+  writeFileSync(join(symTarget, 'sentinel.txt'), 'still here\n')
+  {
+    const cfg = loadConfig()
+    saveConfig({
+      ...cfg,
+      projects: { ...cfg.projects, '777700000000000002': { slug: 'sympurge' } },
+    })
+  }
+  symlinkSync(symTarget, join(stateDir, 'projects', 'sympurge'))
+  const symPurged = await handleMasterCommand('!project rm sympurge --yes --purge', mctx())
+  check(
+    'purge symlink: success reply says purged',
+    symPurged.kind === 'reply' && symPurged.text.includes('purged'),
+    JSON.stringify(symPurged).slice(0, 200),
+  )
+  let linkGone = false
+  try {
+    lstatSync(join(stateDir, 'projects', 'sympurge'))
+  } catch {
+    linkGone = true
+  }
+  check('purge symlink: link removed', linkGone)
+  check('purge symlink: target dir + sentinel intact', existsSync(join(symTarget, 'sentinel.txt')))
+  check('purge symlink: removed from channels.json', loadConfig().projects['777700000000000002'] === undefined)
+  rmSync(symTarget, { recursive: true, force: true })
+
+  // AC9 (realpath-escape refusal) intentionally NOT tested here. The guard
+  // fires only when projects/<slug> lstat()s as a real (non-symlink)
+  // directory whose realpath resolves outside projects/. That layout is not
+  // constructible through the public handleRm path in this harness:
+  // - SlugSchema rejects "/" and "..", so a tampered slug can't even load;
+  // - a symlink at projects/<slug> takes the unlink branch (covered by AC8);
+  // - a symlinked ancestor of projects/ resolves identically in both
+  //   realpathSync calls, so containment still holds.
+  // Triggering it needs a bind mount or a mid-check symlink swap (TOCTOU),
+  // neither available in tests. The guard is defense-in-depth for
+  // hand-tampered layouts.
+
+  // AC10: master refuses rm regardless of --purge; nothing deleted.
+  const masterPurge = await handleMasterCommand('!project rm master-test --yes --purge', mctx())
+  check(
+    'purge: refuses master project',
+    masterPurge.kind === 'reply' && masterPurge.text.includes('refusing to rm the master'),
+  )
+  check('purge: master dir untouched', existsSync(join(stateDir, 'projects', 'master-test')))
+
+  // Regression: plain rm --yes (no --purge) still archives the working dir.
+  await handleMasterCommand(
+    '!project create 777700000000000003 --slug archiveme --prompt "archive target"',
+    mctx(),
+  )
+  const plainRm = await handleMasterCommand('!project rm archiveme --yes', mctx())
+  check(
+    'purge regression: plain rm still archives (reply)',
+    plainRm.kind === 'reply' && plainRm.text.includes('archived'),
+  )
+  const archivedDirs = archiveEntries().filter((n) => n.startsWith('archiveme-'))
+  check(
+    'purge regression: archived dir exists under .archive',
+    archivedDirs.length === 1 && existsSync(join(archiveRoot, archivedDirs[0]!)),
+  )
+  check('purge regression: working dir gone from projects/', !existsSync(join(stateDir, 'projects', 'archiveme')))
+}
+
+// Restore config after purge tests
 saveConfig(config)
 
 if (failed > 0) {
