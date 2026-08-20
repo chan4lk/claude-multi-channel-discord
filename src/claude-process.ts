@@ -931,8 +931,20 @@ export class ClaudeProjectProcess implements ProjectProcess {
         continue
       }
 
-      // Auto-accept workspace-trust dialog if it appears.
-      if (pane.match(/Do you trust the files in this folder\?|Trust this workspace/i)) {
+      // Auto-accept workspace-trust dialog if it appears. Claude has
+      // reworded the question more than once ("Do you trust the files in
+      // this folder?" → "Quick safety check: Is this a project you
+      // created or one you trust?"), and a miss is expensive: the dialog
+      // blocks the prompt, waitForTuiReady times out, and the project
+      // crash-loops until an operator attaches to the pane and presses
+      // Enter by hand (observed 2026-08-20 on a freshly cloned project).
+      // So match the affirmative OPTION label too — that string has been
+      // stable across rewordings — not just the question text.
+      if (
+        pane.match(
+          /Do you trust the files in this folder\?|Trust this workspace|Yes, I trust this folder|Quick safety check/i,
+        )
+      ) {
         this.log('detected workspace-trust dialog — pressing Enter to accept')
         spawnSync('tmux', ['send-keys', '-t', session, 'C-m'], { stdio: 'ignore' })
         await sleep(800)
