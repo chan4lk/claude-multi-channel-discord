@@ -83,6 +83,26 @@ function shellEscape(arg: string): string {
 }
 
 /**
+ * Footer strings the Claude Code TUI renders per permission mode. The
+ * readiness gate must match whichever mode the session actually runs in —
+ * an operator adding `--dangerously-skip-permissions` via extraArgs turns
+ * the footer into "bypass permissions on", and matching only "auto mode on"
+ * made waitForTuiReady time out forever: every spawn was declared crashed
+ * and the pool respawn-looped (observed 2026-08-20, microfinance-agents).
+ */
+const TUI_MODE_MARKERS = [
+  'auto mode on',
+  'bypass permissions on',
+  'accept edits on',
+  'plan mode on',
+] as const
+
+/** A captured pane counts as a ready TUI when the prompt cursor and any known permission-mode footer are visible. */
+export function paneShowsReadyTui(pane: string): boolean {
+  return pane.includes('❯') && TUI_MODE_MARKERS.some((m) => pane.includes(m))
+}
+
+/**
  * Walk descendants of pid looking for a process whose comm == "claude" or
  * "node" (claude runs on node). Returns the pid of the first match or null.
  */
@@ -662,8 +682,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     if (r.status !== 0) return false
-    const pane = r.stdout?.toString() ?? ''
-    return pane.includes('❯') && pane.includes('auto mode on')
+    return paneShowsReadyTui(r.stdout?.toString() ?? '')
   }
 
   /**
@@ -898,7 +917,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
       })
       const pane = r.stdout?.toString() ?? ''
 
-      if (pane.includes('❯') && pane.includes('auto mode on')) {
+      if (paneShowsReadyTui(pane)) {
         return true
       }
 
