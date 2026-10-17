@@ -1185,7 +1185,15 @@ export class ClaudeProjectProcess implements ProjectProcess {
       this.pollSpecclawProgress()
       // Keep parsing while a deliver is pending even with zero handlers
       // (progressMode off) — turn-completion detection needs the lines.
-      if (this.toolProgressHandlers.size === 0 && this.limitHitHandlers.size === 0 && this._pendingDeliverAt === null) return
+      // Same while a tool is in flight: a turn that replied early and then
+      // started a long Bash must still see that tool's tool_result, or
+      // inFlightToolSinceMs() would veto idle-evict until the pool's cap.
+      if (
+        this.toolProgressHandlers.size === 0 &&
+        this.limitHitHandlers.size === 0 &&
+        this._pendingDeliverAt === null &&
+        this.transcriptPendingTools.size === 0
+      ) return
       const sessionId = this.resolveSessionId()
       if (!sessionId || !this.projectCwd) return
       const path = join(homedir(), '.claude', 'projects', encodeProjectCwd(this.projectCwd), `${sessionId}.jsonl`)
@@ -1304,7 +1312,18 @@ export class ClaudeProjectProcess implements ProjectProcess {
     if (this.turnHistory.length > MAX_TURN_HISTORY) this.turnHistory.shift()
     this._pendingDeliverAt = null
     this._lastActivity = Date.now()
+    // A finished turn has no running tools; drop any tool_use whose
+    // tool_result we never saw so it can't veto a later kill.
+    this.transcriptPendingTools.clear()
     this.log('turn-complete (no reply)')
+  }
+
+  inFlightToolSinceMs(): number | null {
+    let oldest: number | null = null
+    for (const { startMs } of this.transcriptPendingTools.values()) {
+      if (oldest === null || startMs < oldest) oldest = startMs
+    }
+    return oldest
   }
 
   adaptiveThresholdMs(baseMs: number): number {

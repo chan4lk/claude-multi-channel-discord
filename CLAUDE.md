@@ -212,6 +212,8 @@ This prevents false-positive kills during long legitimate turns (subagent work, 
 
 **Guard B — idle-evict transcript veto:** idle-evict now vetoes the kill when `transcriptMtimeMs()` shows the session transcript was written within the idle window, emitting an `evict-skip` pool event instead. `lastActivityMs` only tracks deliveries + MCP tool calls, so a long turn making no MCP calls looked idle — idle-evict killed a session mid-build (observed 2026-07-25, specclaw channel).
 
+**Guard C — in-flight tool veto:** a long foreground tool call (ffmpeg render, big build) writes nothing to the transcript until it returns, so Guards A/B miss it. `ClaudeProjectProcess.inFlightToolSinceMs()` reports the oldest `tool_use` with no `tool_result` yet (cleared on turn completion); both the watchdog (`progress-skip` + `inFlightToolMs`) and idle-evict (`evict-skip`) defer while one is in flight, capped at `ProjectPool.MAX_IN_FLIGHT_TOOL_MS` (2h) after which the normal kill path resumes. Previously process-docs was watchdog-killed mid-render every hour (observed 2026-10-16/17).
+
 The `resolveSessionId()` three-tier resolution:
 1. In-memory cache
 2. `.session-id` on disk

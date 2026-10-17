@@ -7,11 +7,11 @@ import type { InboundEnvelope, OutboundReply, ProjectProcess, SpecclawProgressEv
 export type PoolEvent =
   | { kind: 'spawn'; chatId: string; slug: string }
   | { kind: 'evict'; chatId: string; slug: string; reason: 'idle-evict' | 'pool-full' }
-  | { kind: 'evict-skip'; chatId: string; slug: string; sinceActivityMs: number; sinceTranscriptMs: number }
+  | { kind: 'evict-skip'; chatId: string; slug: string; sinceActivityMs: number; sinceTranscriptMs: number; inFlightToolMs?: number }
   | { kind: 'rejected'; chatId: string; reason: 'unknown-project' | 'pool-full-no-evict-candidate' }
   | { kind: 'crashed'; chatId: string; slug: string; code: number | null; signal: NodeJS.Signals | null }
   | { kind: 'stuck'; chatId: string; slug: string; sinceLastReplyMs: number; effectiveThresholdMs: number }
-  | { kind: 'progress-skip'; chatId: string; slug: string; sinceLastReplyMs: number; sinceTranscriptMs: number; effectiveThresholdMs: number; episodeStartMs: number }
+  | { kind: 'progress-skip'; chatId: string; slug: string; sinceLastReplyMs: number; sinceTranscriptMs: number; effectiveThresholdMs: number; episodeStartMs: number; inFlightToolMs?: number }
   | { kind: 'tool-progress'; chatId: string; slug: string; event: ToolProgressEvent }
   | { kind: 'specclaw-progress'; chatId: string; slug: string; event: SpecclawProgressEvent }
   | { kind: 'limit-hit'; chatId: string; slug: string; event: LimitHitEvent }
@@ -96,6 +96,14 @@ export class ProjectPool {
    * but short enough that operators don't sit on a dead channel.
    */
   static readonly STUCK_THRESHOLD_MS = 5 * 60_000
+
+  /**
+   * Hard cap on the in-flight-tool veto. A foreground tool call (ffmpeg
+   * render, long build) writes nothing to the transcript until it returns,
+   * so the watchdog and idle-evict defer to it — but a tool running longer
+   * than this is treated as hung and the normal kill path resumes.
+   */
+  static readonly MAX_IN_FLIGHT_TOOL_MS = 2 * 60 * 60_000
 
   static readonly FAILURE_WINDOW_MS = 30 * 60_000   // 30 min
   static readonly MAX_FAILURES_BEFORE_CIRCUIT = 5
@@ -394,15 +402,22 @@ export class ProjectPool {
           } catch {
             transcriptMtime = null
           }
-          if (transcriptMtime !== null && now - transcriptMtime < effectiveThreshold) {
+          // Third signal: a tool call still running (no tool_result yet).
+          // A long foreground Bash leaves the transcript silent, so the
+          // mtime veto alone killed process-docs mid-render every hour
+          // (2026-10-16/17) and the renders never finished.
+          const inFlightToolMs = this.inFlightToolAgeMs(proc, now)
+          const transcriptFresh = transcriptMtime !== null && now - transcriptMtime < effectiveThreshold
+          if (transcriptFresh || inFlightToolMs !== null) {
             this.fireEvent({
               kind: 'progress-skip',
               chatId,
               slug: proc.slug,
               sinceLastReplyMs: sincePending,
-              sinceTranscriptMs: now - transcriptMtime,
+              sinceTranscriptMs: transcriptMtime !== null ? now - transcriptMtime : sincePending,
               effectiveThresholdMs: effectiveThreshold,
               episodeStartMs: pendingAt,
+              ...(inFlightToolMs !== null ? { inFlightToolMs } : {}),
             })
             continue
           }
@@ -445,13 +460,15 @@ export class ProjectPool {
         } catch {
           transcriptMtime = null
         }
-        if (transcriptMtime !== null && transcriptMtime >= idleCutoff) {
+        const inFlightToolMs = this.inFlightToolAgeMs(proc, now)
+        if ((transcriptMtime !== null && transcriptMtime >= idleCutoff) || inFlightToolMs !== null) {
           this.fireEvent({
             kind: 'evict-skip',
             chatId,
             slug: proc.slug,
             sinceActivityMs: now - proc.lastActivityMs(),
-            sinceTranscriptMs: now - transcriptMtime,
+            sinceTranscriptMs: transcriptMtime !== null ? now - transcriptMtime : now - proc.lastActivityMs(),
+            ...(inFlightToolMs !== null ? { inFlightToolMs } : {}),
           })
           continue
         }
@@ -459,6 +476,19 @@ export class ProjectPool {
         void proc.kill('idle-evict')
       }
     }
+  }
+
+  /** Age of the oldest in-flight tool call, or null when none / past MAX_IN_FLIGHT_TOOL_MS. */
+  private inFlightToolAgeMs(proc: ProjectProcess, now: number): number | null {
+    let since: number | null = null
+    try {
+      since = typeof proc.inFlightToolSinceMs === 'function' ? proc.inFlightToolSinceMs() : null
+    } catch {
+      since = null
+    }
+    if (since === null) return null
+    const age = now - since
+    return age < ProjectPool.MAX_IN_FLIGHT_TOOL_MS ? age : null
   }
 
   /** Tear down the pool. Resolves once every process has exited. */

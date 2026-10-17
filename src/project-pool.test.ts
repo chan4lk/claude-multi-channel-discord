@@ -1107,6 +1107,84 @@ function envelope(content: string): InboundEnvelope {
   check('29: defaults.autoDisable idleDays defaults to 7', withAutoDisableDefault.success && withAutoDisableDefault.data.defaults.autoDisable?.idleDays === 7)
 }
 
+// --- 30. In-flight tool veto: long foreground Bash leaves transcript silent ---
+{
+  function makePool(hangs: boolean, idleEvictMinutes: number) {
+    const config = makeConfig({ idleEvictMinutes })
+    const state = { now: 1_000_000 }
+    const events: PoolEvent[] = []
+    const created: MockProjectProcess[] = []
+    const pool = new ProjectPool({
+      factory: ({ chatId, project }) => {
+        const p = new MockProjectProcess({ chatId, slug: project.slug, now: () => state.now, hangs })
+        created.push(p)
+        return p
+      },
+      getConfig: () => config,
+      onReply: () => {},
+      onEvent: (e) => events.push(e),
+      now: () => state.now,
+    })
+    return { pool, state, events, created }
+  }
+
+  // 30a: watchdog — stale transcript but a tool started 20 min ago is still running.
+  {
+    const { pool, state, events, created } = makePool(true, 60)
+    await pool.deliver('111111111111111111', envelope('render'))
+    state.now += 25 * 60_000
+    created[0]!.setTranscriptMtimeMs(state.now - 20 * 60_000)
+    created[0]!.setInFlightToolSinceMs(state.now - 20 * 60_000)
+    pool.evictIdle()
+    await sleep(5)
+    check('30a: not watchdog-killed while tool in flight', pool.has('111111111111111111'))
+    check('30a: no stuck event', !events.some((e) => e.kind === 'stuck'))
+    check(
+      '30a: progress-skip carries inFlightToolMs',
+      events.some((e) => e.kind === 'progress-skip' && e.inFlightToolMs === 20 * 60_000),
+    )
+    await pool.shutdown()
+  }
+
+  // 30b: watchdog — tool in flight past MAX_IN_FLIGHT_TOOL_MS is treated as hung.
+  {
+    const { pool, state, events, created } = makePool(true, 600)
+    await pool.deliver('111111111111111111', envelope('hung-tool'))
+    state.now += ProjectPool.MAX_IN_FLIGHT_TOOL_MS + 60_000
+    created[0]!.setTranscriptMtimeMs(state.now - ProjectPool.MAX_IN_FLIGHT_TOOL_MS)
+    created[0]!.setInFlightToolSinceMs(state.now - ProjectPool.MAX_IN_FLIGHT_TOOL_MS - 1)
+    pool.evictIdle()
+    await sleep(5)
+    check('30b: killed when tool in flight past cap', !pool.has('111111111111111111'))
+    check('30b: stuck event fired', events.some((e) => e.kind === 'stuck'))
+    await pool.shutdown()
+  }
+
+  // 30c: idle-evict — replied early, then a long tool keeps running.
+  {
+    const { pool, state, events, created } = makePool(false, 1)
+    await pool.deliver('111111111111111111', envelope('reply-then-render'))
+    await sleep(5) // reply lands — clears pendingDeliverAtMs
+    state.now += 10 * 60_000
+    created[0]!.setTranscriptMtimeMs(state.now - 9 * 60_000)
+    created[0]!.setInFlightToolSinceMs(state.now - 9 * 60_000)
+    pool.evictIdle()
+    await sleep(5)
+    check('30c: not idle-evicted while tool in flight', pool.has('111111111111111111'))
+    check(
+      '30c: evict-skip carries inFlightToolMs',
+      events.some((e) => e.kind === 'evict-skip' && e.inFlightToolMs === 9 * 60_000),
+    )
+
+    // Tool finished → normal idle-evict resumes.
+    created[0]!.setInFlightToolSinceMs(null)
+    pool.evictIdle()
+    await sleep(5)
+    check('30c: idle-evicted once tool finishes', !pool.has('111111111111111111'))
+    await pool.shutdown()
+  }
+}
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)
   process.exit(1)

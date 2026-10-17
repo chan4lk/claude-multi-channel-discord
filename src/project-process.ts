@@ -81,6 +81,15 @@ export interface ProjectProcess {
    */
   transcriptMtimeMs?(): number | null
   /**
+   * Wall-clock ms when the oldest still-unresolved tool call of the current
+   * turn started (a `tool_use` with no matching `tool_result` yet), or null
+   * when none is in flight. A long foreground Bash (ffmpeg render, big
+   * build) writes NOTHING to the transcript until it returns, so the
+   * transcript-mtime veto misses it; this signal lets the pool tell "tool
+   * still running" from "agent hung". Optional.
+   */
+  inFlightToolSinceMs?(): number | null
+  /**
    * Per-process adaptive stuck threshold. Given the pool's base threshold,
    * returns a dynamically extended value derived from observed turn durations —
    * channels that routinely run long agent turns (parallel subagents, big
@@ -170,6 +179,17 @@ export class MockProjectProcess implements ProjectProcess {
   /** Test-only hook for the stuck-watchdog gate. */
   setTranscriptMtimeMs(ms: number | null): void {
     this._transcriptMtime = ms
+  }
+
+  private _inFlightToolSince: number | null = null
+
+  inFlightToolSinceMs(): number | null {
+    return this._inFlightToolSince
+  }
+
+  /** Test-only hook for the in-flight-tool veto. */
+  setInFlightToolSinceMs(ms: number | null): void {
+    this._inFlightToolSince = ms
   }
 
   /** Test-only hook: inject pre-built turn durations to exercise adaptive threshold. */

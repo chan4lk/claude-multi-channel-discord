@@ -1901,10 +1901,13 @@ const disabledNoticeAt = new Map<string, number>()
  * per-event posting (edit routing parity is out of scope here).
  */
 async function dispatchProgressSkip(
-  evt: { chatId: string; slug: string; sinceLastReplyMs: number; episodeStartMs: number },
+  evt: { chatId: string; slug: string; sinceLastReplyMs: number; episodeStartMs: number; inFlightToolMs?: number },
 ): Promise<void> {
   const minutes = Math.round(evt.sinceLastReplyMs / 60_000)
-  const text = `⏳ \`${evt.slug}\`: still working (transcript active, ${minutes} min since last reply)`
+  const why = evt.inFlightToolMs !== undefined
+    ? `tool running ${Math.round(evt.inFlightToolMs / 60_000)} min`
+    : 'transcript active'
+  const text = `⏳ \`${evt.slug}\`: still working (${why}, ${minutes} min since last reply)`
   const cfg = loadChannelsConfig()
   const platform = cfg.projects[evt.chatId]?.platform ?? 'discord'
   if (platform !== 'discord') {
