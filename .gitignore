@@ -6,7 +6,8 @@ bun.lock
 git-credentials.json
 /projects/
 .session-id*
-.claude/
+.claude/*
+!.claude/skills/
 .specclaw/worktrees/
 .specclaw/.specclaw/
 .specclaw/learnings.md
