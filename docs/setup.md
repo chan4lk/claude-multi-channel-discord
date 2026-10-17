@@ -153,7 +153,22 @@ launchctl load ~/Library/LaunchAgents/com.bistec.multi-channel-discord.plist
 
 ### Windows
 
-Run `bin/Install-McdService.ps1` in PowerShell (as Administrator). Requires WSL or Git Bash for tmux — the bot won't function without tmux on Windows.
+Native Windows works without WSL or tmux: on win32 each project runs on the **headless backend** — `claude -p --input-format stream-json --output-format stream-json` over plain pipes, one warm process per channel. Inbound messages are written to its stdin; replies still go through the `mcp__mcd__reply` tool. Set `MCD_SESSION_BACKEND=tmux|headless` to override the per-platform default.
+
+Prerequisites: `bun`, `git` (Git for Windows also provides Git Bash for `bin/*.sh`), and a logged-in `claude` CLI (`claude auth login`). MCD looks for `claude.exe` in this order: `MCD_CLAUDE_BIN`, then `claude.exe` on `PATH`, then the newest CLI bundled with the Claude desktop app. A `claude.cmd` wrapper alone is skipped, because Windows can't spawn it without a shell.
+
+Differences from tmux:
+- There is no TUI, so there are no trust/MCP/settings dialogs to dismiss and no live-attach debugging. Run `claude --resume <id>` in the project dir to inspect a session.
+- Each child's pid is kept in `projects/<slug>/.headless-pid`. The boot orphan sweep kills any recorded pid that is still a running `claude` (process tree included, via `taskkill /T`).
+- `!project usage` shows pid and uptime only; CPU and memory need `/proc`.
+
+Run it in the foreground:
+
+```powershell
+$env:MCD_CHANNELS_DIR = "$HOME\.claude\channels\discord-multi"; bun server.ts
+```
+
+To run it as a service, use `bin/Install-McdService.ps1` in PowerShell (as Administrator).
 
 ---
 

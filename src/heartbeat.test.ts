@@ -5,7 +5,7 @@
  * Uses plain bun <file> harness — no bun:test.
  */
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { realpathSync } from 'node:fs'
 
@@ -88,7 +88,7 @@ const CHAT_F = '111100000000000006'
 const CHAT_G = '111100000000000007'
 
 // Set MCD_CHANNELS_DIR before importing heartbeat.ts so paths resolve correctly
-const tmpDir = mkdtempSync('/tmp/hb-test-')
+const tmpDir = mkdtempSync(join(tmpdir(), 'hb-test-'))
 process.env.MCD_CHANNELS_DIR = tmpDir
 
 // Track all transcript dirs for cleanup

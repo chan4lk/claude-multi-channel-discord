@@ -10,6 +10,8 @@
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 
+import { resolveClaudeBin } from './claude-bin.ts'
+
 const DISTILL_TIMEOUT_MS = 90_000
 const DISTILL_PROMPT =
   'Summarise the key facts, decisions, and open questions from this session into MEMORY.md ' +
@@ -77,7 +79,8 @@ export async function runDistillation(opts: {
   log: (msg: string) => void
   onComplete?: (result: DistillationResult) => void
 }): Promise<DistillationResult> {
-  const { cwd, claudeBin = 'claude', log, onComplete } = opts
+  const { cwd, log, onComplete } = opts
+  const claudeBin = resolveClaudeBin(opts.claudeBin)
 
   if (!existsSync(cwd)) {
     log(`distillation: cwd ${cwd} does not exist — skipping`)

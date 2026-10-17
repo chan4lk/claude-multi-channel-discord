@@ -10,7 +10,7 @@
  * NEVER embedded in URLs to avoid leaking into git config or remote logs.
  */
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -49,14 +49,21 @@ export function buildGitEnv(credential: Credential | null, baseEnv = process.env
     //   - Azure DevOps: username is anything, password is the PAT.
     // The askpass helper detects which prompt it's answering via $1.
     const dir = mkdtempSync(join(tmpdir(), 'mcd-askpass-'))
-    const helper = join(dir, 'askpass.sh')
-    const script = [
-      '#!/usr/bin/env bash',
-      'case "$1" in',
-      '  *Username*) echo "x-access-token";;',
-      `  *)         echo "$${credential.envVar}";;`,
-      'esac',
-    ].join('\n')
+    // Git for Windows can't run a `#!/usr/bin/env bash` helper directly
+    // (env isn't on the native PATH), so emit a batch file there.
+    const helper = join(dir, process.platform === 'win32' ? 'askpass.cmd' : 'askpass.sh')
+    const script = process.platform === 'win32'
+      ? [
+          '@echo off',
+          'echo %~1 | findstr /C:"Username" >nul && (echo x-access-token) || (echo %' + credential.envVar + '%)',
+        ].join('\r\n')
+      : [
+          '#!/usr/bin/env bash',
+          'case "$1" in',
+          '  *Username*) echo "x-access-token";;',
+          `  *)         echo "$${credential.envVar}";;`,
+          'esac',
+        ].join('\n')
     writeFileSync(helper, script, { mode: 0o700 })
     env.GIT_ASKPASS = helper
     env.GIT_TERMINAL_PROMPT = '0'
@@ -64,7 +71,7 @@ export function buildGitEnv(credential: Credential | null, baseEnv = process.env
       env,
       cleanup: () => {
         try {
-          spawnSync('rm', ['-rf', dir], { stdio: 'ignore' })
+          rmSync(dir, { recursive: true, force: true })
         } catch {}
       },
     }
@@ -124,8 +131,8 @@ export function gitClone(opts: {
   if (opts.branch) args.push('--branch', opts.branch)
   // `--` stops git parsing the repo/target as options.
   args.push('--', opts.repo, opts.target)
-  // Run from /tmp; target is absolute and clone creates it.
-  return runGit('/tmp', args, opts.env ?? process.env)
+  // Run from the OS temp dir; target is absolute and clone creates it.
+  return runGit(tmpdir(), args, opts.env ?? process.env)
 }
 
 export function gitSetRemote(workingDir: string, name: string, url: string, env?: NodeJS.ProcessEnv): GitResult {

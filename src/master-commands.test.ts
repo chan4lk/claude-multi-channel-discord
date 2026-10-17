@@ -2322,7 +2322,7 @@ saveConfig(config)
       projects: { ...cfg.projects, '777700000000000002': { slug: 'sympurge' } },
     })
   }
-  symlinkSync(symTarget, join(stateDir, 'projects', 'sympurge'))
+  symlinkSync(symTarget, join(stateDir, 'projects', 'sympurge'), 'junction')
   const symPurged = await handleMasterCommand('!project rm sympurge --yes --purge', mctx())
   check(
     'purge symlink: success reply says purged',
