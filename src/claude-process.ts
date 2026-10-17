@@ -991,10 +991,26 @@ export class ClaudeProjectProcess implements ProjectProcess {
       ) {
         const keys = trustDialogKeys(pane)
         this.log(`detected workspace-trust dialog — sending ${keys.join(' ')} to accept`)
-        for (const key of keys) {
+        // Never Enter blind: the dialog can drop early keystrokes (Ink not
+        // reading stdin yet), and an Enter on the default "No, exit" kills
+        // claude (observed 2026-10-17, amax crash-loop). Send navigation
+        // keys, then confirm the cursor sits on "Yes" before pressing Enter.
+        const nav = keys.filter((k) => k !== 'C-m')
+        for (const key of nav) {
           spawnSync('tmux', ['send-keys', '-t', session, key], { stdio: 'ignore' })
           await sleep(120)
         }
+        if (nav.length > 0) {
+          await sleep(250)
+          const after = spawnSync('tmux', ['capture-pane', '-p', '-t', session], {
+            stdio: ['ignore', 'pipe', 'pipe'],
+          }).stdout?.toString() ?? ''
+          if (!/^\s*❯\s*(\d+\.\s*)?Yes\b/m.test(after)) {
+            await sleep(800)
+            continue
+          }
+        }
+        spawnSync('tmux', ['send-keys', '-t', session, 'C-m'], { stdio: 'ignore' })
         await sleep(800)
         continue
       }
