@@ -446,6 +446,16 @@ Then ask that Claude things like "list my MCD projects and flag any stalled back
 
 ---
 
+## CI checks
+
+Pull requests to `main` run `.github/workflows/pr-checks.yml`: `bun tsc --noEmit` plus every `src/*.test.ts` (one bun process per file, skip list in `bin/ci-tests.sh`), and a Windows job for the native backend tests. Run the same locally:
+
+```sh
+bun install --cwd apps/mission-control   # typecheck needs its deps
+bun tsc --noEmit
+bin/ci-tests.sh
+```
+
 ## Documentation
 
 | Guide | Contents |

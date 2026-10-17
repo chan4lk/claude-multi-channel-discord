@@ -1190,3 +1190,4 @@ if (failed > 0) {
   process.exit(1)
 }
 console.log('\nall checks passed')
+process.exit(0)
