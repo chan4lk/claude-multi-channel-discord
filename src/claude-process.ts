@@ -377,6 +377,10 @@ export class ClaudeProjectProcess implements ProjectProcess {
   private _alive = false
   private _lastActivity = Date.now()
   private _pendingDeliverAt: number | null = null
+  /** Human-originated inbound the current turn answers (for the no-reply-tool text fallback). */
+  private _pendingHumanMsgId: string | null = null
+  /** Assistant text emitted since the last deliver; posted if the turn ends without a reply tool call. */
+  private _turnText: string[] = []
   private spawnedAtMs: number | null = null
   private resumedSession = false
   private projectCwd: string | null = null
@@ -743,6 +747,8 @@ export class ClaudeProjectProcess implements ProjectProcess {
     const at = Date.now()
     this._lastActivity = at
     if (this._pendingDeliverAt === null) this._pendingDeliverAt = at
+    this._pendingHumanMsgId = envelope.userId.startsWith('__mcd_') ? null : envelope.messageId
+    this._turnText = []
     this.log(`deliver msg_id=${envelope.messageId} ts=${envelope.ts}`)
 
     const session = this.tmuxSessionName
@@ -1252,6 +1258,9 @@ export class ClaudeProjectProcess implements ProjectProcess {
           }
           for (const block of msg.content) {
             const b = block as { type?: string; id?: string; name?: string; input?: Record<string, unknown> }
+            if (b.type === 'text' && typeof (b as { text?: unknown }).text === 'string') {
+              this._turnText.push((b as { text: string }).text)
+            }
             if (b.type === 'tool_use' && b.id && b.name) {
               const inputSummary = summarizeToolInput(b.name, b.input ?? {})
               this.transcriptPendingTools.set(b.id, { toolName: b.name, inputSummary, startMs: Date.now() })
@@ -1316,6 +1325,21 @@ export class ClaudeProjectProcess implements ProjectProcess {
     // tool_result we never saw so it can't veto a later kill.
     this.transcriptPendingTools.clear()
     this.log('turn-complete (no reply)')
+    // Third-party providers (MiniMax, …) often answer in plain text and
+    // never call the reply tool, so the user sees nothing. Relay the turn's
+    // text for human-originated messages. Subscription-auth projects keep
+    // the strict contract (silent "no reply" turns stay silent).
+    const replyTo = this._pendingHumanMsgId
+    const text = this._turnText.join('\n\n').trim()
+    this._pendingHumanMsgId = null
+    this._turnText = []
+    if (this.opts.provider && replyTo && text) {
+      this.log(`reply-fallback: relaying ${text.length} chars of plain text (no reply tool call)`)
+      const reply: OutboundReply = { kind: 'text', chatId: this.chatId, text, replyTo }
+      for (const h of this.replyHandlers) {
+        try { h(reply) } catch (err) { this.log(`replyHandler threw during reply-fallback: ${(err as Error).message}`) }
+      }
+    }
   }
 
   inFlightToolSinceMs(): number | null {
