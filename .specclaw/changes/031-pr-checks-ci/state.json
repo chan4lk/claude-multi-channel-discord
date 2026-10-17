@@ -1,0 +1,12 @@
+{
+  "change": "031-pr-checks-ci",
+  "phase": "build",
+  "branch": "specclaw/031-pr-checks-ci",
+  "size": "bounded",
+  "phases": {
+    "proposal": {"status":"approved","at":"2026-10-17T13:10:02Z"},
+    "spec": {"status":"done","at":"2026-10-17T13:12:50Z"},
+    "tasks": {"status":"done","at":"2026-10-17T13:12:52Z"},
+    "build": {"status":"in-progress","at":"2026-10-17T13:13:09Z"}
+  }
+}

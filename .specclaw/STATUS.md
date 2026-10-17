@@ -1,7 +1,7 @@
 # 🦞 SpecClaw Dashboard
 
 **Project:** claude-mcd
-**Last Updated:** 2026-08-14 06:44 UTC
+**Last Updated:** 2026-10-17 13:17 UTC
 
 ## Active Changes
 
@@ -18,7 +18,7 @@
 - ✅ **012-bot-peer-dialogue** — 5/5 tasks (100%) | 0 failed
 - ✅ **013-cross-project-dialogue** — 6/6 tasks (100%) | 0 failed
 - ✅ **017-backlog-autopilot** — 6/6 tasks (100%) | 0 failed
-- ✅ **018-progress-set-phases** — 2/2 tasks (100%) | 0 failed
+- 🔨 **018-progress-set-phases** — 0/0 tasks (0%) | 0 failed
 - ✅ **019-orphan-session-sweep** — 4/4 tasks (100%) | 0 failed
 - ✅ **020-backlog-stall-watch** — 5/5 tasks (100%) | 0 failed
 - ✅ **021-hermes-project-invoke** — 5/5 tasks (100%) | 0 failed
@@ -28,8 +28,9 @@
 - ✅ **025-claude-ai-connector** — 4/4 tasks (100%) | 0 failed
 - ✅ **026-handoff-chains** — 6/6 tasks (100%) | 0 failed
 - ✅ **027-org-graph-view** — 5/5 tasks (100%) | 0 failed
-- 🔨 **029-mission-control-perf-hardening** — 10/11 tasks (90%) | 0 failed
-- 🔨 **030-channel-deletion-watch** — 6/7 tasks (85%) | 0 failed
+- ✅ **029-mission-control-perf-hardening** — 10/10 tasks (100%) | 0 failed
+- 📝 **030-channel-deletion-watch** — tasks done | 6/6 tasks (100%) | 0 failed
+- 🔨 **031-pr-checks-ci** ▫ — build in-progress | 3/3 tasks (100%) | 0 failed
 
 ## Pending Proposals
 
@@ -47,6 +48,6 @@ _None._
 
 ## Stats
 
-- **Total changes:** 30
-- **Active:** 24
+- **Total changes:** 31
+- **Active:** 25
 - **Completed:** 6

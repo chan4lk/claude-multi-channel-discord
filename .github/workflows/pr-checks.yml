@@ -1,0 +1,35 @@
+name: PR checks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: pr-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - run: bun install --cwd apps/mission-control
+      - run: bun tsc --noEmit
+      - run: bin/ci-tests.sh
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - run: bun install --cwd apps/mission-control
+      - name: Windows backend tests
+        shell: bash
+        run: bin/ci-tests.sh src/claude-bin.test.ts src/claude-process.test.ts src/orphan-sweep.test.ts
