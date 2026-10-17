@@ -30,9 +30,10 @@ export class UserEnvError extends Error {}
 export function loadUserEnv(path: string = userEnvFile()): Record<string, string> {
   if (!existsSync(path)) return {}
   // API keys live here. Same posture as git-credentials.json: refuse
-  // to load if the file is group- or world-readable.
+  // to load if the file is group- or world-readable. Windows reports
+  // every writable file as 0666 (access is ACL-based), so skip it there.
   const mode = statSync(path).mode & 0o777
-  if (mode & 0o077) {
+  if (process.platform !== 'win32' && mode & 0o077) {
     throw new UserEnvError(`${path} has insecure mode ${mode.toString(8)}; chmod 0600 it before reuse`)
   }
   const raw = readFileSync(path, 'utf8')

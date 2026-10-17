@@ -18,18 +18,24 @@
  *  - alive == has-session check (polled at low frequency)
  *  - kill(): tmux kill-session -t <name>
  *
- * Cross-platform: requires `tmux` (Linux + macOS). Windows operators need
- * WSL until a future fallback path lands.
+ * Cross-platform: the tmux backend needs `tmux` (Linux + macOS). Native
+ * Windows uses the headless backend instead (see defaultSessionBackend):
+ * claude runs as `claude -p --input-format stream-json --output-format
+ * stream-json` over plain pipes. Inbound messages are written to stdin as
+ * stream-json user turns; the `init` event carries the session UUID and
+ * `result` marks end-of-turn. Replies still flow through the MCP reply
+ * tool, and the transcript watcher / watchdog work unchanged.
  */
-import { spawnSync } from 'node:child_process'
-import { appendFileSync, existsSync, mkdtempSync, openSync, readFileSync, readSync, closeSync, readdirSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
+import { appendFileSync, existsSync, mkdtempSync, openSync, readFileSync, readSync, closeSync, readdirSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import type { ClaudeArgs } from './channels-config.ts'
 import type { MasterMcpServer } from './master-mcp-server.ts'
-import { projectDir, projectGoalFile, projectSessionFile } from './paths.ts'
+import { defaultSessionBackend, resolveClaudeBin, type SessionBackend } from './claude-bin.ts'
+import { projectDir, projectGoalFile, projectHeadlessPidFile, projectSessionFile } from './paths.ts'
 import { runDistillation } from './distillation.ts'
 import { buildSpecclawResumeBlock } from './specclaw-status.ts'
 import { parseLimitMessage, type LimitHitEvent } from './limit-offer.ts'
@@ -316,6 +322,8 @@ export interface ClaudeProjectProcessOptions {
   provider?: { baseUrl: string; apiKey: string; name?: string }
   /** Override `claude` binary path. Falls back to PATH lookup. */
   claudeBin?: string
+  /** Session backend. Defaults to defaultSessionBackend() (headless on win32, tmux elsewhere). */
+  backend?: SessionBackend
   /** Diagnostics. Defaults to stderr with a slug prefix. */
   log?: (msg: string) => void
   /**
@@ -367,7 +375,13 @@ export class ClaudeProjectProcess implements ProjectProcess {
   private readonly opts: ClaudeProjectProcessOptions
   private readonly log: (msg: string) => void
   private mcpConfigPath: string | null = null
+  private readonly backend: SessionBackend
   private tmuxSessionName: string | null = null
+  /** Headless backend: the stream-json `claude -p` child and its stdout line buffer. */
+  private child: ChildProcess | null = null
+  private childStdoutBuf = ''
+  /** Headless backend: last lines of stderr/non-JSON stdout, logged when the child dies. */
+  private childOutputTail: string[] = []
   private aliveCheckTimer: ReturnType<typeof setInterval> | null = null
   private transcriptWatcherTimer: ReturnType<typeof setInterval> | null = null
   private transcriptWatcherOffset = 0
@@ -416,10 +430,29 @@ export class ClaudeProjectProcess implements ProjectProcess {
     this.chatId = opts.chatId
     this.slug = opts.slug
     this.master = opts.master
+    this.backend = opts.backend ?? defaultSessionBackend()
     this.log = opts.log ?? ((m) => process.stderr.write(`[claude:${opts.slug}] ${m}\n`))
   }
 
-  async start(): Promise<void> {
+  /** True while a backend session (tmux session or headless child) is attached. */
+  private hasSession(): boolean {
+    return this.backend === 'headless' ? this.child !== null : this.tmuxSessionName !== null
+  }
+
+  /**
+   * The server fires start() without awaiting it and may deliver() the
+   * first message immediately. The tmux path reaches `_alive = true`
+   * synchronously; the headless path awaits the child's `spawn` event, so
+   * deliver() awaits this promise before checking liveness.
+   */
+  private starting: Promise<void> | null = null
+
+  start(): Promise<void> {
+    this.starting = this.startInner()
+    return this.starting
+  }
+
+  private async startInner(): Promise<void> {
     if (this._alive) throw new Error('ClaudeProjectProcess already started')
 
     const cwd = projectDir(this.slug)
@@ -506,21 +539,16 @@ export class ClaudeProjectProcess implements ProjectProcess {
     this.preSpawnSessionIds = listSessionIds(cwd)
     if (claudeArgs.extraArgs?.length) argv.push(...claudeArgs.extraArgs)
 
-    const cmd = argv.map(shellEscape).join(' ')
-    const sessionName = `mcd-${this.slug}-${Date.now().toString(36)}`
-    this.tmuxSessionName = sessionName
-
-    spawnSync('tmux', ['kill-session', '-t', sessionName], { stdio: 'ignore' })
-
-    // Track env vars we want to land on the pane process. tmux's
+    // Track env vars we want to land on the claude process. For tmux, the
     // long-running server is the actual parent of the pane, and it
     // ignores the `env` we pass to `spawnSync('tmux', ...)`. The only
     // reliable way to inject is `tmux new-session -e KEY=VAL` flags.
     // Build the list explicitly so we don't dump every var we have.
-    const tmuxEnvFlags: string[] = []
+    // The headless backend merges the same map over process.env.
+    const extraEnv: Record<string, string> = {}
     const addEnv = (key: string, val: string | undefined) => {
       if (val === undefined) return
-      tmuxEnvFlags.push('-e', `${key}=${val}`)
+      extraEnv[key] = val
     }
 
     // claude probes isTTY via TERM. When the bot runs under launchd or
@@ -528,7 +556,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
     // daemon has been started without TERM it persists (often for hours,
     // owned by PID 1 after the bot exits). Passing -e per session is the
     // only way to guarantee claude sees a TTY regardless of daemon state.
-    addEnv('TERM', process.env.TERM || 'xterm-256color')
+    if (this.backend === 'tmux') addEnv('TERM', process.env.TERM || 'xterm-256color')
 
     // Provider routing: when set, point claude's API client at a third
     // party Anthropic-compatible endpoint (e.g. MiniMax). Without this,
@@ -583,6 +611,28 @@ export class ClaudeProjectProcess implements ProjectProcess {
       }
     }
 
+    if (this.backend === 'headless') {
+      await this.startHeadless(argv, cwd, extraEnv)
+      if (!this.child) throw new Error('claude exited during startup (see log for its output)')
+    } else {
+      this.startTmux(argv, cwd, extraEnv)
+    }
+
+    this._alive = true
+    this._lastActivity = Date.now()
+    this.spawnedAtMs = Date.now()
+    if (this.backend === 'tmux') this.startAliveCheck()
+    this.startTranscriptWatcher()
+  }
+
+  private startTmux(argv: string[], cwd: string, extraEnv: Record<string, string>): void {
+    const cmd = argv.map(shellEscape).join(' ')
+    const sessionName = `mcd-${this.slug}-${Date.now().toString(36)}`
+    this.tmuxSessionName = sessionName
+
+    spawnSync('tmux', ['kill-session', '-t', sessionName], { stdio: 'ignore' })
+
+    const tmuxEnvFlags = Object.entries(extraEnv).flatMap(([k, v]) => ['-e', `${k}=${v}`])
     this.log(`tmux new-session -d -s ${sessionName} '${cmd}' (cwd=${cwd}, env+=${tmuxEnvFlags.length / 2})`)
     const result = spawnSync(
       'tmux',
@@ -610,12 +660,156 @@ export class ClaudeProjectProcess implements ProjectProcess {
     // can show what claude printed before dying. Without remain-on-exit the
     // session disappears and we lose all diagnostic output.
     spawnSync('tmux', ['set-option', '-t', sessionName, 'remain-on-exit', 'on'], { stdio: 'ignore' })
+  }
 
-    this._alive = true
-    this._lastActivity = Date.now()
-    this.spawnedAtMs = Date.now()
-    this.startAliveCheck()
-    this.startTranscriptWatcher()
+  /**
+   * Headless backend: run claude in print mode with stream-json on both
+   * sides and keep stdin open, so one warm process serves many turns —
+   * no PTY, no TUI dialogs to dismiss. Resolves once the OS has started
+   * the child (or rejects on ENOENT etc.).
+   */
+  private async startHeadless(argv: string[], cwd: string, extraEnv: Record<string, string>): Promise<void> {
+    const bin = resolveClaudeBin(this.opts.claudeBin)
+    const args = [
+      '-p',
+      '--input-format', 'stream-json',
+      '--output-format', 'stream-json',
+      '--verbose',
+      ...argv.slice(1),
+    ]
+    this.log(`headless spawn: ${bin} ${args.map(shellEscape).join(' ')} (cwd=${cwd}, env+=${Object.keys(extraEnv).length})`)
+    const child = spawn(bin, args, {
+      cwd,
+      env: { ...process.env, ...extraEnv },
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    })
+    await new Promise<void>((resolve, reject) => {
+      child.once('spawn', () => resolve())
+      child.once('error', (err) => reject(new Error(`claude spawn failed (${bin}): ${err.message}`)))
+    })
+    child.on('error', (err) => this.log(`headless child error: ${err.message}`))
+    this.child = child
+    this.childStdoutBuf = ''
+    this.childOutputTail = []
+    // Headless has no TUI; input is accepted as soon as the process is up.
+    this.tuiReady = true
+
+    child.stdout!.setEncoding('utf8')
+    child.stdout!.on('data', (data: string) => {
+      this.childStdoutBuf += data
+      let nl: number
+      while ((nl = this.childStdoutBuf.indexOf('\n')) >= 0) {
+        const line = this.childStdoutBuf.slice(0, nl).trim()
+        this.childStdoutBuf = this.childStdoutBuf.slice(nl + 1)
+        if (line) this.handleHeadlessLine(line)
+      }
+    })
+    child.stderr!.setEncoding('utf8')
+    child.stderr!.on('data', (data: string) => {
+      for (const l of data.split('\n')) if (l.trim()) this.pushOutputTail(l)
+    })
+    child.stdin!.on('error', (err) => this.log(`headless stdin error: ${err.message}`))
+    child.on('exit', (code, signal) => {
+      if (this.child !== child) return
+      this.child = null
+      this.log(`claude exited (code=${code} signal=${signal}) — last output:\n${this.childOutputTail.join('\n') || '(none)'}`)
+      if (!this._alive) return
+      this.notifyCrash('claude process exited unexpectedly')
+      this.markDead(code, signal)
+    })
+
+    if (child.pid) {
+      try { writeFileSync(projectHeadlessPidFile(this.slug), String(child.pid), { mode: 0o600 }) } catch { /* sweep is best-effort */ }
+    }
+  }
+
+  private pushOutputTail(line: string): void {
+    this.childOutputTail.push(line.length > 500 ? `${line.slice(0, 500)}…` : line)
+    if (this.childOutputTail.length > 40) this.childOutputTail.shift()
+  }
+
+  /**
+   * One stream-json event from the headless child. Tool progress, limits
+   * and context size still come from the transcript watcher; here we only
+   * need the session UUID (`init`) and end-of-turn (`result`).
+   */
+  private handleHeadlessLine(line: string): void {
+    let ev: Record<string, any>
+    try {
+      ev = JSON.parse(line) as Record<string, any>
+    } catch {
+      this.pushOutputTail(line)
+      return
+    }
+    if (ev.type === 'system' && ev.subtype === 'init' && typeof ev.session_id === 'string') {
+      this.adoptHeadlessSessionId(ev.session_id)
+      return
+    }
+    if (ev.type === 'result') {
+      // Drain the transcript first so the turn's text and tool_results
+      // are seen before the turn is closed.
+      this.pollTranscript()
+      if (ev.is_error && this._pendingHumanMsgId) {
+        const detail = typeof ev.result === 'string' && ev.result ? ev.result : (ev.subtype ?? 'error')
+        this.log(`turn ended with error: ${detail}`)
+        const reply: OutboundReply = {
+          kind: 'text',
+          chatId: this.chatId,
+          text: `⚠️ \`${this.slug}\`: ${String(detail).slice(0, 500)}`,
+          replyTo: this._pendingHumanMsgId,
+        }
+        for (const h of this.replyHandlers) {
+          try { h(reply) } catch {}
+        }
+      }
+      this.noteTurnComplete(typeof ev.duration_ms === 'number' ? ev.duration_ms : null)
+    }
+  }
+
+  /**
+   * The headless `init` event names the session authoritatively, so no
+   * transcript-dir diffing is needed. Persist it whenever it differs from
+   * what's on disk (a resume can come back under a new id).
+   */
+  private adoptHeadlessSessionId(sid: string): void {
+    this.observedSessionId = sid
+    this.sessionIdPersisted = true
+    const sessionFile = projectSessionFile(this.slug)
+    let current = ''
+    try { current = readFileSync(sessionFile, 'utf8').trim() } catch { /* none yet */ }
+    if (current === sid) return
+    try {
+      writeFileSync(sessionFile, sid, { mode: 0o600 })
+      this.log(`session-id captured: ${sid}`)
+    } catch (err) {
+      this.log(`session-id write failed: ${(err as Error).message}`)
+    }
+  }
+
+  /** Headless backend: submit one user turn on the child's stdin. */
+  private writeHeadlessTurn(text: string): boolean {
+    const stdin = this.child?.stdin
+    if (!stdin || stdin.destroyed) {
+      this.log('headless stdin unavailable — dropping input')
+      return false
+    }
+    const msg = { type: 'user', message: { role: 'user', content: text } }
+    stdin.write(`${JSON.stringify(msg)}\n`)
+    return true
+  }
+
+  /** Kill the headless child and its tool subprocesses (taskkill /T on Windows). */
+  private killHeadlessChild(): void {
+    try { rmSync(projectHeadlessPidFile(this.slug), { force: true }) } catch {}
+    const child = this.child
+    this.child = null
+    if (!child || child.exitCode !== null) return
+    if (process.platform === 'win32' && child.pid) {
+      spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
+    } else {
+      try { child.kill('SIGTERM') } catch {}
+    }
   }
 
   lastActivityMs(): number {
@@ -700,6 +894,9 @@ export class ClaudeProjectProcess implements ProjectProcess {
    * sanity check inside `deliver()`.
    */
   isResponsive(): boolean {
+    if (this.backend === 'headless') {
+      return this._alive && this.child !== null && this.child.exitCode === null && !this.child.stdin?.destroyed
+    }
     if (!this._alive || !this.tmuxSessionName) return false
     const r = spawnSync('tmux', ['capture-pane', '-p', '-t', this.tmuxSessionName], {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -714,6 +911,14 @@ export class ClaudeProjectProcess implements ProjectProcess {
    * operators won't get stats but the call won't throw.
    */
   async getStats(): Promise<{ pid: number | null; cpuTimeMs?: number; memoryMb?: number; uptimeMs?: number } | null> {
+    if (this.backend === 'headless') {
+      const pid = this.child?.pid
+      if (!this._alive || !pid) return null
+      return readProcStats(pid) ?? {
+        pid,
+        uptimeMs: this.spawnedAtMs !== null ? Date.now() - this.spawnedAtMs : undefined,
+      }
+    }
     if (!this._alive || !this.tmuxSessionName) return null
     const r = spawnSync(
       'tmux',
@@ -741,7 +946,10 @@ export class ClaudeProjectProcess implements ProjectProcess {
    * subsequent deliveries skip the wait — fast path.
    */
   async deliver(envelope: InboundEnvelope): Promise<void> {
-    if (!this._alive || !this.tmuxSessionName) {
+    if (this.starting) {
+      try { await this.starting } catch { /* surfaced by the dead check below */ }
+    }
+    if (!this._alive || !this.hasSession()) {
       throw new Error(`deliver() called on dead ClaudeProjectProcess ${this.slug}`)
     }
     const at = Date.now()
@@ -751,7 +959,14 @@ export class ClaudeProjectProcess implements ProjectProcess {
     this._turnText = []
     this.log(`deliver msg_id=${envelope.messageId} ts=${envelope.ts}`)
 
-    const session = this.tmuxSessionName
+    if (this.backend === 'headless') {
+      // No TUI gate and no /rename: the session id arrives on `init`.
+      await this.master.waitForChatReady(this.chatId)
+      this.writeHeadlessTurn(this.formatPrompt(envelope))
+      return
+    }
+
+    const session = this.tmuxSessionName!
 
     // First-message wait: the spawned `claude` may still be booting. A
     // failure here means the TUI never came up (malformed ~/.claude/settings.json,
@@ -1078,13 +1293,17 @@ export class ClaudeProjectProcess implements ProjectProcess {
     if (this._latestInputTokens < thresholdTokens) return
     const COOLDOWN_MS = 10 * 60_000
     if (Date.now() - this._lastContextWarnAt < COOLDOWN_MS) return
-    if (!this._alive || !this.tmuxSessionName) return
+    if (!this._alive || !this.hasSession()) return
     this._lastContextWarnAt = Date.now()
     this.log(`context-warning: input_tokens=${this._latestInputTokens} >= ${thresholdTokens} (${thresholdPct}%), injecting compression prompt`)
     const prompt = 'Your context window is large. Please summarise completed work, close finished tasks, and compact your working memory before continuing.'
-    const session = this.tmuxSessionName
-    spawnSync('tmux', ['send-keys', '-t', session, '-l', prompt], { stdio: 'ignore' })
-    spawnSync('tmux', ['send-keys', '-t', session, 'C-m'], { stdio: 'ignore' })
+    if (this.backend === 'headless') {
+      this.writeHeadlessTurn(prompt)
+    } else {
+      const session = this.tmuxSessionName!
+      spawnSync('tmux', ['send-keys', '-t', session, '-l', prompt], { stdio: 'ignore' })
+      spawnSync('tmux', ['send-keys', '-t', session, 'C-m'], { stdio: 'ignore' })
+    }
     if (this.opts.onContextWarning) {
       try { this.opts.onContextWarning(this._latestInputTokens, thresholdPct) } catch {}
     }
@@ -1202,107 +1421,108 @@ export class ClaudeProjectProcess implements ProjectProcess {
 
   private startTranscriptWatcher(): void {
     if (this.transcriptWatcherTimer) return
-    const poll = () => {
-      if (!this._alive) return
-      this.pollSpecclawProgress()
-      // Keep parsing while a deliver is pending even with zero handlers
-      // (progressMode off) — turn-completion detection needs the lines.
-      // Same while a tool is in flight: a turn that replied early and then
-      // started a long Bash must still see that tool's tool_result, or
-      // inFlightToolSinceMs() would veto idle-evict until the pool's cap.
-      if (
-        this.toolProgressHandlers.size === 0 &&
-        this.limitHitHandlers.size === 0 &&
-        this._pendingDeliverAt === null &&
-        this.transcriptPendingTools.size === 0
-      ) return
-      const sessionId = this.resolveSessionId()
-      if (!sessionId || !this.projectCwd) return
-      const path = join(homedir(), '.claude', 'projects', encodeProjectCwd(this.projectCwd), `${sessionId}.jsonl`)
-      if (path !== this.transcriptWatcherPath) {
-        // Seek to end of existing transcript so we only emit tool calls from
-        // new turns, not historical ones replayed from a --resume session.
-        let currentSize = 0
-        try { currentSize = statSync(path).size } catch { /* file not created yet */ }
-        this.transcriptWatcherOffset = currentSize
-        this.transcriptWatcherPath = path
-        this.transcriptPendingTools.clear()
-      }
-      let fd: number
-      try { fd = openSync(path, 'r') } catch { return }
-      let chunk: string
-      try {
-        let size: number
-        try { size = statSync(path).size } catch { return }
-        if (size <= this.transcriptWatcherOffset) { return }
-        const toRead = size - this.transcriptWatcherOffset
-        const buf = Buffer.allocUnsafe(toRead)
-        const bytesRead = readSync(fd, buf, 0, toRead, this.transcriptWatcherOffset)
-        this.transcriptWatcherOffset += bytesRead
-        chunk = buf.slice(0, bytesRead).toString('utf8')
-      } finally {
-        closeSync(fd)
-      }
-      for (const line of chunk.split('\n')) {
-        const trimmed = line.trim()
-        if (!trimmed) continue
-        let obj: Record<string, unknown>
-        try { obj = JSON.parse(trimmed) as Record<string, unknown> } catch { continue }
-        const rec = obj
-        if ((rec as any).isApiErrorMessage === true && (rec as any).apiErrorStatus === 429) {
-          const msg = (rec as any).message
-          let text = ''
-          if (typeof msg?.content === 'string') text = msg.content
-          else if (Array.isArray(msg?.content)) text = msg.content.map((b: any) => b?.text ?? '').join(' ').trim()
-          if (text && text !== this.lastLimitRaw) {
-            this.lastLimitRaw = text
-            this.fireLimitHit(parseLimitMessage(text))
-          }
-        }
-        if ((rec as any).type === 'system' && (rec as any).subtype === 'turn_duration') {
-          const d = (rec as any).durationMs
-          this.noteTurnComplete(typeof d === 'number' ? d : null)
-          continue
-        }
-        const msg = obj.message as { role?: string; content?: unknown[] } | undefined
-        if (!msg) continue
-        if (msg.role === 'assistant' && Array.isArray(msg.content)) {
-          // Track input_tokens for context-window saturation detection
-          const usage = (obj as { message?: { usage?: { input_tokens?: number } } }).message?.usage
-          if (usage?.input_tokens != null) {
-            this._latestInputTokens = usage.input_tokens
-          }
-          for (const block of msg.content) {
-            const b = block as { type?: string; id?: string; name?: string; input?: Record<string, unknown> }
-            if (b.type === 'text' && typeof (b as { text?: unknown }).text === 'string') {
-              this._turnText.push((b as { text: string }).text)
-            }
-            if (b.type === 'tool_use' && b.id && b.name) {
-              const inputSummary = summarizeToolInput(b.name, b.input ?? {})
-              this.transcriptPendingTools.set(b.id, { toolName: b.name, inputSummary, startMs: Date.now() })
-              this.fireToolProgress({ phase: 'start', toolId: b.id, toolName: b.name, inputSummary })
-            }
-          }
-        }
-        if (msg.role === 'user' && Array.isArray(msg.content)) {
-          for (const block of msg.content) {
-            const b = block as { type?: string; tool_use_id?: string; is_error?: boolean }
-            if (b.type === 'tool_result' && b.tool_use_id) {
-              const info = this.transcriptPendingTools.get(b.tool_use_id)
-              if (info) {
-                const durationMs = Date.now() - info.startMs
-                this.fireToolProgress({ phase: 'done', toolId: b.tool_use_id, toolName: info.toolName, durationMs, isError: b.is_error === true })
-                this.transcriptPendingTools.delete(b.tool_use_id)
-              }
-            }
-          }
-        }
-      }
-      // Context saturation check — after processing all new lines
-      this.checkContextWarning()
-    }
-    this.transcriptWatcherTimer = setInterval(poll, 2_000)
+    this.transcriptWatcherTimer = setInterval(() => this.pollTranscript(), 2_000)
     if (typeof this.transcriptWatcherTimer.unref === 'function') this.transcriptWatcherTimer.unref()
+  }
+
+  private pollTranscript(): void {
+    if (!this._alive) return
+    this.pollSpecclawProgress()
+    // Keep parsing while a deliver is pending even with zero handlers
+    // (progressMode off) — turn-completion detection needs the lines.
+    // Same while a tool is in flight: a turn that replied early and then
+    // started a long Bash must still see that tool's tool_result, or
+    // inFlightToolSinceMs() would veto idle-evict until the pool's cap.
+    if (
+      this.toolProgressHandlers.size === 0 &&
+      this.limitHitHandlers.size === 0 &&
+      this._pendingDeliverAt === null &&
+      this.transcriptPendingTools.size === 0
+    ) return
+    const sessionId = this.resolveSessionId()
+    if (!sessionId || !this.projectCwd) return
+    const path = join(homedir(), '.claude', 'projects', encodeProjectCwd(this.projectCwd), `${sessionId}.jsonl`)
+    if (path !== this.transcriptWatcherPath) {
+      // Seek to end of existing transcript so we only emit tool calls from
+      // new turns, not historical ones replayed from a --resume session.
+      let currentSize = 0
+      try { currentSize = statSync(path).size } catch { /* file not created yet */ }
+      this.transcriptWatcherOffset = currentSize
+      this.transcriptWatcherPath = path
+      this.transcriptPendingTools.clear()
+    }
+    let fd: number
+    try { fd = openSync(path, 'r') } catch { return }
+    let chunk: string
+    try {
+      let size: number
+      try { size = statSync(path).size } catch { return }
+      if (size <= this.transcriptWatcherOffset) { return }
+      const toRead = size - this.transcriptWatcherOffset
+      const buf = Buffer.allocUnsafe(toRead)
+      const bytesRead = readSync(fd, buf, 0, toRead, this.transcriptWatcherOffset)
+      this.transcriptWatcherOffset += bytesRead
+      chunk = buf.slice(0, bytesRead).toString('utf8')
+    } finally {
+      closeSync(fd)
+    }
+    for (const line of chunk.split('\n')) {
+      const trimmed = line.trim()
+      if (!trimmed) continue
+      let obj: Record<string, unknown>
+      try { obj = JSON.parse(trimmed) as Record<string, unknown> } catch { continue }
+      const rec = obj
+      if ((rec as any).isApiErrorMessage === true && (rec as any).apiErrorStatus === 429) {
+        const msg = (rec as any).message
+        let text = ''
+        if (typeof msg?.content === 'string') text = msg.content
+        else if (Array.isArray(msg?.content)) text = msg.content.map((b: any) => b?.text ?? '').join(' ').trim()
+        if (text && text !== this.lastLimitRaw) {
+          this.lastLimitRaw = text
+          this.fireLimitHit(parseLimitMessage(text))
+        }
+      }
+      if ((rec as any).type === 'system' && (rec as any).subtype === 'turn_duration') {
+        const d = (rec as any).durationMs
+        this.noteTurnComplete(typeof d === 'number' ? d : null)
+        continue
+      }
+      const msg = obj.message as { role?: string; content?: unknown[] } | undefined
+      if (!msg) continue
+      if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+        // Track input_tokens for context-window saturation detection
+        const usage = (obj as { message?: { usage?: { input_tokens?: number } } }).message?.usage
+        if (usage?.input_tokens != null) {
+          this._latestInputTokens = usage.input_tokens
+        }
+        for (const block of msg.content) {
+          const b = block as { type?: string; id?: string; name?: string; input?: Record<string, unknown> }
+          if (b.type === 'text' && typeof (b as { text?: unknown }).text === 'string') {
+            this._turnText.push((b as { text: string }).text)
+          }
+          if (b.type === 'tool_use' && b.id && b.name) {
+            const inputSummary = summarizeToolInput(b.name, b.input ?? {})
+            this.transcriptPendingTools.set(b.id, { toolName: b.name, inputSummary, startMs: Date.now() })
+            this.fireToolProgress({ phase: 'start', toolId: b.id, toolName: b.name, inputSummary })
+          }
+        }
+      }
+      if (msg.role === 'user' && Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          const b = block as { type?: string; tool_use_id?: string; is_error?: boolean }
+          if (b.type === 'tool_result' && b.tool_use_id) {
+            const info = this.transcriptPendingTools.get(b.tool_use_id)
+            if (info) {
+              const durationMs = Date.now() - info.startMs
+              this.fireToolProgress({ phase: 'done', toolId: b.tool_use_id, toolName: info.toolName, durationMs, isError: b.is_error === true })
+              this.transcriptPendingTools.delete(b.tool_use_id)
+            }
+          }
+        }
+      }
+    }
+    // Context saturation check — after processing all new lines
+    this.checkContextWarning()
   }
 
   /**
@@ -1373,9 +1593,10 @@ export class ClaudeProjectProcess implements ProjectProcess {
   }
 
   async kill(reason: 'idle-evict' | 'pool-full' | 'shutdown' | 'requested' | 'watchdog'): Promise<void> {
-    if (!this._alive || !this.tmuxSessionName) return
-    const session = this.tmuxSessionName
-    this.log(`kill (${reason}) — tmux kill-session -t ${session}`)
+    if (!this._alive || !this.hasSession()) return
+    this.log(this.backend === 'headless'
+      ? `kill (${reason}) — headless pid ${this.child?.pid ?? '?'}`
+      : `kill (${reason}) — tmux kill-session -t ${this.tmuxSessionName}`)
     // Best-effort session-id capture before teardown (FR2).
     if (reason === 'watchdog' && !this.sessionIdPersisted && this.projectCwd && this.preSpawnSessionIds.size > 0) {
       const sid = findNewSessionId(this.projectCwd, this.preSpawnSessionIds)
@@ -1391,9 +1612,13 @@ export class ClaudeProjectProcess implements ProjectProcess {
         } catch { /* non-fatal */ }
       }
     }
-    const result = spawnSync('tmux', ['kill-session', '-t', session], { stdio: 'ignore' })
-    if (result.status !== 0) {
-      this.log(`kill-session non-zero (${result.status}) — assuming already dead`)
+    if (this.backend === 'headless') {
+      this.killHeadlessChild()
+    } else {
+      const result = spawnSync('tmux', ['kill-session', '-t', this.tmuxSessionName!], { stdio: 'ignore' })
+      if (result.status !== 0) {
+        this.log(`kill-session non-zero (${result.status}) — assuming already dead`)
+      }
     }
     this.markDead(0, null)
 
@@ -1405,7 +1630,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
     // Fire background distillation if configured (P38). Non-blocking.
     if (this.opts.distillOnStop && this.projectCwd) {
       const cwd = this.projectCwd
-      const claudeBin = this.opts.claudeBin ?? 'claude'
+      const claudeBin = resolveClaudeBin(this.opts.claudeBin)
       const onComplete = this.opts.onDistillationComplete
       runDistillation({ slug: this.slug, cwd, claudeBin, log: this.log, onComplete }).catch(() => {})
     }
@@ -1501,6 +1726,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
       } catch {}
       this.gitCredentialCleanup = null
     }
+    if (this.backend === 'headless') this.killHeadlessChild()
     void this.master.closeChat(this.chatId)
     for (const h of this.exitHandlers) h({ code, signal })
   }

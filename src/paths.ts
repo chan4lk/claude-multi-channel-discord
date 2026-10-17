@@ -46,6 +46,11 @@ export function projectSessionFile(slug: string): string {
   return join(projectDir(slug), '.session-id')
 }
 
+/** Pid of the project's headless `claude` child (headless backend only). Read by the boot orphan sweep. */
+export function projectHeadlessPidFile(slug: string): string {
+  return join(projectDir(slug), '.headless-pid')
+}
+
 export function projectGoalFile(slug: string): string {
   return join(projectDir(slug), 'GOAL.md')
 }

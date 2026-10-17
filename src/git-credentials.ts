@@ -47,8 +47,9 @@ export class CredentialsLookupError extends Error {}
 export function loadCredentials(path: string = credsFile()): CredentialsFile {
   if (!existsSync(path)) return {}
   // Refuse to load if the file is world- or group-readable; PATs/keys live here.
+  // Windows reports every writable file as 0666 (access is ACL-based), so skip it there.
   const mode = statSync(path).mode & 0o777
-  if (mode & 0o077) {
+  if (process.platform !== 'win32' && mode & 0o077) {
     throw new CredentialsLookupError(
       `${path} has insecure mode ${mode.toString(8)}; chmod 0600 it before reuse`,
     )

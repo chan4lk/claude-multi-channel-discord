@@ -63,18 +63,21 @@ const bareCred: Credential = { type: 'ssh-key', keyPath: '~/.ssh/id_ed25519' }
 }
 
 // ── AC3: saveCredentials enforces 0600, including pre-existing loose file ────
+// POSIX modes only: Windows reports 0666 for any writable file and the
+// loader skips the mode check there.
 
 {
+  const posix = process.platform !== 'win32'
   const dir = mkdtempSync(join(tmpdir(), 'git-creds-test-'))
   const path = join(dir, 'git-credentials.json')
   try {
     const creds: CredentialsFile = { 'ssh-default': githubCred }
     saveCredentials(creds, path)
-    check('AC3: fresh save → mode 0600', (statSync(path).mode & 0o777) === 0o600)
+    if (posix) check('AC3: fresh save → mode 0600', (statSync(path).mode & 0o777) === 0o600)
 
     chmodSync(path, 0o644)
     saveCredentials(creds, path)
-    check('AC3: re-save over 0644 file → chmod back to 0600', (statSync(path).mode & 0o777) === 0o600)
+    if (posix) check('AC3: re-save over 0644 file → chmod back to 0600', (statSync(path).mode & 0o777) === 0o600)
 
     // Round-trip: what we saved parses back with prApi intact.
     const loaded = loadCredentials(path)
@@ -84,7 +87,8 @@ const bareCred: Credential = { type: 'ssh-key', keyPath: '~/.ssh/id_ed25519' }
     chmodSync(path, 0o644)
     let threw = false
     try { loadCredentials(path) } catch { threw = true }
-    check('AC3: 0644 file refused on load', threw)
+    if (posix) check('AC3: 0644 file refused on load', threw)
+    else check('win32: mode check skipped on load', !threw)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

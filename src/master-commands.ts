@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { isAbsolute, join, resolve, sep } from 'node:path'
 
 import { parseFlags, splitArgv } from './argv.ts'
@@ -514,14 +515,15 @@ async function handleCreate(rest: string[], ctx: MasterContext): Promise<string>
   const repoDirRaw = typeof flags['repo-dir'] === 'string' ? flags['repo-dir'] : null
   let repoDirNote: string | null = null
   if (repoDirRaw !== null) {
-    let repoDir = repoDirRaw.startsWith('~/') ? repoDirRaw.replace(/^~/, process.env.HOME ?? '') : repoDirRaw
+    let repoDir = repoDirRaw.startsWith('~/') ? repoDirRaw.replace(/^~/, homedir()) : repoDirRaw
     if (!isAbsolute(repoDir)) repoDir = resolve(repoDir)
     if (!existsSync(repoDir)) return `--repo-dir "${repoDir}" does not exist`
     if (!statSync(repoDir).isDirectory()) return `--repo-dir "${repoDir}" is not a directory`
 
     // Parent dir must exist (it always should — channelsDir/projects).
     mkdirSync(join(dir, '..'), { recursive: true, mode: 0o700 })
-    symlinkSync(repoDir, dir)
+    // A junction needs no admin/Developer Mode on Windows; elsewhere the type is ignored.
+    symlinkSync(repoDir, dir, 'junction')
 
     const claudeMd = projectClaudeMd(slug)
     if (existsSync(claudeMd) && flags['force-prompt'] !== true) {

@@ -17,8 +17,16 @@
  *
  * Opt out with `defaults.orphanSweep: false` in channels.json (required
  * when multiple MCD instances share one tmux server).
+ *
+ * The headless backend has no tmux server to list; each child's pid is
+ * recorded in `projects/<slug>/.headless-pid` instead, and the sweep kills
+ * any recorded pid that is still a claude running with an MCD mcp-config.
  */
 import { spawnSync } from 'node:child_process'
+import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
+
+import { projectsDir } from './paths.ts'
 
 /**
  * Filter tmux session names down to MCD project sessions.
@@ -45,8 +53,86 @@ export interface SweepResult {
 export function sweepOrphanSessions(): SweepResult {
   const result: SweepResult = { killed: [], errors: [] }
 
+  sweepHeadlessPids(result)
+  sweepTmuxSessions(result)
+
+  if (result.killed.length > 0 || result.errors.length > 0) {
+    process.stderr.write(
+      `orphan-sweep: ${result.killed.length} stale session(s) killed, ${result.errors.length} error(s)\n`,
+    )
+  }
+  return result
+}
+
+/**
+ * True when pid is a live claude that MCD spawned: its argv carries our
+ * `mcd-<slug>-*` --mcp-config. Checking the image name alone isn't enough —
+ * a recycled pid can belong to an unrelated claude (e.g. the desktop app's
+ * own sessions, which also run claude.exe in stream-json mode).
+ */
+function isMcdClaudePid(pid: number): boolean {
+  let cmdline = ''
+  if (process.platform === 'win32') {
+    const r = spawnSync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', `(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CommandLine`],
+      { encoding: 'utf8', windowsHide: true },
+    )
+    cmdline = r.stdout ?? ''
+  } else {
+    const r = spawnSync('ps', ['-p', String(pid), '-o', 'args='], { encoding: 'utf8' })
+    cmdline = r.stdout ?? ''
+  }
+  return /claude/i.test(cmdline) && /mcd-[^\\/\s]+[\\/]mcp-config\.json/.test(cmdline)
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function sweepHeadlessPids(result: SweepResult): void {
+  let slugs: string[]
+  try {
+    slugs = readdirSync(projectsDir())
+  } catch {
+    return
+  }
+  for (const slug of slugs) {
+    const pidFile = join(projectsDir(), slug, '.headless-pid')
+    if (!existsSync(pidFile)) continue
+    let pid: number
+    try {
+      pid = parseInt(readFileSync(pidFile, 'utf8').trim(), 10)
+      rmSync(pidFile, { force: true })
+    } catch {
+      continue
+    }
+    // A recycled pid that now belongs to something else is left alone.
+    if (!Number.isFinite(pid) || !isMcdClaudePid(pid)) continue
+    const name = `headless:${slug}(${pid})`
+    const kill = process.platform === 'win32'
+      ? spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { encoding: 'utf8', windowsHide: true })
+      : spawnSync('kill', [String(pid)], { encoding: 'utf8' })
+    // taskkill /T exits non-zero when a grandchild already exited mid-walk,
+    // even though the target died; what matters is that the pid is gone.
+    if ((kill.error || kill.status !== 0) && pidAlive(pid)) {
+      result.errors.push(`${name}: ${kill.error?.message ?? ((kill.stderr ?? '').trim() || 'kill failed')}`)
+      process.stderr.write(`orphan-sweep: failed to kill ${name}\n`)
+      continue
+    }
+    result.killed.push(name)
+    process.stderr.write(`orphan-sweep: killed ${name}\n`)
+  }
+}
+
+function sweepTmuxSessions(result: SweepResult): void {
   const ls = spawnSync('tmux', ['ls', '-F', '#{session_name}'], { encoding: 'utf8' })
-  if (ls.error || ls.status !== 0) return result
+  if (ls.error || ls.status !== 0) return
 
   const names = (ls.stdout ?? '').split('\n').map((l) => l.trim()).filter(Boolean)
   for (const name of findOrphanSessions(names)) {
@@ -60,11 +146,4 @@ export function sweepOrphanSessions(): SweepResult {
     result.killed.push(name)
     process.stderr.write(`orphan-sweep: killed ${name}\n`)
   }
-
-  if (result.killed.length > 0 || result.errors.length > 0) {
-    process.stderr.write(
-      `orphan-sweep: ${result.killed.length} stale session(s) killed, ${result.errors.length} error(s)\n`,
-    )
-  }
-  return result
 }

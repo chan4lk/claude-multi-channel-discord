@@ -153,7 +153,33 @@ launchctl load ~/Library/LaunchAgents/com.bistec.multi-channel-discord.plist
 
 ### Windows
 
-Run `bin/Install-McdService.ps1` in PowerShell (as Administrator). Requires WSL or Git Bash for tmux — the bot won't function without tmux on Windows.
+Native Windows works without WSL or tmux: on win32 each project runs on the **headless backend** — `claude -p --input-format stream-json --output-format stream-json` over plain pipes, one warm process per channel. Inbound messages are written to its stdin; replies still go through the `mcp__mcd__reply` tool. Set `MCD_SESSION_BACKEND=tmux|headless` to override the per-platform default.
+
+Prerequisites: `bun`, `git` (Git for Windows also provides Git Bash for `bin/*.sh`), and a logged-in `claude` CLI (`claude auth login`). MCD looks for `claude.exe` in this order: `MCD_CLAUDE_BIN`, then `claude.exe` on `PATH`, then the newest CLI bundled with the Claude desktop app. The app is MSIX-packaged, so outside it the bundle is found under `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude`. A `claude.cmd` wrapper alone is skipped, because Windows can't spawn it without a shell.
+
+Differences from tmux:
+- There is no TUI, so there are no trust/MCP/settings dialogs to dismiss and no live-attach debugging. Run `claude --resume <id>` in the project dir to inspect a session.
+- Each child's pid is kept in `projects/<slug>/.headless-pid`. The boot orphan sweep kills any recorded pid that is still a running `claude` (process tree included, via `taskkill /T`).
+- `!project usage` shows pid and uptime only; CPU and memory need `/proc`.
+
+Bootstrap the state dir with `bin\Setup-McdWindows.ps1`, the PowerShell counterpart of `setup-new-instance.sh`. It prompts for your user ID, the master channel ID and the bot token (hidden input), then restricts the folder to your account. Then run the bot in the foreground:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File bin\Setup-McdWindows.ps1
+powershell -ExecutionPolicy Bypass -File bin\Start-Mcd.ps1
+```
+
+To keep it running in the background, `bin\Install-McdService.ps1` registers a scheduled task. It starts at logon, runs hidden as **your** account, has no time limit and restarts after a crash. No elevation is needed. It must run as you, not LocalSystem, because the `claude` login lives in your profile. Output goes to `<StateDir>\mcd.log`, and the previous run is kept as `mcd.log.1`.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File bin\Install-McdService.ps1             # register
+Start-ScheduledTask -TaskName multi-channel-discord                             # start now
+powershell -ExecutionPolicy Bypass -File bin\Install-McdService.ps1 -Stop       # stop
+powershell -ExecutionPolicy Bypass -File bin\Install-McdService.ps1 -Uninstall  # remove
+Get-Content "$HOME\.claude\channels\discord-multi\mcd.log" -Wait -Tail 50       # follow logs
+```
+
+Stop it with `-Stop`, not `Stop-ScheduledTask`. The latter only ends the PowerShell wrapper, so bun and its `claude` children keep running until the next start. `Start-Mcd.ps1` records the server pid in `<StateDir>\mcd-server.pid` and kills any previous instance's process tree before it starts, so there is never more than one bot.
 
 ---
 

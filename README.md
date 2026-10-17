@@ -32,8 +32,8 @@ Discord (one bot) ─→ server.ts ─→ ProjectPool ─→ N × claude subproc
                                   └── one HTTP server, multiplexed by /mcp/<chat_id>
 ```
 
-- Each project channel → one `claude` subprocess inside a detached tmux session.
-- **Inbound:** Discord messages injected via `tmux send-keys` (keeps the warm interactive session).
+- Each project channel → one `claude` subprocess inside a detached tmux session (Linux/macOS), or a headless stream-json `claude -p` child over pipes (native Windows, no WSL — see [docs/setup.md](./docs/setup.md#windows)).
+- **Inbound:** Discord messages injected via `tmux send-keys` (keeps the warm interactive session), or written to the headless child's stdin.
 - **Outbound:** Claude calls `mcp__mcd__reply` against the HTTP MCP server → Discord, chunked at 2000 chars.
 - Cross-platform: HTTP-on-localhost works identically on Linux, macOS, and Windows.
 
@@ -63,7 +63,7 @@ The installer detects your OS, installs bun + tmux, clones the repo, runs the in
 
 ---
 
-**1. Prerequisites:** `bun`, `claude` CLI (logged in), `tmux`, `git`. Optionally `gh` for PR workflows.
+**1. Prerequisites:** `bun`, `claude` CLI (logged in), `tmux` (not needed on Windows), `git`. Optionally `gh` for PR workflows.
 
 ```sh
 bin/check-env.sh   # verify everything is installed
