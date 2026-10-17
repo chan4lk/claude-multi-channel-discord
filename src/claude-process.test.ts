@@ -3,7 +3,7 @@
  * Unit tests for paneShowsReadyTui.
  * Run: bun src/claude-process.test.ts
  */
-import { paneShowsReadyTui } from './claude-process.ts'
+import { paneShowsReadyTui, trustDialogKeys } from './claude-process.ts'
 
 let failed = 0
 function check(label: string, cond: boolean, detail?: string) {
@@ -46,6 +46,34 @@ check(
   'trust dialog pending',
   !paneShowsReadyTui('Do you trust the files in this folder?\n❯ 1. Yes, proceed'),
 )
+
+// ---------------------------------------------------------------------------
+// trustDialogKeys — must land on "Yes", never Enter on the default "No"
+// ---------------------------------------------------------------------------
+const eq = (a: string[], b: string[]) => JSON.stringify(a) === JSON.stringify(b)
+const quickCheckPane = [
+  ' Quick safety check: Is this a project you created or one you trust?',
+  ' Claude Code\'ll be able to read, edit, and execute files here.',
+  '',
+  ' ❯ No, exit',
+  '   Yes, I trust this folder',
+  '',
+  ' Enter to confirm · Esc to cancel',
+].join('\n')
+check('quick-check dialog: Down then Enter', eq(trustDialogKeys(quickCheckPane), ['Down', 'C-m']), JSON.stringify(trustDialogKeys(quickCheckPane)))
+check(
+  'cursor already on Yes: Enter only',
+  eq(trustDialogKeys(' ❯ Yes, I trust this folder\n   No, exit'), ['C-m']),
+)
+check(
+  'cursor below Yes: Up then Enter',
+  eq(trustDialogKeys('   Yes, I trust this folder\n ❯ No, exit'), ['Up', 'C-m']),
+)
+check(
+  'numbered dialog: digit then Enter',
+  eq(trustDialogKeys('Do you trust the files in this folder?\n❯ 1. Yes, proceed\n  2. No, exit'), ['1', 'C-m']),
+)
+check('no Yes option: fall back to Enter', eq(trustDialogKeys('Trust this workspace'), ['C-m']))
 
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)
