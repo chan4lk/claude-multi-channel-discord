@@ -14,13 +14,13 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "@aws-sdk/client-s3": "^3.600.0",
-    "@xenova/transformers": "^2.17.2",
     "@discordjs/opus": "0.10.0",
     "@discordjs/voice": "0.19.2",
     "@hapi/boom": "^10.0.1",
-    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@octokit/rest": "^21.0.0",
     "@whiskeysockets/baileys": "^7.0.0-rc13",
+    "@xenova/transformers": "^2.17.2",
     "discord.js": "^14.14.0",
     "qrcode": "^1.5.4",
     "zod": "^3.23.8"

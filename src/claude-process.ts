@@ -103,6 +103,25 @@ export function paneShowsReadyTui(pane: string): boolean {
 }
 
 /**
+ * tmux keys that pick the affirmative option of the workspace-trust dialog.
+ * Claude's newer dialog lists `❯ No, exit` FIRST with the cursor on it, so a
+ * bare Enter declines and claude exits with status 1 (observed 2026-10-17,
+ * claude-mcd crash-loop). Numbered dialogs ("1. Yes, proceed") get the digit;
+ * unnumbered ones get Up/Down moves from the cursor line to the "Yes" line.
+ */
+export function trustDialogKeys(pane: string): string[] {
+  const lines = pane.split('\n').filter((l) => l.trim() !== '')
+  const yesIdx = lines.findIndex((l) => /\bYes\b/.test(l))
+  if (yesIdx < 0) return ['C-m']
+  const num = lines[yesIdx].match(/(\d+)\.\s*Yes\b/)
+  if (num) return [num[1], 'C-m']
+  const cursorIdx = lines.findIndex((l) => /^\s*❯\s*\S/.test(l))
+  if (cursorIdx < 0) return ['C-m']
+  const delta = yesIdx - cursorIdx
+  return [...Array(Math.abs(delta)).fill(delta > 0 ? 'Down' : 'Up'), 'C-m']
+}
+
+/**
  * Walk descendants of pid looking for a process whose comm == "claude" or
  * "node" (claude runs on node). Returns the pid of the first match or null.
  */
@@ -906,8 +925,8 @@ export class ClaudeProjectProcess implements ProjectProcess {
    * common for cloned repos that ship their own MCP setup). For the
    * MCP dialog we choose option `3` ("Continue without using this MCP
    * server"); --strict-mcp-config means claude wasn't going to load
-   * those servers anyway. For the workspace-trust dialog we send Enter
-   * to accept the default (trust this folder).
+   * those servers anyway. For the workspace-trust dialog we move to the
+   * "Yes" option before Enter (see trustDialogKeys — the default is "No").
    */
   private async waitForTuiReady(session: string, timeoutMs = 30_000): Promise<boolean> {
     const deadline = Date.now() + timeoutMs
@@ -964,8 +983,12 @@ export class ClaudeProjectProcess implements ProjectProcess {
           /Do you trust the files in this folder\?|Trust this workspace|Yes, I trust this folder|Quick safety check/i,
         )
       ) {
-        this.log('detected workspace-trust dialog — pressing Enter to accept')
-        spawnSync('tmux', ['send-keys', '-t', session, 'C-m'], { stdio: 'ignore' })
+        const keys = trustDialogKeys(pane)
+        this.log(`detected workspace-trust dialog — sending ${keys.join(' ')} to accept`)
+        for (const key of keys) {
+          spawnSync('tmux', ['send-keys', '-t', session, key], { stdio: 'ignore' })
+          await sleep(120)
+        }
         await sleep(800)
         continue
       }

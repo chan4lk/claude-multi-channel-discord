@@ -19,7 +19,12 @@ import type { AddressInfo } from 'node:net'
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
+import {
+  CallToolRequestSchema,
+  LATEST_PROTOCOL_VERSION,
+  ListToolsRequestSchema,
+  SUPPORTED_PROTOCOL_VERSIONS,
+} from '@modelcontextprotocol/sdk/types.js'
 import { ChannelType, type Attachment, type Client, type Message, type TextBasedChannel } from 'discord.js'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -356,6 +361,7 @@ export class MasterMcpServer {
   /** Per-request server + transport (stateless pattern from SDK example). */
   private async serveStateless(req: IncomingMessage, res: ServerResponse, server: Server, label: string): Promise<void> {
     const body = await readBody(req)
+    clampProtocolVersionHeader(req)
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
     transport.onerror = (err) => this.log(`transport error on ${label}: ${err.message}`)
 
@@ -1591,6 +1597,25 @@ function okResult(text: string) {
 
 function errorResult(text: string) {
   return { content: [{ type: 'text' as const, text }], isError: true }
+}
+
+/**
+ * Clamp an `MCP-Protocol-Version` header the SDK doesn't know to its latest
+ * version. Newer claude CLIs (2.1.30x) send `2026-07-28`, which SDK 1.32.x
+ * rejects with a 400 before any handler runs — the client retries with an
+ * older version, but every spawn logged a transport error and paid a failed
+ * round-trip. Our tools only use the base tools/* surface, so serving the
+ * request at the SDK's latest version is safe. The SDK's node adapter reads
+ * `rawHeaders`, so patch both views.
+ */
+export function clampProtocolVersionHeader(req: IncomingMessage): string | null {
+  const sent = req.headers['mcp-protocol-version']
+  if (typeof sent !== 'string' || SUPPORTED_PROTOCOL_VERSIONS.includes(sent)) return null
+  req.headers['mcp-protocol-version'] = LATEST_PROTOCOL_VERSION
+  for (let i = 0; i < req.rawHeaders.length; i += 2) {
+    if (req.rawHeaders[i]!.toLowerCase() === 'mcp-protocol-version') req.rawHeaders[i + 1] = LATEST_PROTOCOL_VERSION
+  }
+  return sent
 }
 
 async function readBody(req: IncomingMessage): Promise<unknown> {

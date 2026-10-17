@@ -129,6 +129,24 @@ check(
   JSON.stringify(projTools),
 )
 
+// Unknown MCP-Protocol-Version (newer claude CLI) is clamped, not 400'd
+const futureVer = await fetch(projectUrl, {
+  method: 'POST',
+  headers: {
+    'content-type': 'application/json',
+    accept: 'application/json, text/event-stream',
+    'x-mcd-token': projectToken,
+    'mcp-protocol-version': '2026-07-28',
+  },
+  body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method: 'tools/list', params: {} }),
+})
+const futureText = await futureVer.text()
+check(
+  'tools/list with unknown protocol-version header → 200 + reply tool',
+  futureVer.status === 200 && futureText.includes('"reply"'),
+  `${futureVer.status} ${futureText.slice(0, 200)}`,
+)
+
 // tools/list: master channel additionally sees inject + run_master_command
 const masterList = await rpc(masterUrl, masterToken, 'tools/list', {})
 const masterTools = (masterList.result?.tools ?? []).map((t: { name: string }) => t.name)
