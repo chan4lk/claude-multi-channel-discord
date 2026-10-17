@@ -439,7 +439,20 @@ export class ClaudeProjectProcess implements ProjectProcess {
     return this.backend === 'headless' ? this.child !== null : this.tmuxSessionName !== null
   }
 
-  async start(): Promise<void> {
+  /**
+   * The server fires start() without awaiting it and may deliver() the
+   * first message immediately. The tmux path reaches `_alive = true`
+   * synchronously; the headless path awaits the child's `spawn` event, so
+   * deliver() awaits this promise before checking liveness.
+   */
+  private starting: Promise<void> | null = null
+
+  start(): Promise<void> {
+    this.starting = this.startInner()
+    return this.starting
+  }
+
+  private async startInner(): Promise<void> {
     if (this._alive) throw new Error('ClaudeProjectProcess already started')
 
     const cwd = projectDir(this.slug)
@@ -600,6 +613,7 @@ export class ClaudeProjectProcess implements ProjectProcess {
 
     if (this.backend === 'headless') {
       await this.startHeadless(argv, cwd, extraEnv)
+      if (!this.child) throw new Error('claude exited during startup (see log for its output)')
     } else {
       this.startTmux(argv, cwd, extraEnv)
     }
@@ -699,8 +713,8 @@ export class ClaudeProjectProcess implements ProjectProcess {
     child.on('exit', (code, signal) => {
       if (this.child !== child) return
       this.child = null
-      if (!this._alive) return
       this.log(`claude exited (code=${code} signal=${signal}) — last output:\n${this.childOutputTail.join('\n') || '(none)'}`)
+      if (!this._alive) return
       this.notifyCrash('claude process exited unexpectedly')
       this.markDead(code, signal)
     })
@@ -932,6 +946,9 @@ export class ClaudeProjectProcess implements ProjectProcess {
    * subsequent deliveries skip the wait — fast path.
    */
   async deliver(envelope: InboundEnvelope): Promise<void> {
+    if (this.starting) {
+      try { await this.starting } catch { /* surfaced by the dead check below */ }
+    }
     if (!this._alive || !this.hasSession()) {
       throw new Error(`deliver() called on dead ClaudeProjectProcess ${this.slug}`)
     }

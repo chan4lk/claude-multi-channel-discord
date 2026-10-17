@@ -51,6 +51,17 @@ try {
     'bin: win32 falls back to newest desktop-app bundle',
     resolveClaudeBin(undefined, { Path: shimDir, APPDATA: appData }, 'win32') === join(newer, 'claude.exe'),
   )
+  // MSIX-packaged desktop app: outside the package, the bundle lives under
+  // %LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude.
+  const localAppData = join(root, 'local')
+  const pkg = join(localAppData, 'Packages', 'Claude_pzs8sxrjxfjjc', 'LocalCache', 'Roaming', 'Claude', 'claude-code', '2.1.11', 'ccc')
+  mkdirSync(pkg, { recursive: true })
+  writeFileSync(join(pkg, 'claude.exe'), '')
+  check(
+    'bin: win32 finds the MSIX-packaged bundle via LOCALAPPDATA',
+    resolveClaudeBin(undefined, { Path: shimDir, APPDATA: join(root, 'no-such-appdata'), LOCALAPPDATA: localAppData }, 'win32') === join(pkg, 'claude.exe'),
+  )
+
   check('bin: win32 with nothing found returns claude', resolveClaudeBin(undefined, { Path: shimDir }, 'win32') === 'claude')
 } finally {
   rmSync(root, { recursive: true, force: true })

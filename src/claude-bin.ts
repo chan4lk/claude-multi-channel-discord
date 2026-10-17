@@ -8,7 +8,9 @@
  *   1. explicit override (option / MCD_CLAUDE_BIN)
  *   2. `claude.exe` on PATH (native installer puts it in ~/.local/bin)
  *   3. the newest CLI bundled with the Claude desktop app
- *      (%APPDATA%\Claude\claude-code\<version>\<hash>\claude.exe)
+ *      (%APPDATA%\Claude\claude-code\<version>\<hash>\claude.exe). The app
+ *      is MSIX-packaged, so outside the package that folder really lives at
+ *      %LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude.
  * Elsewhere PATH lookup of plain `claude` is left to the OS.
  */
 import { existsSync, readdirSync, statSync } from 'node:fs'
@@ -30,11 +32,27 @@ export function defaultSessionBackend(
   return platform === 'win32' ? 'headless' : 'tmux'
 }
 
-function newestBundledClaude(appData: string): string | null {
-  const base = join(appData, 'Claude', 'claude-code')
+/** Every `claude-code` dir the desktop app may have written, packaged or not. */
+function bundledClaudeRoots(env: NodeJS.ProcessEnv): string[] {
+  const roots: string[] = []
+  if (env.APPDATA) roots.push(join(env.APPDATA, 'Claude', 'claude-code'))
+  if (env.LOCALAPPDATA) {
+    const pkgs = join(env.LOCALAPPDATA, 'Packages')
+    try {
+      for (const p of readdirSync(pkgs)) {
+        if (p.startsWith('Claude_')) roots.push(join(pkgs, p, 'LocalCache', 'Roaming', 'Claude', 'claude-code'))
+      }
+    } catch { /* no Packages dir */ }
+  }
+  return roots
+}
+
+function newestBundledClaude(env: NodeJS.ProcessEnv): string | null {
   let best: { path: string; mtime: number } | null = null
-  try {
-    for (const ver of readdirSync(base)) {
+  for (const base of bundledClaudeRoots(env)) {
+    let versions: string[]
+    try { versions = readdirSync(base) } catch { continue }
+    for (const ver of versions) {
       const verDir = join(base, ver)
       let hashes: string[]
       try { hashes = readdirSync(verDir) } catch { continue }
@@ -46,8 +64,6 @@ function newestBundledClaude(appData: string): string | null {
         } catch { /* not a CLI dir */ }
       }
     }
-  } catch {
-    return null
   }
   return best?.path ?? null
 }
@@ -65,9 +81,5 @@ export function resolveClaudeBin(
     const exe = join(dir, 'claude.exe')
     if (existsSync(exe)) return exe
   }
-  if (env.APPDATA) {
-    const bundled = newestBundledClaude(env.APPDATA)
-    if (bundled) return bundled
-  }
-  return 'claude'
+  return newestBundledClaude(env) ?? 'claude'
 }
