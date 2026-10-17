@@ -169,7 +169,17 @@ powershell -ExecutionPolicy Bypass -File bin\Setup-McdWindows.ps1
 powershell -ExecutionPolicy Bypass -File bin\Start-Mcd.ps1
 ```
 
-To run it as a service, use `bin/Install-McdService.ps1` in PowerShell (as Administrator).
+To keep it running in the background, `bin\Install-McdService.ps1` registers a scheduled task. It starts at logon, runs hidden as **your** account, has no time limit and restarts after a crash. No elevation is needed. It must run as you, not LocalSystem, because the `claude` login lives in your profile. Output goes to `<StateDir>\mcd.log`, and the previous run is kept as `mcd.log.1`.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File bin\Install-McdService.ps1             # register
+Start-ScheduledTask -TaskName multi-channel-discord                             # start now
+powershell -ExecutionPolicy Bypass -File bin\Install-McdService.ps1 -Stop       # stop
+powershell -ExecutionPolicy Bypass -File bin\Install-McdService.ps1 -Uninstall  # remove
+Get-Content "$HOME\.claude\channels\discord-multi\mcd.log" -Wait -Tail 50       # follow logs
+```
+
+Stop it with `-Stop`, not `Stop-ScheduledTask`. The latter only ends the PowerShell wrapper, so bun and its `claude` children keep running until the next start. `Start-Mcd.ps1` records the server pid in `<StateDir>\mcd-server.pid` and kills any previous instance's process tree before it starts, so there is never more than one bot.
 
 ---
 

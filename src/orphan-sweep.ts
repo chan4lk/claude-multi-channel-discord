@@ -20,7 +20,7 @@
  *
  * The headless backend has no tmux server to list; each child's pid is
  * recorded in `projects/<slug>/.headless-pid` instead, and the sweep kills
- * any recorded pid that is still a running `claude` process.
+ * any recorded pid that is still a claude running with an MCD mcp-config.
  */
 import { spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs'
@@ -64,14 +64,35 @@ export function sweepOrphanSessions(): SweepResult {
   return result
 }
 
-/** True when pid is a live process whose image name is claude. */
-function isClaudePid(pid: number): boolean {
+/**
+ * True when pid is a live claude that MCD spawned: its argv carries our
+ * `mcd-<slug>-*` --mcp-config. Checking the image name alone isn't enough —
+ * a recycled pid can belong to an unrelated claude (e.g. the desktop app's
+ * own sessions, which also run claude.exe in stream-json mode).
+ */
+function isMcdClaudePid(pid: number): boolean {
+  let cmdline = ''
   if (process.platform === 'win32') {
-    const r = spawnSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { encoding: 'utf8', windowsHide: true })
-    return /^"claude(\.exe)?"/im.test(r.stdout ?? '')
+    const r = spawnSync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', `(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CommandLine`],
+      { encoding: 'utf8', windowsHide: true },
+    )
+    cmdline = r.stdout ?? ''
+  } else {
+    const r = spawnSync('ps', ['-p', String(pid), '-o', 'args='], { encoding: 'utf8' })
+    cmdline = r.stdout ?? ''
   }
-  const r = spawnSync('ps', ['-p', String(pid), '-o', 'comm='], { encoding: 'utf8' })
-  return /claude|node/.test((r.stdout ?? '').trim())
+  return /claude/i.test(cmdline) && /mcd-[^\\/\s]+[\\/]mcp-config\.json/.test(cmdline)
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
 }
 
 function sweepHeadlessPids(result: SweepResult): void {
@@ -92,12 +113,14 @@ function sweepHeadlessPids(result: SweepResult): void {
       continue
     }
     // A recycled pid that now belongs to something else is left alone.
-    if (!Number.isFinite(pid) || !isClaudePid(pid)) continue
+    if (!Number.isFinite(pid) || !isMcdClaudePid(pid)) continue
     const name = `headless:${slug}(${pid})`
     const kill = process.platform === 'win32'
       ? spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { encoding: 'utf8', windowsHide: true })
       : spawnSync('kill', [String(pid)], { encoding: 'utf8' })
-    if (kill.error || kill.status !== 0) {
+    // taskkill /T exits non-zero when a grandchild already exited mid-walk,
+    // even though the target died; what matters is that the pid is gone.
+    if ((kill.error || kill.status !== 0) && pidAlive(pid)) {
       result.errors.push(`${name}: ${kill.error?.message ?? ((kill.stderr ?? '').trim() || 'kill failed')}`)
       process.stderr.write(`orphan-sweep: failed to kill ${name}\n`)
       continue
