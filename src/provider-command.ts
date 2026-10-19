@@ -20,7 +20,7 @@ import { handleProvider, type MasterContext, type MasterMutator } from './master
 export const providerSlashCommands: RESTPostAPIApplicationGuildCommandsJSONBody[] = [
   {
     name: 'provider',
-    description: "View or change the API provider routing for this channel's project",
+    description: "View or change this channel's Claude provider or Codex runner",
     options: [
       {
         type: 1, // SUB_COMMAND
@@ -30,12 +30,12 @@ export const providerSlashCommands: RESTPostAPIApplicationGuildCommandsJSONBody[
       {
         type: 1,
         name: 'set',
-        description: 'Route this channel to a provider alias (respawns the subprocess)',
+        description: 'Select Codex or a provider alias (respawns the subprocess)',
         options: [
           {
             type: 3, // STRING
             name: 'alias',
-            description: 'Provider alias from defaults.providers, e.g. minimax',
+            description: 'codex or an alias from defaults.providers, e.g. minimax',
             required: true,
           },
         ],
@@ -43,7 +43,7 @@ export const providerSlashCommands: RESTPostAPIApplicationGuildCommandsJSONBody[
       {
         type: 1,
         name: 'clear',
-        description: 'Clear provider routing and use Claude subscription auth',
+        description: 'Return to the default Claude provider',
       },
     ],
   },

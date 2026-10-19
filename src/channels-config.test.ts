@@ -168,6 +168,22 @@ function makeConfig(): ChannelsConfig {
   check('resolve: unknown source chat → error', 'error' in noSource)
 }
 
+const ac1Legacy = ChannelsConfigSchema.safeParse({
+  defaults: { providers: { minimax: { baseUrl: 'https://example.test/anthropic', apiKeyEnv: 'MINIMAX_API_KEY' } } },
+  projects: { [ALPHA_CHAT]: { slug: 'alpha', provider: 'minimax' } },
+})
+const ac1Codex = ChannelsConfigSchema.safeParse({
+  defaults: { codex: { sandbox: 'workspace-write', approvalPolicy: 'never' } },
+  projects: { [ALPHA_CHAT]: { slug: 'alpha', runner: 'codex' } },
+})
+const ac1Reserved = ChannelsConfigSchema.safeParse({
+  defaults: { providers: { codex: { baseUrl: 'https://example.test', apiKeyEnv: 'KEY' } } },
+})
+const ac1Conflict = ChannelsConfigSchema.safeParse({
+  projects: { [ALPHA_CHAT]: { slug: 'alpha', runner: 'codex', provider: 'minimax' } },
+})
+check('AC1: legacy and Codex configs are distinct', ac1Legacy.success && ac1Codex.success && !ac1Reserved.success && !ac1Conflict.success)
+
 // ---------------------------------------------------------------------------
 if (failed > 0) {
   console.error(`\n${failed} test(s) FAILED`)

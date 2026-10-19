@@ -2381,6 +2381,35 @@ saveConfig(config)
 // Restore config after purge tests
 saveConfig(config)
 
+const codexChat = '777700000000000004'
+const codexCreated = await handleMasterCommand(
+  `!project create ${codexChat} --slug codextest --prompt "Codex test" --provider codex`,
+  mctx(),
+)
+const codexShown = await handleMasterCommand('!project show codextest', mctx())
+const codexModel = await handleMasterCommand('!project model codextest --set gpt-6', mctx())
+const withMiniMax = loadConfig()
+withMiniMax.defaults.providers.minimax = { baseUrl: 'https://example.test/anthropic', apiKeyEnv: 'MINIMAX_API_KEY' }
+saveConfig(withMiniMax)
+process.env.MINIMAX_API_KEY = 'test-key'
+killCalls.length = 0
+const switchedToMiniMax = await handleMasterCommand('!project provider codextest --set minimax', mctx())
+const miniMaxState = loadConfig().projects[codexChat]
+const switchedToCodex = await handleMasterCommand('!project provider codextest --set codex', mctx())
+const codexState = loadConfig().projects[codexChat]
+const clearedCodex = await handleMasterCommand('!project provider codextest --clear', mctx())
+const clearedState = loadConfig().projects[codexChat]
+check('AC2: create, show, model, switch, and clear select the right runner',
+  codexCreated.kind === 'reply' && codexCreated.text.includes('Runner: codex') &&
+  codexShown.kind === 'reply' && codexShown.text.includes('runner: codex') &&
+  codexModel.kind === 'reply' && codexModel.text.includes('gpt-6') &&
+  switchedToMiniMax.kind === 'reply' && miniMaxState?.provider === 'minimax' && miniMaxState?.runner !== 'codex' &&
+  switchedToCodex.kind === 'reply' && codexState?.runner === 'codex' && codexState?.provider === undefined &&
+  clearedCodex.kind === 'reply' && clearedState?.runner === undefined && clearedState?.provider === undefined &&
+  killCalls.every((id) => id === codexChat),
+)
+delete process.env.MINIMAX_API_KEY
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)
   process.exit(1)

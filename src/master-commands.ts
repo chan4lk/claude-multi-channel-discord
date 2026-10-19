@@ -318,24 +318,25 @@ function handleShow(config: ChannelsConfig, rest: string[]): string {
   if (!entry) return `no project found for "${target}"`
 
   const { chatId, project } = entry
-  const model = project.model ?? config.defaults.model
+  const model = project.model ?? (project.runner === 'codex' ? '(Codex default)' : config.defaults.model)
   const promptPreview = readClaudeMdPreview(project.slug)
 
   const lines = [
     `**${project.slug}**${chatId === config.master?.chatId ? ' (master)' : ''}`,
     `chat_id: \`${chatId}\``,
     `model: ${model}`,
+    `runner: ${project.runner === 'codex' ? 'codex' : 'claude'}`,
   ]
   if (project.disabled) lines.push('disabled: yes')
   if (project.channelMissingSince) lines.push(`channel: missing since ${project.channelMissingSince}`)
   // Presence only — the token value is revealed once at rotate time.
   if (project.externalToken) lines.push('external-token: set')
-  const providerName = project.provider ?? config.defaults.provider
+  const providerName = project.runner === 'codex' ? undefined : project.provider ?? config.defaults.provider
   if (providerName) {
     const def = config.defaults.providers[providerName]
     if (def) lines.push(`provider: ${providerName} → ${def.baseUrl} (key from \$${def.apiKeyEnv})`)
     else lines.push(`provider: ${providerName} (⚠ not in defaults.providers)`)
-  } else {
+  } else if (project.runner !== 'codex') {
     lines.push(`provider: (Claude subscription)`)
   }
   if (project.git) {
@@ -541,7 +542,7 @@ async function handleCreate(rest: string[], ctx: MasterContext): Promise<string>
   }
 
   const provider = typeof flags.provider === 'string' ? flags.provider : undefined
-  if (provider !== undefined && !config.defaults.providers[provider]) {
+  if (provider !== undefined && provider !== 'codex' && !config.defaults.providers[provider]) {
     return await rollback(`provider "${provider}" is not in defaults.providers — add it to channels.json first`)
   }
 
@@ -554,7 +555,7 @@ async function handleCreate(rest: string[], ctx: MasterContext): Promise<string>
         ...(platform === 'teams' ? { platform } : {}),
         ...(platform === 'whatsapp' ? { platform, whatsappJid: whatsappJid! } : {}),
         ...(model ? { model } : {}),
-        ...(provider ? { provider } : {}),
+        ...(provider === 'codex' ? { runner: 'codex' as const } : provider ? { provider } : {}),
       },
     },
   }
@@ -572,7 +573,8 @@ async function handleCreate(rest: string[], ctx: MasterContext): Promise<string>
   ]
   if (repoDirNote) lines.push(repoDirNote)
   else lines.push(`CLAUDE.md: ${prompt.length} chars`)
-  lines.push(`Model: ${model ?? config.defaults.model}`)
+  lines.push(`Model: ${model ?? (provider === 'codex' ? '(Codex default)' : config.defaults.model)}`)
+  if (provider === 'codex') lines.push('Runner: codex')
   lines.push(
     accessAdded
       ? `Access: added \`${chatId}\` to access.json groups (requireMention=false).`
@@ -1365,7 +1367,7 @@ async function handleClone(rest: string[], ctx: MasterContext): Promise<string> 
   }
 
   const cloneProvider = typeof flags.provider === 'string' ? flags.provider : undefined
-  if (cloneProvider !== undefined && !config.defaults.providers[cloneProvider]) {
+  if (cloneProvider !== undefined && cloneProvider !== 'codex' && !config.defaults.providers[cloneProvider]) {
     return `provider "${cloneProvider}" is not in defaults.providers — add it to channels.json first`
   }
 
@@ -1378,7 +1380,7 @@ async function handleClone(rest: string[], ctx: MasterContext): Promise<string> 
         slug,
         ...(clonePlatform === 'whatsapp' ? { platform: clonePlatform, whatsappJid: cloneWhatsappJid! } : {}),
         ...(model ? { model } : {}),
-        ...(cloneProvider ? { provider: cloneProvider } : {}),
+        ...(cloneProvider === 'codex' ? { runner: 'codex' as const } : cloneProvider ? { provider: cloneProvider } : {}),
         git: {
           remote: repo,
           branch: branch ?? 'main',
@@ -1859,8 +1861,9 @@ export async function handleModel(rest: string[], ctx: MasterContext): Promise<s
   if (!entry) return `no project found for "${target}"`
 
   if (!setName && !clear) {
-    const m = entry.project.model ?? config.defaults.model
-    return `**${entry.project.slug}**: model = \`${m}\`${entry.project.model ? '' : ' (inherited from defaults)'}`
+    const codex = entry.project.runner === 'codex'
+    const m = entry.project.model ?? (codex ? '(Codex default)' : config.defaults.model)
+    return `**${entry.project.slug}**: model = \`${m}\`${entry.project.model ? '' : codex ? '' : ' (inherited from defaults)'}`
   }
 
   // Alias guard: a bad subscription model (e.g. a typo'd "sonnat") spawns
@@ -1869,7 +1872,7 @@ export async function handleModel(rest: string[], ctx: MasterContext): Promise<s
   // applies to subscription projects: provider-routed projects accept
   // arbitrary model ids the endpoint aliases internally. `--force` overrides.
   if (setName) {
-    const usesProvider = (entry.project.provider ?? config.defaults.provider) !== undefined
+    const usesProvider = entry.project.runner === 'codex' || (entry.project.provider ?? config.defaults.provider) !== undefined
     const KNOWN = ['opus', 'sonnet', 'haiku', 'fable']
     const ok = usesProvider || KNOWN.includes(setName.toLowerCase()) || setName.startsWith('claude-')
     if (!ok && flags.force !== true) {
@@ -1891,7 +1894,7 @@ export async function handleModel(rest: string[], ctx: MasterContext): Promise<s
       respawnNote = `_kill failed: ${(err as Error).message}_`
     }
   }
-  const m = setName ?? config.defaults.model
+  const m = setName ?? (entry.project.runner === 'codex' ? '(Codex default)' : config.defaults.model)
   return `✅ **${entry.project.slug}**: model = \`${m}\`\n${respawnNote}`
 }
 
@@ -1922,6 +1925,7 @@ export async function handleProvider(rest: string[], ctx: MasterContext): Promis
 
   // Read-only: show current routing.
   if (!setAlias && !clear) {
+    if (entry.project.runner === 'codex') return `**${entry.project.slug}**: runner = codex`
     const name = entry.project.provider ?? config.defaults.provider
     if (!name) return `**${entry.project.slug}**: provider = (Claude subscription)`
     const def = config.defaults.providers[name]
@@ -1930,7 +1934,7 @@ export async function handleProvider(rest: string[], ctx: MasterContext): Promis
   }
 
   // Mutate. --set must reference a known alias.
-  if (setAlias) {
+  if (setAlias && setAlias !== 'codex') {
     if (!config.defaults.providers[setAlias]) {
       const known = Object.keys(config.defaults.providers).join(', ') || '(none configured)'
       return `provider alias "${setAlias}" is not in defaults.providers. known: ${known}`
@@ -1942,9 +1946,14 @@ export async function handleProvider(rest: string[], ctx: MasterContext): Promis
   }
 
   const updatedProject = { ...entry.project }
-  if (setAlias) {
+  if (setAlias === 'codex') {
+    updatedProject.runner = 'codex'
+    delete updatedProject.provider
+  } else if (setAlias) {
+    delete updatedProject.runner
     updatedProject.provider = setAlias
   } else {
+    delete updatedProject.runner
     delete updatedProject.provider
   }
   const updated: ChannelsConfig = {
@@ -1967,8 +1976,9 @@ export async function handleProvider(rest: string[], ctx: MasterContext): Promis
   }
 
   if (clear) {
-    return [`✅ **${entry.project.slug}** now uses Claude subscription auth.`, respawnNote].join('\n')
+    return [`✅ **${entry.project.slug}** now uses Claude${config.defaults.provider ? ` provider ${config.defaults.provider}` : ' subscription auth'}.`, respawnNote].join('\n')
   }
+  if (setAlias === 'codex') return [`✅ **${entry.project.slug}** now uses Codex.`, respawnNote].join('\n')
   const def = config.defaults.providers[setAlias!]!
   return [
     `✅ **${entry.project.slug}** routed to provider **${setAlias}** → ${def.baseUrl}`,
