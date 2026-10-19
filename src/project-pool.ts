@@ -338,9 +338,7 @@ export class ProjectPool {
       process.stderr.write(`pool: orphan reply from ${reply.chatId}, dropped\n`)
       return
     }
-    if (typeof (proc as { acceptReply?: (r: OutboundReply) => void }).acceptReply === 'function') {
-      ;(proc as unknown as { acceptReply: (r: OutboundReply) => void }).acceptReply(reply)
-    }
+    proc.acceptReply?.(reply)
   }
 
   /**
@@ -596,6 +594,7 @@ export class ProjectPool {
     this.spawnedAtMs.set(chatId, this.now())
 
     const offReply = proc.onReply((reply) => {
+      if (this.processes.get(chatId) !== proc) return
       try {
         this.opts.onReply(reply)
       } catch (err) {
@@ -603,6 +602,7 @@ export class ProjectPool {
       }
     })
     const offExit = proc.onExit(({ code, signal }) => {
+      if (this.processes.get(chatId) !== proc) return
       this.processes.delete(chatId)
       this.cleanups.get(chatId)?.()
       this.cleanups.delete(chatId)

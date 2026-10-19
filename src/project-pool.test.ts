@@ -1185,6 +1185,56 @@ function envelope(content: string): InboundEnvelope {
   }
 }
 
+// --- 31. runner-neutral MCP reply routing and stale exit isolation ---------
+{
+  const config = ChannelsConfigSchema.parse({
+    master: { chatId: '999999999999999999' },
+    projects: {
+      '111111111111111111': { slug: 'alpha', runner: 'codex' },
+      '222222222222222222': { slug: 'beta' },
+    },
+  })
+  class RoutedProcess extends MockProjectProcess {
+    accepted: OutboundReply[] = []
+    exitCallback?: (info: { code: number | null; signal: NodeJS.Signals | null }) => void
+    replyCallback?: (reply: OutboundReply) => void
+    acceptReply(reply: OutboundReply): void { this.accepted.push(reply) }
+    override onReply(handler: (reply: OutboundReply) => void): () => void {
+      this.replyCallback = handler
+      return super.onReply(handler)
+    }
+    override onExit(handler: (info: { code: number | null; signal: NodeJS.Signals | null }) => void): () => void {
+      this.exitCallback = handler
+      return super.onExit(handler)
+    }
+  }
+  const created: RoutedProcess[] = []
+  const posted: OutboundReply[] = []
+  const pool = new ProjectPool({
+    factory: ({ chatId, project }) => {
+      const proc = new RoutedProcess({ chatId, slug: project.slug })
+      created.push(proc)
+      return proc
+    },
+    getConfig: () => config,
+    onReply: (reply) => posted.push(reply),
+  })
+  await pool.deliver('111111111111111111', envelope('codex'))
+  await pool.deliver('222222222222222222', envelope('claude'))
+  const reply: OutboundReply = { kind: 'text', chatId: '111111111111111111', text: 'via MCP' }
+  pool.acceptReply(reply)
+  check('31: MCP reply reaches only its channel process', created[0]!.accepted[0] === reply && created[1]!.accepted.length === 0)
+  await pool.killChat('111111111111111111')
+  await pool.deliver('111111111111111111', { ...envelope('resumed'), messageId: '2' })
+  created[0]!.exitCallback?.({ code: 1, signal: null })
+  check('31: late old-process exit leaves replacement alive', pool.has('111111111111111111') && created.length === 3)
+  await sleep(5)
+  const beforeLate = posted.length
+  created[0]!.replyCallback?.({ kind: 'text', chatId: '111111111111111111', text: 'stale' })
+  check('31: late old-process reply is dropped', posted.length === beforeLate)
+  await pool.shutdown()
+}
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`)
   process.exit(1)
