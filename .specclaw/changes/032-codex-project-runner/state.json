@@ -1,6 +1,6 @@
 {
   "change": "032-codex-project-runner",
-  "phase": "verify",
+  "phase": "pr",
   "branch": "specclaw/032-codex-project-runner",
   "size": "architectural",
   "phases": {
@@ -9,6 +9,7 @@
     "design": {"status":"done","at":"2026-10-19T02:02:50Z"},
     "tasks": {"status":"done","at":"2026-10-19T02:03:17Z"},
     "build": {"status":"done","at":"2026-10-19T14:54:24Z","tasks":{"done":7,"total":7,"failed":0}},
-    "verify": {"status":"passed","at":"2026-10-19T14:57:33Z","verdict":"PASS"}
+    "verify": {"status":"passed","at":"2026-10-19T14:57:33Z","verdict":"PASS"},
+    "pr": {"status":"raised","at":"2026-10-19T16:26:17Z","url":"https://github.com/chan4lk/claude-multi-channel-discord/pull/333"}
   }
 }

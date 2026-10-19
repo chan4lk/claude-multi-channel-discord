@@ -14,6 +14,7 @@
 | Tasks | ✅ Done |  |
 | Build | ✅ Done | 7/7 tasks |
 | Verify | ✅ Passed | PASS |
+| PR | ✅ Raised | https://github.com/chan4lk/claude-multi-channel-discord/pull/333 |
 
 ## Task Progress
 
