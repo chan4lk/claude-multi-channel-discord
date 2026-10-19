@@ -2138,13 +2138,14 @@ const collabRegistry = [
     },
   }))
   const configBefore = readFileSync(join(stateDir, 'channels.json'), 'utf8')
+  const graphTranscriptMtime = Date.now() - 5 * 60_000
 
   const injected: Partial<MasterContext> = {
     loadHandoffRegistry: () => [
       { id: 'h-g1', from: 'support', to: { kind: 'project', slug: 'newproj', chatId: '444444444444444444' }, task: 'x', state: 'pending', createdAt: new Date().toISOString() },
     ],
     loadSchedulesFn: () => ({ schedules: [{ chatId: '999888777666555444', enabled: true, at: '09:00' }] }),
-    transcriptMtimeFn: () => Date.now() - 5 * 60_000,
+    transcriptMtimeFn: () => graphTranscriptMtime,
   }
 
   const plain = await handleMasterCommand('!project graph', mctx(injected))
