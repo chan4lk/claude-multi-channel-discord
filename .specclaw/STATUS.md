@@ -1,7 +1,9 @@
 # 🦞 SpecClaw Dashboard
 
 **Project:** claude-mcd
-**Last Updated:** 2026-10-17 13:17 UTC
+**Last Updated:** 2026-10-19 14:57 UTC
+
+_5 unnumbered changes · run `/specclaw-extras:renumber` to order them_
 
 ## Active Changes
 
@@ -31,6 +33,7 @@
 - ✅ **029-mission-control-perf-hardening** — 10/10 tasks (100%) | 0 failed
 - 📝 **030-channel-deletion-watch** — tasks done | 6/6 tasks (100%) | 0 failed
 - 🔨 **031-pr-checks-ci** ▫ — build in-progress | 3/3 tasks (100%) | 0 failed
+- 🔍 **032-codex-project-runner** ▣ — verify PASS | 7/7 tasks (100%) | 0 failed | 12h59m
 
 ## Pending Proposals
 
@@ -48,6 +51,6 @@ _None._
 
 ## Stats
 
-- **Total changes:** 31
-- **Active:** 25
+- **Total changes:** 32
+- **Active:** 26
 - **Completed:** 6

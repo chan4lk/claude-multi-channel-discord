@@ -79,6 +79,8 @@ export class ProjectPool {
   private readonly budgetQueue = new Map<string, InboundEnvelope[]>()
   /** Tracks which budget thresholds (50/80/100) have fired per chat per month. */
   private readonly budgetAlertFired = new Map<string, Set<50 | 80 | 100>>()
+  /** Codex has no Claude transcript from which to calculate this budget. */
+  private readonly codexBudgetWarned = new Set<string>()
   /** Last UTC year-month string seen, for detecting month rollovers. */
   private lastYearMonth = ProjectPool.currentYearMonth()
   private static readonly MSG_DEDUP_TTL_MS = 60_000
@@ -185,7 +187,11 @@ export class ProjectPool {
     // Budget enforcement before dedup: check thresholds and queue at exhaustion.
     // Dedup is intentionally skipped for queued messages so they can be re-delivered
     // on month rollover without being dropped as duplicates.
-    if (project.monthlyTokenBudget != null) {
+    if (project.monthlyTokenBudget != null && project.runner === 'codex' && !this.codexBudgetWarned.has(chatId)) {
+      this.codexBudgetWarned.add(chatId)
+      process.stderr.write(`pool: monthly token budget unavailable for Codex project ${project.slug}; no usage estimate or budget enforcement\n`)
+    }
+    if (project.monthlyTokenBudget != null && project.runner !== 'codex') {
       const used = this.computeMonthlyTokensUsed(project.slug, config)
       const budget = project.monthlyTokenBudget
       this.checkBudgetThresholds(chatId, project.slug, used, budget)
@@ -338,9 +344,7 @@ export class ProjectPool {
       process.stderr.write(`pool: orphan reply from ${reply.chatId}, dropped\n`)
       return
     }
-    if (typeof (proc as { acceptReply?: (r: OutboundReply) => void }).acceptReply === 'function') {
-      ;(proc as unknown as { acceptReply: (r: OutboundReply) => void }).acceptReply(reply)
-    }
+    proc.acceptReply?.(reply)
   }
 
   /**
@@ -596,6 +600,7 @@ export class ProjectPool {
     this.spawnedAtMs.set(chatId, this.now())
 
     const offReply = proc.onReply((reply) => {
+      if (this.processes.get(chatId) !== proc) return
       try {
         this.opts.onReply(reply)
       } catch (err) {
@@ -603,6 +608,7 @@ export class ProjectPool {
       }
     })
     const offExit = proc.onExit(({ code, signal }) => {
+      if (this.processes.get(chatId) !== proc) return
       this.processes.delete(chatId)
       this.cleanups.get(chatId)?.()
       this.cleanups.delete(chatId)

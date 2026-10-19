@@ -1,6 +1,6 @@
 # multi-channel-discord
 
-Project-aware Discord bot for Claude Code. One Discord bot, **many isolated channels** — each channel gets its own Claude Code subprocess, system prompt, conversation history, and git working tree.
+Project-aware Discord bot for Claude Code and Codex. One Discord bot, **many isolated channels** — each channel gets its own agent process, prompt, conversation history, and git working tree.
 
 Forked from [`anthropics/claude-plugins-official/external_plugins/discord`](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/discord) (Apache-2.0). Backwards-compatible with upstream when no `channels.json` is present.
 
@@ -10,20 +10,20 @@ Forked from [`anthropics/claude-plugins-official/external_plugins/discord`](http
 
 | | upstream | this fork |
 |---|---|---|
-| Message routing | one Claude session for all messages | per-channel Claude subprocess (lazy spawn, idle eviction) |
+| Message routing | one Claude session for all messages | per-channel Claude or Codex process (lazy spawn, idle eviction) |
 | System prompt | global (`CLAUDE.md` in cwd) | per channel (`projects/<slug>/CLAUDE.md`) |
 | Conversation history | global | per channel (`--resume` across restarts) |
 | Provisioning | manual config | `!project create/clone/...` from a master Discord channel |
 | Git integration | — | clone repos, push branches, open PRs via Octokit / Azure DevOps REST |
-| Provider routing | Claude subscription only | per-project routing to any Anthropic-compatible API (MiniMax, Bedrock, etc.) |
-| Auth | Claude Code subscription | same — never API key |
+| Provider routing | Claude subscription only | per-project Claude, Anthropic-compatible APIs (MiniMax, Bedrock, etc.), or Codex CLI |
+| Auth | Claude Code subscription | Claude subscription, provider API key, or Codex service login/API key |
 
 ---
 
 ## How it works
 
 ```
-Discord (one bot) ─→ server.ts ─→ ProjectPool ─→ N × claude subprocesses
+Discord (one bot) ─→ server.ts ─→ ProjectPool ─→ N × Claude/Codex processes
                           │              │              │
                           │              │              └── HTTP MCP →─┐
                           │              ├── Map<chat_id, process>      │
@@ -32,9 +32,9 @@ Discord (one bot) ─→ server.ts ─→ ProjectPool ─→ N × claude subproc
                                   └── one HTTP server, multiplexed by /mcp/<chat_id>
 ```
 
-- Each project channel → one `claude` subprocess inside a detached tmux session (Linux/macOS), or a headless stream-json `claude -p` child over pipes (native Windows, no WSL — see [docs/setup.md](./docs/setup.md#windows)).
-- **Inbound:** Discord messages injected via `tmux send-keys` (keeps the warm interactive session), or written to the headless child's stdin.
-- **Outbound:** Claude calls `mcp__mcd__reply` against the HTTP MCP server → Discord, chunked at 2000 chars.
+- Each project channel → one Claude subprocess inside tmux (Linux/macOS) or a headless child (native Windows), or one Codex app-server child and persistent thread. See [docs/project-channels.md](./docs/project-channels.md#switch-ai-provider).
+- **Inbound:** The pool delivers messages to the selected runner; Codex queues app-server turns in arrival order.
+- **Outbound:** The agent calls `mcp__mcd__reply` through the chat-scoped HTTP MCP server; a successful Codex turn with no reply call posts its final text once. Discord chunks replies at 2000 chars.
 - Cross-platform: HTTP-on-localhost works identically on Linux, macOS, and Windows.
 
 ---
@@ -482,6 +482,7 @@ src/
   master-commands.ts        !project parser + verb handlers
   master-mcp-server.ts      HTTP MCP server, multiplexed by chat_id
   claude-process.ts         ClaudeProjectProcess (tmux/claude subprocess wrapper)
+  codex-process.ts          CodexProjectProcess (app-server/thread wrapper)
   project-process.ts        ProjectProcess interface + MockProjectProcess
   project-pool.ts           lazy spawn, LRU eviction, idle eviction, dedup
   discord-chunk.ts          2000-char reply chunker

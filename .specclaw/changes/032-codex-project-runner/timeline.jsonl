@@ -1,0 +1,30 @@
+{"ev":"start","span":"propose","kind":"phase","label":"propose","at":"2026-10-19T01:55:31Z","ts":1792374930}
+{"ev":"stop","span":"propose","at":"2026-10-19T01:55:59Z","ts":1792374959,"status":"ok"}
+{"ev":"start","span":"plan","kind":"phase","label":"plan","at":"2026-10-19T01:58:57Z","ts":1792375137}
+{"ev":"stop","span":"plan","at":"2026-10-19T02:03:20Z","ts":1792375400,"status":"ok"}
+{"ev":"start","span":"W1","kind":"wave","label":"wave 1","at":"2026-10-19T02:14:37Z","ts":1792376077}
+{"ev":"start","span":"T1","kind":"task","label":"config and commands","parent":"W1","model":"gpt-6-astra","attempt":"1","at":"2026-10-19T02:14:37Z","ts":1792376077}
+{"ev":"stop","span":"T1","at":"2026-10-19T02:17:25Z","ts":1792376245,"status":"ok"}
+{"ev":"stop","span":"W1","at":"2026-10-19T02:17:25Z","ts":1792376245,"status":"ok"}
+{"ev":"start","span":"W2","kind":"wave","label":"wave 2","at":"2026-10-19T02:17:33Z","ts":1792376253}
+{"ev":"start","span":"T2","kind":"task","label":"Codex app-server process","parent":"W2","model":"gpt-6-astra","attempt":"1","at":"2026-10-19T02:17:36Z","ts":1792376256}
+{"ev":"stop","span":"T2","at":"2026-10-19T02:39:27Z","ts":1792377567,"status":"ok"}
+{"ev":"start","span":"T3","kind":"task","label":"Wire Codex into project pool","parent":"W2","at":"2026-10-19T02:39:40Z","ts":1792377580}
+{"ev":"stop","span":"T3","at":"2026-10-19T02:40:14Z","ts":1792377614,"status":"ok"}
+{"ev":"stop","span":"W2","at":"2026-10-19T02:40:15Z","ts":1792377615,"status":"ok"}
+{"ev":"start","span":"W3","kind":"wave","label":"Operator guidance and verification","at":"2026-10-19T02:40:27Z","ts":1792377627}
+{"ev":"start","span":"T4","kind":"task","label":"Document Codex setup and verify flow","parent":"W3","at":"2026-10-19T02:40:27Z","ts":1792377627}
+{"ev":"stop","span":"T4","at":"2026-10-19T02:58:05Z","ts":1792378685,"status":"ok"}
+{"ev":"stop","span":"W3","at":"2026-10-19T02:58:05Z","ts":1792378685,"status":"ok"}
+{"ev":"start","span":"verify-1792418963","kind":"phase","label":"verify","at":"2026-10-19T14:09:23Z","ts":1792418963}
+{"ev":"stop","span":"verify-1792418963","at":"2026-10-19T14:14:01Z","ts":1792419241,"status":"fail"}
+{"ev":"start","span":"W4","kind":"wave","label":"Verification remediation","at":"2026-10-19T14:15:02Z","ts":1792419302}
+{"ev":"start","span":"T5","kind":"task","label":"Close reply and interrupted turn gaps","parent":"W4","at":"2026-10-19T14:15:03Z","ts":1792419303}
+{"ev":"stop","span":"T5","at":"2026-10-19T14:19:38Z","ts":1792419578,"status":"ok"}
+{"ev":"stop","span":"W4","at":"2026-10-19T14:19:38Z","ts":1792419578,"status":"ok"}
+{"ev":"start","span":"verify-1792419736","kind":"phase","label":"verify","at":"2026-10-19T14:22:16Z","ts":1792419736}
+{"ev":"stop","span":"verify-1792419736","at":"2026-10-19T14:26:01Z","ts":1792419961,"status":"ok"}
+{"ev":"start","span":"verify-live-1792421129","kind":"phase","label":"verify","at":"2026-10-19T14:45:29Z","ts":1792421129}
+{"ev":"stop","span":"verify-live-1792421129","at":"2026-10-19T14:48:17Z","ts":1792421297,"status":"ok"}
+{"ev":"start","span":"verify-thread-1792421708","kind":"phase","label":"verify","at":"2026-10-19T14:55:08Z","ts":1792421708}
+{"ev":"stop","span":"verify-thread-1792421708","at":"2026-10-19T14:57:51Z","ts":1792421871,"status":"ok"}

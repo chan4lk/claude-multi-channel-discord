@@ -15,7 +15,7 @@ How the bot actually works at runtime, what each component owns, and the design 
         ├─ MasterMcpServer                                     stateless HTTP, port = ephemeral
         │     └─ POST /mcp/<chat_id>     ← claude --mcp-config
         ├─ ProjectPool                                         lazy-spawn, LRU+idle evict, msg-id dedup
-        │     └─ Map<chat_id, ClaudeProjectProcess>
+        │     └─ Map<chat_id, ProjectProcess>
         │              └─ tmux session "mcd-<slug>-<ts>"       ← detached PTY
         │                      └─ claude --strict-mcp-config
         │                              ├─ stdin/stdout: tmux PTY  ← we send-keys here
@@ -144,7 +144,9 @@ Projects default to the operator's Claude Code subscription auth (no API key, no
 
 Then `!project create --provider minimax --model MiniMax-M2.7 ...` (or `clone --provider minimax ...`). At spawn time `resolveProvider()` looks up the alias, reads the API key from the bot's process env (`MINIMAX_API_KEY`), and `ClaudeProjectProcess` sets `ANTHROPIC_BASE_URL` + `ANTHROPIC_API_KEY` in the subprocess env. The per-channel claude is otherwise identical — same MCP config, same git env, same TUI dance — it just calls MiniMax instead of Anthropic when it generates.
 
-Mixing providers across channels is fine. Subscription-auth projects coexist with API-key-auth projects in the same bot process.
+Mixing providers across channels is fine. Subscription-auth projects coexist with API-key-auth projects in the same bot process. A project with `runner: "codex"` instead uses `CodexProjectProcess`; `--provider codex` and `provider <slug> --set codex` select that runner. `--clear` returns to the configured Claude default. Codex reads a service-account login or `defaults.codex.apiKeyEnv`, applies `project.model` only when specified, and otherwise uses its own model default.
+
+Codex runs `codex app-server --listen stdio://` in the resolved project directory. It starts or resumes a thread from `.codex-thread-id`, passes the project `CLAUDE.md` as thread instructions, and configures the chat-scoped `mcd` MCP endpoint with a token held in the child environment. The process serializes turns, tracks explicit `mcd.reply` calls, and posts the final agent message once when a successful turn has no reply call. Supported item events feed pool progress and activity; pending turns feed the existing watchdog. It has no Claude transcript, context-warning, or distillation telemetry, so `monthlyTokenBudget` is reported unavailable and is not enforced for Codex projects. The default sandbox is `workspace-write`; the only supported approval policy is `never` so a channel cannot wait on an interactive prompt.
 
 ### WhatsApp adapter (`src/whatsapp-adapter.ts`)
 
@@ -176,7 +178,7 @@ Lifecycle:
 
 ### `ProjectPool` (`src/project-pool.ts`)
 
-`Map<chat_id, ClaudeProjectProcess>` plus policy:
+`Map<chat_id, ProjectProcess>` plus policy:
 
 - **Lazy spawn** — `deliver()` reuses the cached process if alive, else spawns through the configured factory.
 - **`maxConcurrent` cap** — when full, evicts the LRU process to make room. Pool-full evictions fire `kind: "evict", reason: "pool-full"` on the event stream.
@@ -292,8 +294,8 @@ The `MasterMutator` interface is the dependency-injection seam — the parser do
 `channels.json` schema highlights:
 
 - `master.chatId` + `master.commandPrefix` (default `!project`)
-- `defaults.{model, idleEvictMinutes, maxConcurrent, git.{userName,userEmail,credentials,branchPrefix}, claude.{permissionMode,allowedTools,disallowedTools,extraArgs}, providers.<alias>.{baseUrl,apiKeyEnv}, provider?}`
-- `projects[<chat_id>].{slug, model?, git?, claude?, provider?, platform?, whatsappJid?, botPeers?, peers?, hermes?}` — per-project overrides; `platform` is `'discord' | 'teams' | 'whatsapp'` (default `'discord'`); `whatsappJid` (e.g. `15551234567@s.whatsapp.net`) is required when `platform === 'whatsapp'`; `peers: { allow: slug[], maxHops?, cooldownSeconds? }` enables cross-project dialogue when non-empty and mutual; `hermes: { enabled }` grants the project's Claude the `hermes_run` MCP tool (requires `defaults.hermes.enabled`; project runs report to their own channel and post a master audit notice)
+- `defaults.{model, idleEvictMinutes, maxConcurrent, git.{userName,userEmail,credentials,branchPrefix}, claude.{permissionMode,allowedTools,disallowedTools,extraArgs}, codex?.{binPath,sandbox,approvalPolicy,apiKeyEnv}, providers.<alias>.{baseUrl,apiKeyEnv}, provider?}`
+- `projects[<chat_id>].{slug, runner?, model?, git?, claude?, provider?, platform?, whatsappJid?, botPeers?, peers?, hermes?}` — per-project overrides; `runner` is `'claude' | 'codex'` (absent means Claude); `platform` is `'discord' | 'teams' | 'whatsapp'` (default `'discord'`); `whatsappJid` (e.g. `15551234567@s.whatsapp.net`) is required when `platform === 'whatsapp'`; `peers: { allow: slug[], maxHops?, cooldownSeconds? }` enables cross-project dialogue when non-empty and mutual; `hermes: { enabled }` grants the project's Claude the `hermes_run` MCP tool (requires `defaults.hermes.enabled`; project runs report to their own channel and post a master audit notice)
 - `defaults.peers.{maxHops?, cooldownSeconds?}` — limits-only defaults for cross-project dialogue; built-in fallbacks: maxHops 6, cooldownSeconds 15
 
 `git-credentials.json` aliases (mode 0600 enforced by the loader):

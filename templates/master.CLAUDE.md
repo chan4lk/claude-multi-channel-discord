@@ -32,11 +32,13 @@ The bot exposes `mcp__mcd__run_master_command` — **available only in this mast
 | "show my scheduled jobs" | `run_master_command({ command: "schedule list" })` |
 | "pause the keyflow daily job" | `run_master_command({ command: "schedule list keyflow" })` to find the id, then `run_master_command({ command: "schedule pause <id>" })` |
 | "use minimax for the keyflow project" / "switch keyflow to minimax" | `run_master_command({ command: "provider keyflow --set minimax" })` (subprocess auto-respawns) |
+| "use codex for the keyflow project" | `run_master_command({ command: "provider keyflow --set codex" })` (project auto-respawns on its next message) |
 | "claude is rate-limited, fall back to minimax for keyflow" | `run_master_command({ command: "provider keyflow --set minimax" })`; once the limit clears, `run_master_command({ command: "provider keyflow --clear" })` to go back to subscription |
 | "what provider is keyflow using?" | `run_master_command({ command: "provider keyflow" })` |
 | "set ai-core's model to MiniMax-M2.7" | `run_master_command({ command: "model ai-core --set MiniMax-M2.7" })` (subprocess respawns) |
 | "what model is ai-core using?" | `run_master_command({ command: "show ai-core" })` (or `model ai-core`) |
 | "create a fresh project that uses minimax" | `run_master_command({ command: 'create --new-channel <slug> --slug <slug> --prompt "..." --provider minimax --model MiniMax-M2.7' })` |
+| "create a fresh project that uses codex" | `run_master_command({ command: 'create --new-channel <slug> --slug <slug> --prompt "..." --provider codex' })` |
 | "create a Teams project for this conversation ID: <id>" | `run_master_command({ command: 'create --platform teams <id> --slug <slug> --prompt "..."' })` |
 | "set up Teams credentials" / "teams-setup" | `run_master_command({ command: 'teams-setup <APP_ID> <APP_SECRET>' })` — writes TEAMS_APP_ID + TEAMS_APP_SECRET to .env |
 | "show <slug>'s collab roles / open handoffs" | `run_master_command({ command: "collab <slug>" })` |
@@ -65,10 +67,9 @@ create --platform teams <TEAMS_CONV_ID> --slug X --prompt "..."
                      TEAMS_CONV_ID: obtained from server logs after the first
                      message the bot receives in that Teams channel/chat
    --repo-dir attaches to an existing local checkout via symlink
-   --provider NAME routes the project's agent to a non-default provider
-                   (e.g. `minimax`). Provider catalog lives at
-                   defaults.providers in channels.json. Unset = use the
-                   operator's Claude Code subscription.
+   --provider NAME selects `codex` or an Anthropic-compatible alias
+                   (e.g. `minimax`) from defaults.providers in channels.json.
+                   Unset = the configured Claude default.
 
 teams-setup [APP_ID APP_SECRET]   — write TEAMS_APP_ID/TEAMS_APP_SECRET to .env
 
@@ -88,8 +89,8 @@ schedule add    <chat_id-or-slug> --at HH:MM --prompt "..." [--max-runs N]
 schedule list   [<chat_id-or-slug>]                                     — show all (or one project's) schedules
 schedule pause/resume/rm <id>                                           — toggle or delete a scheduled job
 provider <chat_id-or-slug>                                              — show resolved provider
-provider <chat_id-or-slug> --set ALIAS                                  — switch project to a configured provider (kills subprocess)
-provider <chat_id-or-slug> --clear                                      — back to Claude subscription
+provider <chat_id-or-slug> --set ALIAS                                  — switch project to `codex` or a configured alias (kills subprocess)
+provider <chat_id-or-slug> --clear                                      — back to the configured Claude default
 model    <chat_id-or-slug> [--set NAME | --clear]                        — set the project's `--model` arg (e.g. `MiniMax-M2.7`)
 rm     <chat_id-or-slug> --yes
 help
@@ -130,6 +131,8 @@ Projects default to the operator's Claude Code subscription auth (no API key, no
 Then on `create` / `clone` add `--provider minimax`, optionally with `--model MiniMax-M2.7`. The bot reads `MINIMAX_API_KEY` from its process env and exposes it (along with `ANTHROPIC_BASE_URL`) to the per-project claude subprocess. The agent in that channel calls MiniMax instead of Anthropic — same `mcp__mcd__reply` tool, same git env, just a different model API on the back end.
 
 `!project show <slug>` displays the resolved provider so you can verify routing. To switch an existing project on the fly (e.g. claude rate-limited → fall back to MiniMax), use `!project provider <slug> --set <alias>`. The subprocess is killed automatically; the next message in that channel respawns with the new env. Switch back with `--clear`.
+
+Codex uses its own CLI app-server, login or `defaults.codex.apiKeyEnv`, and per-project thread file. Choose it with `--provider codex` on create/clone or `provider <slug> --set codex`; `model <slug> --set <name>` overrides its model. The operator config defaults to a `workspace-write` sandbox and `never` approval policy. `--clear` returns to the configured Claude default. `show` reports the actual runner; Claude-only transcript metrics, context warnings, and distillation are unavailable for Codex.
 
 # Teams projects
 

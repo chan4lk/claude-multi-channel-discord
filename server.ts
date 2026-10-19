@@ -43,6 +43,7 @@ import { TeamsAdapter } from './src/teams-adapter.ts'
 import { WhatsAppAdapter } from './src/whatsapp-adapter.ts'
 import { toBuffer as qrToBuffer } from 'qrcode'
 import { ClaudeProjectProcess } from './src/claude-process.ts'
+import { CodexProjectProcess } from './src/codex-process.ts'
 import { chunk as chunkText, DISCORD_HARD_CHUNK_LIMIT } from './src/discord-chunk.ts'
 import { handleMasterCommand } from './src/master-commands.ts'
 import { MasterMcpServer } from './src/master-mcp-server.ts'
@@ -1268,6 +1269,28 @@ async function maybeInitProjectsBackend(): Promise<void> {
 
   projectPool = new ProjectPool({
     factory: ({ chatId, project, config }) => {
+      if (project.runner === 'codex') {
+        const proc = new CodexProjectProcess({
+          chatId,
+          slug: project.slug,
+          platform: project.platform as 'discord' | 'teams' | 'whatsapp' | undefined,
+          master,
+          model: project.model,
+          codex: config.defaults.codex,
+          gitCredential: project.git?.credentials ?? config.defaults.git.credentials,
+          log: (message) => process.stderr.write(`discord: codex ${project.slug}: ${message}\n`),
+        })
+        void proc.start()
+          .then(() => {
+            mcEmit('session_start', { slug: project.slug, chatId, model: project.model ?? 'codex default' })
+            attachSpecclawWatcher(chatId, project.slug)
+          })
+          .catch((err) => {
+            process.stderr.write(`discord: codex spawn failed for ${project.slug}: ${(err as Error).message}\n`)
+          })
+        return proc
+      }
+
       // Resolve provider — null when project uses Claude subscription
       // auth, non-null when routing to a third-party (MiniMax, etc.).
       let provider: { baseUrl: string; apiKey: string; name: string } | null = null

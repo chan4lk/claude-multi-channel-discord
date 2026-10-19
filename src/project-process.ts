@@ -117,6 +117,8 @@ export interface ProjectProcess {
    * reply (replies arrive asynchronously via onReply).
    */
   deliver(envelope: InboundEnvelope): Promise<void>
+  /** Accept a chat-scoped MCP reply and update this process's turn state. */
+  acceptReply?(reply: OutboundReply): void
   /** Subscribe to outbound replies. Returns unsubscribe fn. */
   onReply(handler: (reply: OutboundReply) => void): () => void
   /** Subscribe to lifecycle exit (clean exit, crash, or kill). */

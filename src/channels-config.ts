@@ -37,6 +37,14 @@ const ProviderSchema = z.object({
 })
 export type Provider = z.infer<typeof ProviderSchema>
 
+const CodexSchema = z.object({
+  binPath: z.string().min(1).optional(),
+  sandbox: z.enum(['read-only', 'workspace-write', 'danger-full-access']).optional(),
+  approvalPolicy: z.literal('never').optional(),
+  apiKeyEnv: z.string().min(1).optional(),
+}).strict()
+export type CodexConfig = z.infer<typeof CodexSchema>
+
 /**
  * Flags handed to each per-project `claude` subprocess. These all map to
  * Claude Code CLI arguments. Arbitrary `extraArgs` are appended last and
@@ -247,6 +255,7 @@ const ProjectSchema = z.object({
    */
   whatsappJid: z.string().optional(),
   model: z.string().optional(),
+  runner: z.enum(['claude', 'codex']).optional(),
   git: ProjectGitSchema.optional(),
   claude: ClaudeArgsSchema.optional(),
   /**
@@ -452,6 +461,7 @@ const DefaultsSchema = z.object({
    * unconfigured projects use the operator's Claude subscription auth.
    */
   providers: z.record(z.string(), ProviderSchema).default({}),
+  codex: CodexSchema.optional(),
   /**
    * Default provider alias for projects that don't specify one. Unset
    * means "use Claude subscription" (no env override at spawn).
@@ -536,6 +546,15 @@ export const ChannelsConfigSchema = z.object({
    */
   opsToken: z.string().min(16).optional(),
   projects: z.record(ChatIdSchema, ProjectSchema).default({}),
+}).superRefine((config, ctx) => {
+  if (config.defaults.providers.codex) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['defaults', 'providers', 'codex'], message: 'codex is a reserved runner name' })
+  }
+  for (const [chatId, project] of Object.entries(config.projects)) {
+    if (project.runner === 'codex' && project.provider) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['projects', chatId, 'provider'], message: 'Codex projects cannot use Anthropic provider aliases' })
+    }
+  }
 })
 
 export type ChannelsConfig = z.infer<typeof ChannelsConfigSchema>
