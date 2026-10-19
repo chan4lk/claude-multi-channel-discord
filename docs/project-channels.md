@@ -134,6 +134,8 @@ The selected project's running agent is killed automatically; its next message s
 
 Codex requires an installed CLI and a login available to the bot's service account, or `defaults.codex.apiKeyEnv` pointing to an environment variable set for the bot. It uses a `workspace-write` sandbox and `never` approval policy by default. Its thread ID is stored in `projects/<slug>/.codex-thread-id`, separate from Claude's session. Codex emits supported tool progress, but Claude transcript usage, context warnings, distillation, and transcript-based monthly token budget enforcement are unavailable. See [git-credentials.md](./git-credentials.md#codex-cli-authentication) for setup.
 
+If Codex exits or the pool stops a stuck turn, MCD replies to each unanswered message with a resend notice. It does not replay a partly executed turn automatically, since that could repeat file edits or other actions.
+
 See [git-credentials.md](./git-credentials.md) for provider config.
 
 ---

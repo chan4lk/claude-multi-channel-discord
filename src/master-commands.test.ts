@@ -2417,7 +2417,7 @@ const codexCloned = await handleMasterCommand(
   mctx(),
 )
 check('AC2: clone selects Codex runner',
-  codexCloned.kind === 'reply' && codexCloned.text.includes('cloned') &&
+  codexCloned.kind === 'reply' && codexCloned.text.includes('cloned') && codexCloned.text.includes('Runner: codex') &&
   loadConfig().projects[codexCloneChat]?.runner === 'codex',
   codexCloned.kind === 'reply' ? codexCloned.text : codexCloned.kind,
 )

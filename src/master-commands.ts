@@ -1404,6 +1404,10 @@ async function handleClone(rest: string[], ctx: MasterContext): Promise<string> 
   const lines: string[] = []
   if (createdChannelNote) lines.push(createdChannelNote)
   lines.push(`✅ project **${slug}** cloned from ${repo} for chat ${chatId}.`)
+  if (cloneProvider === 'codex') {
+    lines.push('Runner: codex')
+    lines.push(`Model: ${model ?? '(Codex default)'}`)
+  }
   lines.push(`Working dir: \`${dir}\``)
   lines.push(claudeMdNote)
   if (status.ok) lines.push(status.text)

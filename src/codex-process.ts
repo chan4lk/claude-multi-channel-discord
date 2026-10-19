@@ -234,6 +234,9 @@ export class CodexProjectProcess implements ProjectProcess {
         const final = items.filter((item) => item.type === 'agentMessage' && item.phase !== 'commentary').at(-1)
         const text = (typeof final?.text === 'string' ? final.text : turn.finalText).trim()
         if (text) this.emitReply({ kind: 'text', chatId: this.chatId, text, replyTo: turn.envelope.messageId })
+      } else if (completed.status !== 'completed' && !turn.replied) {
+        this.emitReply({ kind: 'text', chatId: this.chatId, replyTo: turn.envelope.messageId,
+          text: 'Codex could not finish this message. Please resend it.' })
       }
       this.active = null
       turn.finish()
@@ -329,7 +332,11 @@ export class CodexProjectProcess implements ProjectProcess {
 
   acceptReply(reply: OutboundReply): void {
     if (!this.alive || reply.chatId !== this.chatId) return
-    if (reply.kind === 'text' && this.active) this.active.replied = true
+    if (reply.kind === 'text' && this.active) {
+      this.active.replied = true
+      this.emitReply({ ...reply, replyTo: reply.replyTo ?? this.active.envelope.messageId })
+      return
+    }
     this.emitReply(reply)
   }
 
@@ -370,15 +377,25 @@ export class CodexProjectProcess implements ProjectProcess {
     this.toolHandlers.add(handler)
     return () => this.toolHandlers.delete(handler)
   }
-  async kill(_reason: 'idle-evict' | 'pool-full' | 'shutdown' | 'requested' | 'watchdog'): Promise<void> {
+  async kill(reason: 'idle-evict' | 'pool-full' | 'shutdown' | 'requested' | 'watchdog'): Promise<void> {
     if (this.stopped) return
     const child = this.child
-    this.stop(0, 'SIGTERM')
+    this.stop(0, 'SIGTERM', undefined, reason !== 'shutdown')
     try { child?.kill('SIGTERM') } catch { /* already exited */ }
   }
 
-  private stop(code: number | null, signal: NodeJS.Signals | null, error?: Error): void {
+  private stop(code: number | null, signal: NodeJS.Signals | null, error?: Error, notifyPending = true): void {
     if (this.stopped) return
+    if (notifyPending) {
+      const pending = [
+        ...(this.active && !this.active.replied ? [this.active.envelope] : []),
+        ...this.queue.map((entry) => entry.envelope),
+      ]
+      for (const envelope of pending) {
+        this.emitReply({ kind: 'text', chatId: this.chatId, replyTo: envelope.messageId,
+          text: 'Codex stopped before answering this message. Please resend it.' })
+      }
+    }
     this.stopped = true
     this.alive = false
     this.queue = []

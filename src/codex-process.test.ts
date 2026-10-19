@@ -6,9 +6,11 @@ import { PassThrough } from 'node:stream'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 
 import { CodexProjectProcess, type CodexProjectProcessOptions } from './codex-process.ts'
+import { ChannelsConfigSchema } from './channels-config.ts'
 import { saveCredentials } from './git-credentials.ts'
 import { projectCodexThreadFile, projectDir, projectSessionFile } from './paths.ts'
 import type { InboundEnvelope, OutboundReply } from './project-process.ts'
+import { ProjectPool, type PoolEvent } from './project-pool.ts'
 
 const root = mkdtempSync(join(tmpdir(), 'mcd-codex-test-'))
 process.env.MCD_CHANNELS_DIR = root
@@ -119,6 +121,13 @@ async function testSetupAndIsolation(): Promise<void> {
   check(readFileSync(projectCodexThreadFile('channel-a'), 'utf8') === a.fake.threadId, 'thread ID persisted')
   check(readFileSync(projectSessionFile('channel-a'), 'utf8') === 'claude-session', 'Claude session untouched')
   await Promise.all([a.proc.kill('shutdown'), b.proc.kill('shutdown')])
+  const defaults = setup('codex-default-model', 'aaaaaaaa-aaaa-4aaa-bbbb-aaaaaaaaaaaa', {
+    model: undefined, codex: { sandbox: 'read-only', approvalPolicy: 'never' },
+  })
+  await defaults.proc.start()
+  const defaultStart = defaults.fake.commands.find((command) => command.method === 'thread/start')!
+  check(defaultStart.params?.model === undefined && defaultStart.params?.sandbox === 'read-only', 'Codex installation model default and configured sandbox')
+  await defaults.proc.kill('shutdown')
   console.log('PASS AC-3 thread setup and chat isolation')
 }
 
@@ -164,7 +173,7 @@ async function testReplies(): Promise<void> {
   proc.acceptReply({ kind: 'text', chatId: 'replies', text: 'tool answer' })
   fake.complete('turn-1', 'completed', 'fallback should not post')
   await until(() => proc.pendingDeliverAtMs() === null)
-  check(replies.length === 1 && replies[0].kind === 'text' && replies[0].text === 'tool answer', 'explicit reply once')
+  check(replies.length === 1 && replies[0].kind === 'text' && replies[0].text === 'tool answer' && replies[0].replyTo === 'explicit', 'explicit reply once with inbound target')
   await proc.deliver(envelope('fallback'))
   await until(() => fake.commands.filter((c) => c.method === 'turn/start').length === 2)
   fake.complete('turn-2', 'completed', 'final answer')
@@ -174,10 +183,10 @@ async function testReplies(): Promise<void> {
   await until(() => fake.commands.filter((c) => c.method === 'turn/start').length === 3)
   fake.complete('turn-3', 'failed', 'should not post')
   await until(() => proc.pendingDeliverAtMs() === null)
-  check(replies.length === 2, 'failed turn has no success fallback')
+  check(replies.length === 3 && replies[2]?.kind === 'text' && replies[2].text.includes('could not finish') && replies[2].replyTo === 'failed', 'failed turn reports interruption without success fallback')
   check(!proc.isAlive(), 'failed turn exits for pool recovery')
   fake.complete('turn-3', 'completed', 'late reply')
-  check(replies.length === 2, 'late completion cannot post after exit')
+  check(replies.length === 3, 'late completion cannot post after exit')
   await proc.kill('shutdown')
   console.log('PASS AC-5 explicit reply, fallback, and failed turn')
 }
@@ -249,8 +258,78 @@ async function testGitCredential(): Promise<void> {
   console.log('PASS Codex git credential passthrough and cleanup')
 }
 
+async function testProgressAndInterruptedQueue(): Promise<void> {
+  const { fake, proc } = setup('progress', '66666666-6666-4666-8666-666666666666')
+  const progress: Array<{ phase: string; toolId: string }> = []
+  const replies: OutboundReply[] = []
+  proc.onToolProgress((event) => progress.push(event))
+  proc.onReply((reply) => replies.push(reply))
+  await proc.start()
+  await proc.deliver(envelope('active'))
+  await proc.deliver(envelope('queued'))
+  await until(() => fake.commands.some((command) => command.method === 'turn/start'))
+  check(proc.pendingDeliverAtMs() !== null, 'active and queued messages remain pending')
+  fake.emitMessage({ method: 'item/started', params: {
+    threadId: fake.threadId, turnId: 'turn-1', item: { id: 'tool-1', type: 'commandExecution', status: 'inProgress' },
+  } })
+  check(progress.length === 1 && progress[0]?.phase === 'start' && proc.inFlightToolSinceMs() !== null, 'Codex tool start updates progress and liveness')
+  fake.emitMessage({ method: 'item/completed', params: {
+    threadId: fake.threadId, turnId: 'turn-1', item: { id: 'tool-1', type: 'commandExecution', status: 'completed' },
+  } })
+  check(progress.length === 2 && progress[1]?.phase === 'done' && proc.inFlightToolSinceMs() === null, 'Codex tool completion clears liveness veto')
+  fake.emit('exit', 1, null)
+  check(!proc.isAlive() && replies.length === 2, 'unexpected exit reports both accepted messages')
+  check(replies[0]?.kind === 'text' && replies[0].replyTo === 'active' && replies[1]?.kind === 'text' && replies[1].replyTo === 'queued', 'interruption notices target each message')
+  fake.complete('turn-1', 'completed', 'late success')
+  check(replies.length === 2, 'late success remains suppressed')
+  console.log('PASS AC-6 progress and interrupted queue visibility')
+}
+
+async function testPoolWatchdog(): Promise<void> {
+  const chatId = '777700000000000006'
+  const slug = 'pool-watchdog'
+  mkdirSync(projectDir(slug), { recursive: true })
+  writeFileSync(join(projectDir(slug), 'CLAUDE.md'), 'Pool watchdog project')
+  const fake = new FakeAppServer('77777777-7777-4777-8777-777777777777')
+  const config = ChannelsConfigSchema.parse({
+    master: { chatId: '999999999999999999' },
+    projects: { [chatId]: { slug, runner: 'codex' } },
+  })
+  const events: PoolEvent[] = []
+  const replies: OutboundReply[] = []
+  let now = Date.now()
+  const pool = new ProjectPool({
+    factory: () => {
+      const proc = new CodexProjectProcess({
+        chatId, slug,
+        master: { urlFor: () => `http://127.0.0.1:4321/mcp/${chatId}`, tokenFor: () => 'pool-token' },
+        spawnFn: () => fake as unknown as ChildProcess,
+      })
+      void proc.start()
+      return proc
+    },
+    getConfig: () => config,
+    onReply: (reply) => replies.push(reply),
+    onEvent: (event) => events.push(event),
+    now: () => now,
+  })
+  await pool.deliver(chatId, envelope('pool-message'))
+  await until(() => fake.commands.some((command) => command.method === 'turn/start'))
+  now += ProjectPool.STUCK_THRESHOLD_MS + 1_000
+  pool.evictIdle()
+  await until(() => !pool.has(chatId))
+  check(events.some((event) => event.kind === 'stuck' && event.chatId === chatId), 'pool watchdog catches a hung Codex turn')
+  check(replies.length === 1 && replies[0]?.kind === 'text' && replies[0].replyTo === 'pool-message', 'watchdog interruption is visible in the channel')
+  fake.complete('turn-1', 'completed', 'too late')
+  check(replies.length === 1, 'watchdog-killed Codex cannot post a late reply')
+  await pool.shutdown()
+  console.log('PASS AC-6 Codex pool watchdog integration')
+}
+
 await testSetupAndIsolation()
 await testQueueAndResume()
 await testReplies()
 await testFailures()
 await testGitCredential()
+await testProgressAndInterruptedQueue()
+await testPoolWatchdog()
