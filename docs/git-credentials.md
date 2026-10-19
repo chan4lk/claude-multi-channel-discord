@@ -91,6 +91,36 @@ Then route a project:
 !project provider <slug> --set minimax
 ```
 
+### Codex CLI authentication
+
+Codex is a separate project runner, so `codex` is reserved and must not be added to `defaults.providers`. Install a Codex CLI with app-server support on the MCD host. Run `codex login` and `codex login status` as the same OS account that runs the bot, or supply a dedicated API key through the bot service environment. A login in an operator's personal shell does not automatically authenticate a system service.
+
+For an API key, set the secret in the bot's environment, then name that environment variable in `channels.json`:
+
+```jsonc
+{
+  "defaults": {
+    "codex": {
+      "binPath": "codex",
+      "sandbox": "workspace-write",
+      "approvalPolicy": "never",
+      "apiKeyEnv": "MCD_CODEX_API_KEY"
+    }
+  }
+}
+```
+
+MCD copies `MCD_CODEX_API_KEY` to `OPENAI_API_KEY` only in the Codex child process. The key value is never stored in `channels.json`. Omit `apiKeyEnv` when using the service account's Codex login. `workspace-write` and `never` are the defaults; `read-only` or `danger-full-access` sandbox access requires an explicit config change. Because approval prompts cannot be answered through MCD, `never` is the only supported approval policy.
+
+```text
+!project create --new-channel codex-lab --slug codex-lab --prompt "Work in this project" --provider codex
+!project provider codex-lab --set minimax
+!project provider codex-lab --set codex
+!project provider codex-lab --clear
+```
+
+An existing git credential alias still supplies push and PR environment variables to the Codex child. If a saved Codex thread cannot resume, correct the login or move `projects/<slug>/.codex-thread-id` aside before sending the next message to start a fresh thread.
+
 ---
 
 ## Verify credentials

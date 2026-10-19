@@ -2,6 +2,8 @@ import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename } from 'node:path'
 
+import { getCredential, loadCredentials, resolvePrApiEnv } from './git-credentials.ts'
+import { buildGitEnv } from './git-ops.ts'
 import { projectClaudeMd, projectCodexThreadFile, projectDir } from './paths.ts'
 import type { InboundEnvelope, OutboundReply, ProcessStats, ProjectProcess, ToolProgressEvent } from './project-process.ts'
 
@@ -25,6 +27,7 @@ export interface CodexProjectProcessOptions {
   master: { urlFor(chatId: string): string; tokenFor(chatId: string): string }
   model?: string
   platform?: 'discord' | 'teams' | 'whatsapp'
+  gitCredential?: string
   codex?: {
     binPath?: string
     sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access'
@@ -46,6 +49,7 @@ export class CodexProjectProcess implements ProjectProcess {
   private stopped = false
   private lastActivity = Date.now()
   private spawnedAt = 0
+  private gitCredentialCleanup: (() => void) | null = null
   private threadId: string | null = null
   private stdoutBuffer = ''
   private nextId = 1
@@ -81,8 +85,20 @@ export class CodexProjectProcess implements ProjectProcess {
     const keyEnv = this.opts.codex?.apiKeyEnv
     if (keyEnv && !process.env[keyEnv]) throw new Error(`Codex API key environment variable ${keyEnv} is missing`)
     const token = this.opts.master.tokenFor(this.chatId)
-    const env: NodeJS.ProcessEnv = { ...process.env, MCD_MCP_TOKEN: token }
+    let env: NodeJS.ProcessEnv = { ...process.env, MCD_MCP_TOKEN: token }
     if (keyEnv) env.OPENAI_API_KEY = process.env[keyEnv]
+    if (this.opts.gitCredential) {
+      try {
+        const credential = getCredential(loadCredentials(), this.opts.gitCredential)
+        const built = buildGitEnv(credential, env)
+        this.gitCredentialCleanup = built.cleanup
+        env = { ...built.env, ...resolvePrApiEnv(credential) }
+      } catch {
+        this.gitCredentialCleanup?.()
+        this.gitCredentialCleanup = null
+        this.opts.log?.(`Codex git credential ${this.opts.gitCredential} could not be loaded; check the alias and host environment`)
+      }
+    }
     const command = this.opts.codex?.binPath ?? 'codex'
     try {
       this.child = (this.opts.spawnFn ?? spawn)(command, ['app-server', '--listen', 'stdio://'], {
@@ -291,9 +307,24 @@ export class CodexProjectProcess implements ProjectProcess {
   }
 
   private formatEnvelope(envelope: InboundEnvelope): string {
-    const source = this.opts.platform ?? 'discord'
-    const attachments = envelope.attachments?.length ? `\nAttachments: ${envelope.attachments.join('; ')}` : ''
-    return `[${source} channel ${this.chatId}, message ${envelope.messageId}, ${envelope.username}]\n${envelope.content}${attachments}`
+    // Match Claude's channel envelope so existing project prompts work for either runner.
+    const attr = (value: string) => value.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;').replace(/[\r\n]/g, ' ')
+    const fields = [
+      `source="${this.opts.platform ?? 'discord'}"`,
+      `chat_id="${attr(this.chatId)}"`,
+      `message_id="${attr(envelope.messageId)}"`,
+      `user="${attr(envelope.username)}"`,
+      `user_id="${attr(envelope.userId)}"`,
+      `ts="${attr(envelope.ts)}"`,
+    ]
+    if (envelope.attachments?.length) {
+      fields.push(`attachment_count="${envelope.attachments.length}"`)
+      fields.push(`attachments="${attr(envelope.attachments.join('; '))}"`)
+    }
+    if (envelope.authorType === 'bot') fields.push('author_type="bot"')
+    const body = envelope.content.replace(/<(\/?)channel\b/gi, '&lt;$1channel')
+    return `<channel ${fields.join(' ')}>${body}</channel>`
   }
 
   acceptReply(reply: OutboundReply): void {
@@ -358,6 +389,8 @@ export class CodexProjectProcess implements ProjectProcess {
     this.child?.stdin?.end()
     this.child?.stdout?.removeAllListeners('data')
     this.child?.stderr?.removeAllListeners('data')
+    this.gitCredentialCleanup?.()
+    this.gitCredentialCleanup = null
     for (const handler of this.exitHandlers) {
       try { handler({ code, signal }) } catch { /* one subscriber must not block teardown */ }
     }

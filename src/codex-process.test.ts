@@ -1,11 +1,12 @@
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 
 import { CodexProjectProcess, type CodexProjectProcessOptions } from './codex-process.ts'
+import { saveCredentials } from './git-credentials.ts'
 import { projectCodexThreadFile, projectDir, projectSessionFile } from './paths.ts'
 import type { InboundEnvelope, OutboundReply } from './project-process.ts'
 
@@ -129,6 +130,8 @@ async function testQueueAndResume(): Promise<void> {
   await Promise.all([first.proc.deliver(envelope('m1')), first.proc.deliver(envelope('m2'))])
   await starting
   await until(() => first.fake.commands.filter((c) => c.method === 'turn/start').length === 1)
+  const firstTurn = first.fake.commands.find((c) => c.method === 'turn/start')!
+  check(firstTurn.params?.input?.[0]?.text.includes('<channel source="discord" chat_id="queue" message_id="m1"'), 'existing channel prompt envelope used')
   first.fake.complete('turn-1', 'completed', 'one')
   await until(() => first.fake.commands.filter((c) => c.method === 'turn/start').length === 2)
   first.fake.complete('turn-2', 'completed', 'two')
@@ -230,7 +233,24 @@ async function testFailures(): Promise<void> {
   console.log('PASS AC-7 missing CLI/key, invalid thread, and MCP failure')
 }
 
+async function testGitCredential(): Promise<void> {
+  process.env.MCD_TEST_CODEX_GIT_PAT = 'test-only-token'
+  saveCredentials({ codexGit: { type: 'github-pat', envVar: 'MCD_TEST_CODEX_GIT_PAT' } })
+  const { fake, proc } = setup('git-credential', '55555555-5555-4555-8555-555555555555', {
+    gitCredential: 'codexGit',
+  })
+  await proc.start()
+  const env = fake.options?.env as NodeJS.ProcessEnv
+  const askpass = env.GIT_ASKPASS
+  check(env.MCD_TEST_CODEX_GIT_PAT === 'test-only-token' && !!askpass && existsSync(askpass), 'git credential reaches Codex child')
+  await proc.kill('shutdown')
+  check(!existsSync(askpass!), 'git askpass helper cleaned up on exit')
+  delete process.env.MCD_TEST_CODEX_GIT_PAT
+  console.log('PASS Codex git credential passthrough and cleanup')
+}
+
 await testSetupAndIsolation()
 await testQueueAndResume()
 await testReplies()
 await testFailures()
+await testGitCredential()

@@ -397,7 +397,12 @@ function handleShow(config: ChannelsConfig, rest: string[]): string {
   }
 
   // Distillation (P38)
-  if (project.distillOnStop) lines.push('distillation: enabled (runs after session stop)')
+  if (project.runner === 'codex') {
+    lines.push('Claude transcript usage, context warnings, and distillation: unavailable for Codex')
+    if (project.monthlyTokenBudget != null) lines.push('monthly token budget: unavailable for Codex (not enforced)')
+  } else if (project.distillOnStop) {
+    lines.push('distillation: enabled (runs after session stop)')
+  }
 
   lines.push('')
   lines.push('**system prompt** (first 500 chars):')

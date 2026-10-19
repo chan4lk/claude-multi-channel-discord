@@ -1277,6 +1277,7 @@ async function maybeInitProjectsBackend(): Promise<void> {
           master,
           model: project.model,
           codex: config.defaults.codex,
+          gitCredential: project.git?.credentials ?? config.defaults.git.credentials,
           log: (message) => process.stderr.write(`discord: codex ${project.slug}: ${message}\n`),
         })
         void proc.start()

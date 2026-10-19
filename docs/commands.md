@@ -12,10 +12,10 @@ All commands require the sender to be in `access.allowFrom`. The master channel 
 Prints a one-screen command reference in the master channel.
 
 ### `!project list`
-Lists all registered project channels: slug, channel ID, model, provider, git remote (if any).
+Lists all registered project channels: slug, channel ID, effective runner/model/provider, and git remote (if any).
 
 ### `!project show <slug>`
-Shows the full config for one project: channel ID, model, provider, git block, claude flags, current system prompt preview, live git status (if the project is a working tree).
+Shows the full config for one project: channel ID, runner, model, provider, git block, runner settings, current prompt preview, and live git status (if the project is a working tree).
 
 ### `!project usage` / `!project ps` / `!project top`
 Snapshot of all currently running agent processes: PID, memory (RSS), CPU time, uptime, last activity timestamp. Reads from `/proc` — Linux only.
@@ -35,6 +35,7 @@ Options:
 | Flag | Description |
 |------|-------------|
 | `--model <name>` | Override default model for this channel (e.g. `haiku`, `opus`) |
+| `--provider <alias>` | Select an Anthropic-compatible alias such as `minimax`, or `codex` for the Codex CLI |
 | `--new-channel <name>` | Create a new Discord channel (find-or-create by name) |
 | `--parent <category-id>` | Parent category for `--new-channel` |
 | `--repo-dir <path>` | Symlink `projects/<slug>` → existing local checkout instead of mkdir |
@@ -53,6 +54,7 @@ Options:
 | `--branch <name>` | Base branch (defaults to repo default) |
 | `--creds <alias>` | Credential alias from `git-credentials.json` |
 | `--model <name>` | Override default model |
+| `--provider <alias>` | Select an Anthropic-compatible alias or `codex` |
 | `--new-channel <name>` | Create a new Discord channel (find-or-create) |
 | `--parent <category-id>` | Parent category for `--new-channel` |
 | `--prompt "<text>"` | Initial system prompt written to `projects/<slug>/CLAUDE.md` |
@@ -69,7 +71,7 @@ Kills the running subprocess, renames the `projects/<slug>/` directory, and upda
 
 ### `!project stop <slug>`
 
-Kills the agent's tmux session. The agent lazy-respawns on the next incoming message to that channel.
+Kills the selected agent process. The agent lazy-respawns on the next incoming message to that channel.
 
 ### `!project rm <slug> --yes`
 
@@ -117,15 +119,15 @@ Deletes a schedule.
 
 ### `!project provider <slug>`
 
-Shows current provider routing for the channel (subscription auth or API alias).
+Shows the effective runner and provider routing for the channel.
 
 ### `!project provider <slug> --set <alias>`
 
-Routes the channel to the named provider alias (defined in `defaults.providers` in `channels.json`). Kills the agent so the new env takes effect.
+Selects `codex` or an Anthropic-compatible alias defined in `defaults.providers`. Kills only this project's agent so the change takes effect on its next message.
 
 ### `!project provider <slug> --clear`
 
-Reverts to Claude Code subscription auth.
+Returns to the configured Claude default, which may be a provider alias or subscription auth.
 
 ---
 

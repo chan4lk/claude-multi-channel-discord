@@ -4,6 +4,7 @@
  * in a test framework.
  */
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -2401,12 +2402,24 @@ const clearedCodex = await handleMasterCommand('!project provider codextest --cl
 const clearedState = loadConfig().projects[codexChat]
 check('AC2: create, show, model, switch, and clear select the right runner',
   codexCreated.kind === 'reply' && codexCreated.text.includes('Runner: codex') &&
-  codexShown.kind === 'reply' && codexShown.text.includes('runner: codex') &&
+  codexShown.kind === 'reply' && codexShown.text.includes('runner: codex') && codexShown.text.includes('unavailable for Codex') &&
   codexModel.kind === 'reply' && codexModel.text.includes('gpt-6') &&
   switchedToMiniMax.kind === 'reply' && miniMaxState?.provider === 'minimax' && miniMaxState?.runner !== 'codex' &&
   switchedToCodex.kind === 'reply' && codexState?.runner === 'codex' && codexState?.provider === undefined &&
   clearedCodex.kind === 'reply' && clearedState?.runner === undefined && clearedState?.provider === undefined &&
   killCalls.every((id) => id === codexChat),
+)
+const codexRepo = join(stateDir, 'codex-source.git')
+check('AC2: local fixture repository created', spawnSync('git', ['init', '--bare', codexRepo]).status === 0)
+const codexCloneChat = '777700000000000005'
+const codexCloned = await handleMasterCommand(
+  `!project clone ${codexCloneChat} --slug codexclone --repo ${codexRepo} --provider codex`,
+  mctx(),
+)
+check('AC2: clone selects Codex runner',
+  codexCloned.kind === 'reply' && codexCloned.text.includes('cloned') &&
+  loadConfig().projects[codexCloneChat]?.runner === 'codex',
+  codexCloned.kind === 'reply' ? codexCloned.text : codexCloned.kind,
 )
 delete process.env.MINIMAX_API_KEY
 

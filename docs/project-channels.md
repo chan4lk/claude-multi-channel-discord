@@ -1,6 +1,6 @@
 # Project Channels
 
-How to create and manage per-channel Claude agents from the master Discord channel.
+How to create and manage per-channel Claude or Codex agents from the master Discord channel.
 
 All commands below are typed in the **master Discord channel** by an authorized user.
 
@@ -22,6 +22,7 @@ Or use an existing Discord channel by ID:
 
 Options:
 - `--model haiku` — override the default model for this channel
+- `--provider codex` — run this channel with the Codex CLI; omit `--model` to use Codex's configured default
 - `--parent <category-id>` — place the new channel under a Discord category
 
 ---
@@ -38,6 +39,7 @@ Options:
 - `--branch <name>` — base branch (default: repo default branch)
 - `--creds <alias>` — credential alias from `git-credentials.json` (see [git-credentials.md](./git-credentials.md))
 - `--new-channel <name>` — create the Discord channel; or pass an existing `<channel-id>` as the first positional arg
+- `--provider codex` — run the cloned project with Codex
 
 The clone runs `git clone <url>` into `projects/<slug>/` using the resolved credential env. On each agent spawn, the agent is told to `git pull --ff-only` before making changes.
 
@@ -81,7 +83,7 @@ The running agent is killed so it picks up the new CLAUDE.md on next spawn.
 !project stop <slug>
 ```
 
-Kills the tmux session. The agent lazy-respawns on the next incoming message. Use this when an agent is stuck or you want to force a fresh session.
+Kills the selected agent process. The agent lazy-respawns on the next incoming message. Use this when an agent is stuck or you want to force a fresh process.
 
 ---
 
@@ -119,15 +121,18 @@ Kills the running agent first (to avoid pulling cwd from under it), renames the 
 
 ## Switch AI provider
 
-By default all channels use the operator's Claude Code subscription. To route a channel to a different Anthropic-compatible API (e.g. MiniMax):
+By default all channels use the operator's Claude Code subscription. Use a configured Anthropic-compatible alias for MiniMax, or select the Codex runner:
 
 ```
 !project provider <slug> --set <alias>    # alias from defaults.providers in channels.json
-!project provider <slug> --clear          # revert to subscription auth
+!project provider <slug> --set codex      # switch this project to Codex
+!project provider <slug> --clear          # return to the configured Claude default
 !project provider <slug>                  # show current routing
 ```
 
-The running agent is killed automatically; next spawn uses the new env.
+The selected project's running agent is killed automatically; its next message starts the chosen runner. For a new Codex project, use `!project create --new-channel <name> --slug <slug> --prompt "..." --provider codex`. Set a Codex model with `!project model <slug> --set <model>`; clear it to use the Codex installation's default. `!project show <slug>` identifies the effective runner.
+
+Codex requires an installed CLI and a login available to the bot's service account, or `defaults.codex.apiKeyEnv` pointing to an environment variable set for the bot. It uses a `workspace-write` sandbox and `never` approval policy by default. Its thread ID is stored in `projects/<slug>/.codex-thread-id`, separate from Claude's session. Codex emits supported tool progress, but Claude transcript usage, context warnings, distillation, and transcript-based monthly token budget enforcement are unavailable. See [git-credentials.md](./git-credentials.md#codex-cli-authentication) for setup.
 
 See [git-credentials.md](./git-credentials.md) for provider config.
 
