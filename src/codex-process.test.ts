@@ -119,7 +119,10 @@ async function testSetupAndIsolation(): Promise<void> {
   check((a.fake.options?.env as NodeJS.ProcessEnv).MCD_MCP_TOKEN === 'secret-channel-a', 'token in child environment')
   check((b.fake.options?.env as NodeJS.ProcessEnv).MCD_MCP_TOKEN === 'secret-channel-b', 'second chat token distinct')
   check(bStart.params?.config?.mcp_servers?.mcd?.url.endsWith('/mcp/channel-b'), 'second chat URL distinct')
-  check(readFileSync(projectCodexThreadFile('channel-a'), 'utf8') === a.fake.threadId, 'thread ID persisted')
+  check(!existsSync(projectCodexThreadFile('channel-a')), 'unused thread ID not persisted before first turn')
+  await Promise.all([a.proc.deliver(envelope('persist-a')), b.proc.deliver(envelope('persist-b'))])
+  await until(() => existsSync(projectCodexThreadFile('channel-a')) && existsSync(projectCodexThreadFile('channel-b')))
+  check(readFileSync(projectCodexThreadFile('channel-a'), 'utf8') === a.fake.threadId, 'thread ID persisted after first turn starts')
   check(readFileSync(projectSessionFile('channel-a'), 'utf8') === 'claude-session', 'Claude session untouched')
   await Promise.all([a.proc.kill('shutdown'), b.proc.kill('shutdown')])
   const defaults = setup('codex-default-model', 'aaaaaaaa-aaaa-4aaa-bbbb-aaaaaaaaaaaa', {
@@ -130,6 +133,22 @@ async function testSetupAndIsolation(): Promise<void> {
   check(defaultStart.params?.model === undefined && defaultStart.params?.sandbox === 'read-only', 'Codex installation model default and configured sandbox')
   await defaults.proc.kill('shutdown')
   console.log('PASS AC-3 thread setup and chat isolation')
+}
+
+async function testUnusedThreadRestart(): Promise<void> {
+  const first = setup('unused-thread', 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa')
+  await first.proc.start()
+  await first.proc.kill('shutdown')
+  check(!existsSync(projectCodexThreadFile('unused-thread')), 'unused thread leaves no unresumable saved ID')
+  const next = setup('unused-thread', 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb')
+  await next.proc.start()
+  check(next.fake.commands.some((command) => command.method === 'thread/start') &&
+    !next.fake.commands.some((command) => command.method === 'thread/resume'), 'restart creates a fresh thread after unused start')
+  await next.proc.deliver(envelope('first-real-turn'))
+  await until(() => existsSync(projectCodexThreadFile('unused-thread')))
+  check(readFileSync(projectCodexThreadFile('unused-thread'), 'utf8') === next.fake.threadId, 'first real turn persists the new thread')
+  await next.proc.kill('shutdown')
+  console.log('PASS AC-4 unused thread restart')
 }
 
 async function testQueueAndResume(): Promise<void> {
@@ -343,6 +362,7 @@ async function testPoolWatchdog(): Promise<void> {
 }
 
 await testSetupAndIsolation()
+await testUnusedThreadRestart()
 await testQueueAndResume()
 await testReplies()
 await testEmptyFinalNotice()

@@ -51,6 +51,7 @@ export class CodexProjectProcess implements ProjectProcess {
   private spawnedAt = 0
   private gitCredentialCleanup: (() => void) | null = null
   private threadId: string | null = null
+  private threadNeedsSave = false
   private stdoutBuffer = ''
   private nextId = 1
   private requests = new Map<number, PendingRequest>()
@@ -161,15 +162,10 @@ export class CodexProjectProcess implements ProjectProcess {
       const thread = response.thread as JsonObject | undefined
       if (typeof thread?.id !== 'string' || !thread.id) throw new Error('Codex thread response has no ID')
       this.threadId = thread.id
-      if (!savedId) {
-        const temp = `${threadFile}.${process.pid}.tmp`
-        try {
-          writeFileSync(temp, thread.id, { mode: 0o600 })
-          renameSync(temp, threadFile)
-        } finally {
-          try { unlinkSync(temp) } catch { /* renamed */ }
-        }
-      }
+      // Codex does not create a resumable rollout until the first turn starts.
+      // Saving this ID now would strand a channel if the process exits before
+      // it receives a turn.
+      this.threadNeedsSave = !savedId
       if (this.queue.length) void this.pump()
     } catch (error) {
       this.stop(1, null)
@@ -190,6 +186,19 @@ export class CodexProjectProcess implements ProjectProcess {
       try { this.write({ id, method, params }) }
       catch { this.requests.delete(id); reject(new Error(`Codex ${method} could not be sent`)) }
     })
+  }
+
+  private persistThreadId(): void {
+    if (!this.threadNeedsSave || !this.threadId || !this.alive) return
+    const threadFile = projectCodexThreadFile(this.slug)
+    const temp = `${threadFile}.${process.pid}.tmp`
+    try {
+      writeFileSync(temp, this.threadId, { mode: 0o600 })
+      renameSync(temp, threadFile)
+      this.threadNeedsSave = false
+    } finally {
+      try { unlinkSync(temp) } catch { /* renamed */ }
+    }
   }
 
   private readOutput(chunk: string): void {
@@ -306,6 +315,7 @@ export class CodexProjectProcess implements ProjectProcess {
           if (typeof started?.id !== 'string') throw new Error('Codex turn response has no ID')
           if (turn.id && turn.id !== started.id) throw new Error('Codex turn ID changed during start')
           turn.id = started.id
+          this.persistThreadId()
           await completed
         } catch {
           this.opts.log?.('Codex turn failed; check CLI login, API key, and MCP authentication')
