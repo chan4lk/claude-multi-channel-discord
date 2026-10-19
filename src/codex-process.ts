@@ -138,7 +138,13 @@ export class CodexProjectProcess implements ProjectProcess {
         developerInstructions: instructions,
         config: {
           mcp_servers: {
-            mcd: { url: this.opts.master.urlFor(this.chatId), env_http_headers: { 'x-mcd-token': 'MCD_MCP_TOKEN' } },
+            mcd: {
+              url: this.opts.master.urlFor(this.chatId),
+              env_http_headers: { 'x-mcd-token': 'MCD_MCP_TOKEN' },
+              // The app-server has no interactive approval client. MCD already
+              // authenticates this endpoint with a token scoped to one chat.
+              default_tools_approval_mode: 'approve',
+            },
           },
         },
       }
@@ -233,7 +239,8 @@ export class CodexProjectProcess implements ProjectProcess {
         const items = Array.isArray(completed.items) ? completed.items as JsonObject[] : []
         const final = items.filter((item) => item.type === 'agentMessage' && item.phase !== 'commentary').at(-1)
         const text = (typeof final?.text === 'string' ? final.text : turn.finalText).trim()
-        if (text) this.emitReply({ kind: 'text', chatId: this.chatId, text, replyTo: turn.envelope.messageId })
+        this.emitReply({ kind: 'text', chatId: this.chatId, replyTo: turn.envelope.messageId,
+          text: text || 'Codex finished without sending a reply. Please resend your message.' })
       } else if (completed.status !== 'completed' && !turn.replied) {
         this.emitReply({ kind: 'text', chatId: this.chatId, replyTo: turn.envelope.messageId,
           text: 'Codex could not finish this message. Please resend it.' })

@@ -114,6 +114,7 @@ async function testSetupAndIsolation(): Promise<void> {
   check(aStart.params?.developerInstructions === 'Instructions for channel-a', 'project instructions')
   check(aStart.params?.config?.mcp_servers?.mcd?.url.endsWith('/mcp/channel-a'), 'chat-specific MCP URL')
   check(aStart.params?.config?.mcp_servers?.mcd?.env_http_headers?.['x-mcd-token'] === 'MCD_MCP_TOKEN', 'MCP header environment mapping')
+  check(aStart.params?.config?.mcp_servers?.mcd?.default_tools_approval_mode === 'approve', 'chat-scoped MCD tools are permitted without an interactive approval client')
   check(JSON.stringify(aStart).indexOf('secret-channel-a') === -1, 'token absent from protocol')
   check((a.fake.options?.env as NodeJS.ProcessEnv).MCD_MCP_TOKEN === 'secret-channel-a', 'token in child environment')
   check((b.fake.options?.env as NodeJS.ProcessEnv).MCD_MCP_TOKEN === 'secret-channel-b', 'second chat token distinct')
@@ -189,6 +190,21 @@ async function testReplies(): Promise<void> {
   check(replies.length === 3, 'late completion cannot post after exit')
   await proc.kill('shutdown')
   console.log('PASS AC-5 explicit reply, fallback, and failed turn')
+}
+
+async function testEmptyFinalNotice(): Promise<void> {
+  const { fake, proc } = setup('empty-final', 'dddddddd-dddd-4ddd-8ddd-dddddddddddd')
+  const replies: OutboundReply[] = []
+  proc.onReply((reply) => replies.push(reply))
+  await proc.start()
+  await proc.deliver(envelope('empty-message'))
+  await until(() => fake.commands.some((command) => command.method === 'turn/start'))
+  fake.complete('turn-1', 'completed', '')
+  await until(() => replies.length === 1)
+  check(replies[0]?.kind === 'text' && replies[0].replyTo === 'empty-message' &&
+    replies[0].text.includes('without sending a reply'), 'empty completed turn reports a visible failure')
+  await proc.kill('shutdown')
+  console.log('PASS AC-5 empty final reply notice')
 }
 
 async function testFailures(): Promise<void> {
@@ -329,6 +345,7 @@ async function testPoolWatchdog(): Promise<void> {
 await testSetupAndIsolation()
 await testQueueAndResume()
 await testReplies()
+await testEmptyFinalNotice()
 await testFailures()
 await testGitCredential()
 await testProgressAndInterruptedQueue()
